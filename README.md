@@ -4,6 +4,11 @@ Standalone MCP server for an AI-KIDO knowledge base, usable by tatami-core, VS C
 
 The standard AI-KIDO base is protected. A separate, explicitly writable project/fork can be edited and synchronized with its own Git remote.
 
+## Short usage guides / Guides pratiques
+
+- [English: standalone, integration and concurrent clients](docs/usage.en.md)
+- [Français : standalone, intégration et clients concurrents](docs/usage.fr.md)
+
 ## MCP capabilities
 
 | Tool | Operations |
@@ -12,7 +17,7 @@ The standard AI-KIDO base is protected. A separate, explicitly writable project/
 | `aikido_embed` | Generate a local text embedding with `usage=query` (default) or `document`; returns the numeric vector and model metadata without changing ROOT/indexes |
 | `aikido_root` | `status`, `init`: initialize the configured ROOT from the official or another Git repository |
 | `aikido_search` | `mode`: `literal` (default), `regex` (fast-grep), or `semantic` (local multilingual embsearch-core/ONNX); paths, lines, excerpts and semantic scores |
-| `aikido_index` | `update`, `rebuild`, `compact`, `stats`; `mode`: `literal` (default) or `semantic` |
+| `aikido_index` | `update`, `rebuild`, `compact`, `stats`; non-blocking `status` for `mode=semantic`; otherwise `mode`: `literal` (default) or `semantic` |
 | `aikido_git` | Scoped, structured Git operations on the configured project |
 | `aikido_file` | Create/update/delete text documents; overwrites/deletes require exact previous contents |
 
@@ -228,6 +233,64 @@ workflow fails visibly when an update is available. Upgrades require new
 checksums/lockfile and passing the real semantic tests, not silent untested
 downloads at startup. Third-party provenance is in
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
+## Integration with per-workspace instance managers
+
+Kimono remains **one ROOT per process**. A manager such as Tatami can run one
+instance per `(user, project)` workspace, using the same immutable image.
+Mount only that workspace, provide its own persistent cache and HTTP bearer
+token, and keep HTTP ports private to the backplane. Do not mount the entire
+workspace parent into each instance or expose a client-controlled ROOT.
+If every container sees `/knowledge`, **use separate cache volumes**: the cache
+key is based on the visible ROOT path, not the container identity.
+Set the container UID/GID and writable cache permissions to match the workspace;
+the default image user is UID 1000. Git credentials and authorization remain the
+manager's responsibility; never share a user's token across unrelated instances.
+
+HTTP probes:
+
+| Endpoint | Authentication | Meaning |
+| --- | --- | --- |
+| `GET /healthz` | None | Process liveness only; unchanged minimal response. |
+| `GET /readyz` | Instance bearer token | 200 if ROOT was initialized, still has a readable entry point and the instance is not draining; otherwise 503. Semantic indexing is not required. |
+| `GET /statusz` | Instance bearer token | 200 with `ready`, `stopping`, ROOT availability and semantic state, including failure details. Does not start indexing/inference. |
+
+Keep readiness distinct from liveness: an empty ROOT awaiting `aikido_root init`
+is alive but not ready. Readiness checks filesystem availability, not Git remote
+connectivity or a complete rescan of every document. Status/error details must
+remain behind instance authorization, not exposed as public diagnostics.
+
+Poll semantic progress through MCP, including while an indexing call is pending:
+
+```json
+{"operation":"status","mode":"semantic"}
+```
+
+on `aikido_index`. Unlike `stats`, `status` does **not** update or initialize an
+index and bypasses the tool queue so it remains responsive. Another HTTP MCP
+session may poll the same instance. Semantic state is `unknown`, `running`,
+`ready` or `error`, with operation/timestamps, last chunks/model and
+`progress: {completed, total}` when available. Progress counts **changed chunks
+embedded**, not elapsed time or a percentage of all scanning/model loading/
+saving work. `ready` means the last index operation succeeded, not proof that no
+external files changed since. Subsequent searches always synchronize as before.
+State is in memory and returns to `unknown` on restart even if vectors persist;
+the next search/update validates and reuses the persistent store.
+Failures are explicit in both the original tool result and status.
+
+On `SIGTERM`/`SIGINT`, the running server rejects new tool work, reports not
+ready, drains accepted calls, then closes MCP sessions and the HTTP listener.
+After **30 seconds**, remaining managed subprocesses are killed, HTTP
+connections are forced closed and shutdown is reported as failed (non-zero CLI
+exit). Compose uses `init: true` and a 40-second stop grace period; an external
+manager must allow more than 30 seconds too. Do not start a second process on
+the same cache during draining. Index generations are published before their
+previous generation is removed, allowing a later instance to reuse the last
+published store after interrupted indexing.
+
+This adds the server-side integration contract only: container provisioning,
+workspace membership checks, public-client credentials, idle eviction and
+quotas are not implemented by Kimono.
 
 ## MCP clients
 

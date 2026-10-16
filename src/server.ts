@@ -15,8 +15,10 @@ import {
   type Tool,
 } from '@modelcontextprotocol/sdk/types.js';
 import { AikidoKnowledgeBase, type KnowledgeEntry, type KnowledgeKind } from './knowledge.js';
-import { lstat, readdir } from 'node:fs/promises';
+import { access, lstat, readdir, stat } from 'node:fs/promises';
+import { constants } from 'node:fs';
 import { RUNTIME_TOOLS, runtimeFor } from './runtime-tools.js';
+import { Lifecycle, shutdownSignals } from './lifecycle.js';
 
 const SERVER_NAME = 'kimono-mcp-server';
 const SERVER_VERSION = '0.1.0';
@@ -40,7 +42,7 @@ const MCP_TOOL: Tool = {
   },
 };
 
-export function createAikidoMcpServer(knowledge: AikidoKnowledgeBase): Server {
+export function createAikidoMcpServer(knowledge: AikidoKnowledgeBase, lifecycle = new Lifecycle()): Server {
   const server = new Server(
     { name: SERVER_NAME, version: SERVER_VERSION },
     { capabilities: { tools: {}, resources: { subscribe: false, listChanged: false }, prompts: {}, completions: {} } },
@@ -49,10 +51,12 @@ export function createAikidoMcpServer(knowledge: AikidoKnowledgeBase): Server {
   server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: [MCP_TOOL, ...RUNTIME_TOOLS] }));
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     try {
-      if (request.params.name !== 'aikido') {
-        return toolResult(await runtimeFor(knowledge).call(request.params.name, request.params.arguments ?? {}));
-      }
-      return await callAikidoTool(knowledge, request.params.arguments ?? {});
+      return await lifecycle.run(async () => {
+        if (request.params.name !== 'aikido') {
+          return toolResult(await runtimeFor(knowledge).call(request.params.name, request.params.arguments ?? {}));
+        }
+        return callAikidoTool(knowledge, request.params.arguments ?? {});
+      });
     } catch (error) {
       return toolError(error instanceof Error ? error.message : String(error));
     }
@@ -196,18 +200,35 @@ function mimeType(filePath: string): string {
 
 export async function startStdioServer(knowledge: AikidoKnowledgeBase): Promise<void> {
   await prepareKnowledge(knowledge);
-  const server = createAikidoMcpServer(knowledge);
+  const lifecycle = new Lifecycle();
+  const server = createAikidoMcpServer(knowledge, lifecycle);
   await server.connect(new StdioServerTransport());
+  const removeSignals = shutdownSignals(() => lifecycle.close(async () => {
+    // Let the SDK emit the response for the last completed tool call.
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    await server.close();
+    removeSignals();
+  }, () => undefined));
   console.error(`${SERVER_NAME} ready on stdio (${knowledge.isInitialized ? knowledge.list().length : 0} documents)`);
 }
 
-export async function startHttpServer(knowledge: AikidoKnowledgeBase, options: { host: string; port: number; authToken: string }): Promise<void> {
+export async function startHttpServer(knowledge: AikidoKnowledgeBase, options: { host: string; port: number; authToken: string }) {
   if (!options.authToken.trim()) throw new Error('MCP_AUTH_TOKEN is required for the HTTP transport');
   await prepareKnowledge(knowledge);
   const transports = new Map<string, StreamableHTTPServerTransport>();
+  const lifecycle = new Lifecycle();
 
   const httpServer = createHttpServer((request, response) => {
-    void handleHttpRequest(request, response, knowledge, options.authToken, transports).catch((error: unknown) => {
+    const handle = () => handleHttpRequest(request, response, knowledge, options.authToken, transports, lifecycle);
+    const handling = request.method === 'POST' && !lifecycle.stopping ? lifecycle.run(async () => {
+      const sent = new Promise<void>((resolve) => {
+        response.once('finish', resolve);
+        response.once('close', resolve);
+      });
+      await handle();
+      await sent;
+    }) : handle();
+    void handling.catch((error: unknown) => {
       console.error('MCP HTTP handler failed:', error instanceof Error ? error.message : String(error));
       if (!response.headersSent) response.writeHead(500).end('MCP request failed');
       else response.end();
@@ -217,7 +238,17 @@ export async function startHttpServer(knowledge: AikidoKnowledgeBase, options: {
     httpServer.once('error', reject);
     httpServer.listen(options.port, options.host, resolve);
   });
+  const close = () => lifecycle.close(async () => {
+    await Promise.all([...transports.values()].map((transport) => transport.close()));
+    const closed = new Promise<void>((resolve, reject) => httpServer.close((error) => error ? reject(error) : resolve()));
+    httpServer.closeAllConnections();
+    await closed;
+    removeSignals();
+  }, () => httpServer.closeAllConnections());
+  const removeSignals = shutdownSignals(close);
   console.error(`${SERVER_NAME} listening on http://${options.host}:${options.port}/mcp`);
+  const address = httpServer.address();
+  return { port: typeof address === 'object' && address ? address.port : options.port, close };
 }
 
 async function prepareKnowledge(knowledge: AikidoKnowledgeBase): Promise<void> {
@@ -238,18 +269,55 @@ async function handleHttpRequest(
   knowledge: AikidoKnowledgeBase,
   authToken: string,
   transports: Map<string, StreamableHTTPServerTransport>,
+  lifecycle: Lifecycle,
 ): Promise<void> {
   const pathname = new URL(request.url ?? '/', 'http://localhost').pathname;
   if (pathname === '/healthz' && request.method === 'GET') {
     response.writeHead(200, { 'content-type': 'application/json' }).end('{"status":"ok"}');
     return;
   }
-  if (pathname !== '/mcp') {
+  if (!['/mcp', '/readyz', '/statusz'].includes(pathname)) {
     response.writeHead(404).end('Not found');
     return;
   }
   if (!authorized(request, authToken)) {
     response.writeHead(401, { 'www-authenticate': 'Bearer', 'content-type': 'application/json' }).end('{"error":"Unauthorized"}');
+    return;
+  }
+  if (pathname === '/readyz' || pathname === '/statusz') {
+    if (request.method !== 'GET') { response.writeHead(405).end('Method not allowed'); return; }
+    let rootAvailable = false;
+    let rootError: string | undefined;
+    try {
+      const root = await stat(knowledge.root);
+      if (!root.isDirectory()) throw new Error('ROOT is not a directory');
+      const candidates = await Promise.all(['prompts/index.md', 'index.md'].map(async (file) => {
+        try {
+          const target = `${knowledge.root}/${file}`;
+          if (!(await stat(target)).isFile()) return false;
+          await access(target, constants.R_OK);
+          return true;
+        }
+        catch (error) {
+          if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return false;
+          throw error;
+        }
+      }));
+      rootAvailable = candidates.some(Boolean);
+    } catch (error) {
+      rootError = error instanceof Error ? error.message : String(error);
+    }
+    const ready = !lifecycle.stopping && knowledge.isInitialized && rootAvailable;
+    response.writeHead(pathname === '/readyz' && !ready ? 503 : 200,
+      { 'content-type': 'application/json', 'cache-control': 'no-store' }).end(JSON.stringify({
+      ready, stopping: lifecycle.stopping,
+      root: { initialized: knowledge.isInitialized, available: rootAvailable, error: rootError },
+      semantic: knowledge.semanticIndex.status(),
+    }));
+    return;
+  }
+  if (lifecycle.stopping) {
+    response.writeHead(503, { 'retry-after': '5' }).end('Kimono is shutting down');
     return;
   }
 
@@ -273,7 +341,7 @@ async function handleHttpRequest(
         transports.delete(id);
       },
     });
-    const mcpServer = createAikidoMcpServer(knowledge);
+    const mcpServer = createAikidoMcpServer(knowledge, lifecycle);
     await mcpServer.connect(transport);
     transport.onclose = () => {
       if (initializedSessionId) transports.delete(initializedSessionId);

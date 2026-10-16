@@ -35,7 +35,16 @@ interface SemanticOptions {
 
 export class SemanticIndex {
   private pending: Promise<unknown> = Promise.resolve();
+  private state: {
+    phase: 'unknown' | 'running' | 'ready' | 'error';
+    operation?: string; startedAt?: string; completedAt?: string;
+    progress?: { completed: number; total: number }; error?: string;
+    chunks?: number; model?: string;
+  } = { phase: 'unknown' };
   constructor(private readonly knowledge: AikidoKnowledgeBase) {}
+
+  status() { return structuredClone(this.state); }
+  async idle(): Promise<void> { await this.pending; }
 
   async info(): Promise<Record<string, unknown>> {
     const model = process.env.KIMONO_MODEL_DIR;
@@ -89,7 +98,19 @@ export class SemanticIndex {
     operation: 'search' | 'update' | 'rebuild' | 'compact' | 'stats',
     options: SemanticOptions = {},
   ): Promise<SemanticResult> {
-    const result = this.pending.then(() => this.execute(operation, options));
+    const result = this.pending.then(async () => {
+      this.state = { phase: 'running', operation, startedAt: new Date().toISOString() };
+      try {
+        const output = await this.execute(operation, options);
+        this.state = { ...this.state, phase: 'ready', completedAt: new Date().toISOString(),
+          chunks: output.chunks, model: output.model };
+        return output;
+      } catch (error) {
+        this.state = { ...this.state, phase: 'error', completedAt: new Date().toISOString(),
+          error: error instanceof Error ? error.message : String(error) };
+        throw error;
+      }
+    });
     this.pending = result.then(() => undefined, () => undefined);
     return result;
   }
@@ -113,7 +134,7 @@ export class SemanticIndex {
     }
     const raw = await invokeSemantic({
       operation, model, cache: path.join(parent, 'semantic'), documents, ...options,
-    }, parent, this.knowledge.root);
+    }, parent, this.knowledge.root, (progress) => { this.state.progress = progress; });
     if (!record(raw) || raw.engine !== 'embsearch-core' || typeof raw.model !== 'string'
       || typeof raw.version !== 'string' || typeof raw.chunks !== 'number'
       || !Number.isSafeInteger(raw.chunks) || raw.chunks < 0 || typeof raw.embedded !== 'number'
@@ -135,13 +156,35 @@ export class SemanticIndex {
   }
 }
 
-async function invokeSemantic(payload: Record<string, unknown>, parent: string, cwd: string): Promise<unknown> {
+async function invokeSemantic(
+  payload: Record<string, unknown>, parent: string, cwd: string,
+  progress?: (value: { completed: number; total: number }) => void,
+): Promise<unknown> {
   const temporary = await mkdtemp(path.join(parent, 'semantic-request-'));
   try {
     const request = path.join(temporary, 'request.json');
     await writeFile(request, JSON.stringify(payload), { mode: 0o600 });
+    let buffered = '';
     const response = await runProcess(process.env.KIMONO_SEMANTIC_BIN ?? 'kimono-semantic',
-      [request], cwd, [0], 600_000);
+      [request], cwd, [0], 600_000, (chunk) => {
+        buffered += chunk;
+        let newline;
+        while ((newline = buffered.indexOf('\n')) >= 0) {
+          const line = buffered.slice(0, newline);
+          buffered = buffered.slice(newline + 1);
+          if (!line.startsWith('KIMONO_PROGRESS ')) continue;
+          try {
+            const value: unknown = JSON.parse(line.slice(16));
+            if (record(value) && typeof value.completed === 'number' && typeof value.total === 'number'
+              && Number.isSafeInteger(value.completed) && Number.isSafeInteger(value.total)
+              && value.completed >= 0 && value.total >= value.completed) {
+              progress?.({ completed: value.completed, total: value.total });
+            } else console.error('Invalid semantic progress event');
+          } catch (error) {
+            console.error('Invalid semantic progress JSON:', error instanceof Error ? error.message : String(error));
+          }
+        }
+      });
     return JSON.parse(response.stdout);
   } finally {
     await rm(temporary, { recursive: true, force: true });

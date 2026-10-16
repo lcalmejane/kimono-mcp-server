@@ -56,11 +56,11 @@ export const RUNTIME_TOOLS: Tool[] = [
   },
   {
     name: 'aikido_index',
-    description: 'Update, rebuild, compact or inspect the persistent literal (fast-grep) or semantic (embsearch-core) index. Cache is outside ROOT; private specs remain opt-in.',
+    description: 'Update, rebuild, compact or inspect indexes. operation=status with mode=semantic polls in-memory progress without waiting behind indexing or starting inference. Cache is outside ROOT; private specs remain opt-in.',
     inputSchema: {
       type: 'object', additionalProperties: false, required: ['operation'],
       properties: {
-        operation: { type: 'string', enum: ['update', 'rebuild', 'compact', 'stats'] },
+        operation: { type: 'string', enum: ['update', 'rebuild', 'compact', 'stats', 'status'] },
         mode: { type: 'string', enum: ['literal', 'semantic'], default: 'literal' },
       },
     },
@@ -117,6 +117,10 @@ class RuntimeTools {
   }
 
   async call(name: string, input: Record<string, unknown>): Promise<string> {
+    if (name === 'aikido_index' && input.operation === 'status') {
+      if (input.mode !== 'semantic') throw new Error('Index status requires mode=semantic');
+      return JSON.stringify(this.knowledge.semanticIndex.status());
+    }
     const action = this.pending.then(() => this.execute(name, input));
     this.pending = action.then(() => undefined, () => undefined);
     return action;

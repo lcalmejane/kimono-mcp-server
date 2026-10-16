@@ -1,7 +1,9 @@
 # Changelog
 
-## Unreleased
+## 0.1.0 - 2026-10-16
 
+- Concise English/French usage guides for standalone deployments, platform integration and concurrent agents/humans sharing a knowledge base, with explicit coordination and authorization limits.
+- Per-instance integration contract: authenticated readiness/status HTTP probes, non-blocking semantic index progress polling and graceful SIGTERM/SIGINT draining with a 30-second deadline; Compose init and stop grace period.
 - `aikido_embed` introspection (`operation=info`) exposes the active model identifier, preprocessing and actual SHA-256 hashes of weights/tokenizer/spec without inference or index changes.
 - Semantic vector input through `aikido_search` and `aikido` search, with required model identity, dimension/finite/non-zero validation, kind filters and fresh incremental indexing; no query re-embedding.
 - `aikido_embed` MCP tool returns local query/document embeddings with model metadata and numeric vectors, without requiring ROOT initialization or changing indexes.
@@ -13,8 +15,6 @@
 - Real fast-grep 0.5.0 searches and persistent index maintenance, including hidden capabilities and live file changes.
 - Rust, Cargo, Git and OpenSSH in Docker; writable project mode and a separate cache volume.
 - Workflow discovery, explicit client execution handoff, expanded integration tests and CI.
-
-## 0.1.0
 
 - Initial AI-KIDO knowledge discovery and MCP server scaffold.
 - Added stdio and authenticated Streamable HTTP transports, dynamic resources/prompts, CLI installer, and Docker Compose deployment.

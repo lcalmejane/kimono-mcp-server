@@ -228,12 +228,16 @@ fn execute(request: Request) -> Result<serde_json::Value> {
         })
         .collect();
     let embedded = updates.len();
+    eprintln!("KIMONO_PROGRESS {}", serde_json::json!({"completed": 0, "total": embedded}));
+    let mut completed = 0;
     for batch in updates.chunks(8) {
         db.upsert_batch(
             batch
                 .iter()
                 .map(|(id, chunk)| (id.to_string(), chunk.text.clone())),
         )?;
+        completed += batch.len();
+        eprintln!("KIMONO_PROGRESS {}", serde_json::json!({"completed": completed, "total": embedded}));
         changed = true;
     }
     if request.operation == "compact" {

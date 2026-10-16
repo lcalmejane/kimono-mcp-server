@@ -3,6 +3,8 @@ services:
     build: .
     image: ${KIMONO_IMAGE:-kimono-mcp-server:local}
     restart: unless-stopped
+    init: true
+    stop_grace_period: 40s
     environment:
       AIKIDO_ROOT: /knowledge/${AIKIDO_DIR:-aikido}
       AIKIDO_WRITABLE: ${AIKIDO_WRITABLE:-false}

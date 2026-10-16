@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AikidoKnowledgeBase } from '../src/knowledge.js';
 import { createAikidoMcpServer } from '../src/server.js';
 import { runtimeFor } from '../src/runtime-tools.js';
@@ -164,8 +164,15 @@ describe.skipIf(!process.env.KIMONO_MODEL_DIR)('real multilingual ONNX semantic 
 
   it('persists vectors, incrementally handles edits/additions/deletions and rebuilds/compacts', async () => {
     const knowledge = await fixture();
-    const first = await knowledge.semanticIndex.run('update');
+    expect(knowledge.semanticIndex.status().phase).toBe('unknown');
+    const indexing = runtimeFor(knowledge).call('aikido_index', { operation: 'update', mode: 'semantic' });
+    await vi.waitFor(() => expect(knowledge.semanticIndex.status().phase).toBe('running'));
+    const running = JSON.parse(await runtimeFor(knowledge).call('aikido_index', { operation: 'status', mode: 'semantic' }));
+    expect(running.phase).toBe('running');
+    const first = JSON.parse(await indexing);
     expect(first.embedded).toBe(4);
+    expect(knowledge.semanticIndex.status()).toMatchObject({ phase: 'ready', chunks: 4,
+      progress: { completed: 4, total: 4 } });
     expect((await knowledge.semanticIndex.run('stats')).embedded).toBe(0);
     await writeFile(path.join(knowledge.root, 'prompts/secrets.md'), 'Protect access tokens with a secrets manager and never disclose credentials.');
     expect((await knowledge.semanticIndex.run('update')).embedded).toBe(1);
@@ -205,6 +212,10 @@ describe.skipIf(!process.env.KIMONO_MODEL_DIR)('real multilingual ONNX semantic 
       try {
         const error = await client.callTool({ name: 'aikido_search', arguments: { mode: 'semantic', query: 'secrets' } });
         expect(error.isError).toBe(true);
+        const status = await client.callTool({ name: 'aikido_index', arguments: { operation: 'status', mode: 'semantic' } });
+        expect(status.isError).not.toBe(true);
+        if (!Array.isArray(status.content) || status.content[0]?.type !== 'text') throw new Error('Expected status text');
+        expect(JSON.parse(status.content[0].text)).toMatchObject({ phase: 'error', operation: 'search' });
       } finally { process.env.KIMONO_MODEL_DIR = previous; }
     } finally {
       await client.close();
