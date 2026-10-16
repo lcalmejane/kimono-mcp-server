@@ -135,5 +135,26 @@ index; MCP clients must reconnect and establish new sessions.
 dynamic Kimono manager is a separate integration step. Kimono is not currently
 a single-process multi-tenant server accepting arbitrary project paths.
 
+### Git accounts and rotation
+
+Set `KIMONO_GIT_PROFILE_FILE` to a private JSON file outside ROOT (0600/0400,
+readable by the runner). It supplies `transport` (`ssh` or `https`), `host`,
+`username`, `secret`, `authorName`, `authorEmail`, plus verified `knownHosts`
+for SSH. See the [schema and Compose example](../README.md#dynamic-per-instance-git-profile).
+The platform retrieves the authorized account's credentials and provisions the
+file; private keys/tokens never belong in MCP arguments or repository files.
+Use a read-only directory mount and atomically replace the file for rotation.
+Git commands reread it without restarting Kimono; in-flight commands retain
+their snapshot. Temporary credentials are cleaned up; use a private `/tmp`
+tmpfs for abrupt container termination.
+
+SSH uses the configured key (no passphrase/agent), strict host verification and
+port 22; HTTPS uses a token on port 443 without redirects. Other hosts,
+transports, ports and local-path remotes are rejected in managed mode. One
+instance has one Git identity shared by all clients; create separate instances
+for different identities. Missing/invalid profiles fail closed. Without this
+setting, native runner credentials still work. Official-base write protection
+and explicit push approval always remain in effect.
+
 For configuration, write protections and operational limits, see the
 [README integration contract](../README.md#integration-with-per-workspace-instance-managers).

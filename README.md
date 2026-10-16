@@ -364,6 +364,85 @@ As intentionally agreed, this is a structured Git API, not an unrestricted Git/s
 
 Configure Git identity and credentials on the runner, not in tool arguments or source files. Native Git supports `GIT_AUTHOR_NAME`, `GIT_AUTHOR_EMAIL`, `GIT_COMMITTER_NAME`, `GIT_COMMITTER_EMAIL`. With Compose, pass these explicitly through a local service override or mount an appropriate scoped Git config. For SSH, explicitly provide a scoped key/known_hosts or an agent socket; credentials are not bundled in the image.
 
+### Dynamic per-instance Git profile
+
+For a platform-managed instance, set `KIMONO_GIT_PROFILE_FILE` to an absolute
+path outside ROOT, pointing to a **private JSON file (0600 or 0400, <=64 KiB)**.
+The runner must be able to read it. This is server configuration, never an MCP
+tool argument; all clients of the instance share this Git identity.
+
+SSH profile schema (placeholders, not working credentials):
+
+```json
+{
+  "transport": "ssh",
+  "host": "github.com",
+  "username": "git",
+  "secret": "<unencrypted private SSH key with JSON-escaped newlines>",
+  "knownHosts": "github.com ssh-ed25519 <verified-server-public-key>",
+  "authorName": "Project contributor",
+  "authorEmail": "contributor@example.org"
+}
+```
+
+For HTTPS, use `"transport": "https"`, the Git account `username` and access token
+as `secret`; omit `knownHosts`. The schema matches the core fields of Tatami Git
+connections. Tatami must authorize the selected connection, retrieve/decrypt its
+secret (including resolving a managed SSH key), and provision this file itself;
+Kimono does not connect to Tatami's account database.
+
+The profile is reread for Git commands, including CLI/MCP installation,
+fetch/pull/push and local commits. Rotate it by atomically replacing the file
+inside a mounted **secret directory**; do not rely on replacing the source of a
+single-file bind mount (it may retain the old inode). Commands already running
+keep their credential snapshot; subsequent commands use the replacement.
+No restart or secrets in MCP messages are necessary.
+
+Managed mode enforces the exact host/transport, standard ports (SSH 22 / HTTPS
+443) and matching SSH username, including effective remote URLs after Git
+rewrites and push URLs. Local-path remotes and cross-host/transport redirects
+are not supported with a profile; use a separate instance/configuration.
+HTTPS uses a temporary askpass helper with credential helpers disabled and
+redirects disabled. SSH uses the selected key only, no agent, strict
+`known_hosts` verification and no user SSH config. Verified non-hashed host-key
+lines for the exact host are required; Kimono never trusts `ssh-keyscan` output
+automatically. Passphrase-protected keys are unsupported in managed mode.
+Author/committer identity is supplied per process, not written to `.git/config`.
+
+Temporary key/helper files are owner-only and removed after the command.
+Use a private tmpfs `/tmp` for managed containers to avoid persisting leftovers
+after an abrupt kill. Never expose the profile directory to repository code,
+commit it, include it in a Docker build context or mount it into another user's
+instance. Git subprocesses necessarily receive the credentials needed for their
+transport; this remains a trusted-runner feature, not a repository sandbox.
+Managed Git failures are intentionally generic to avoid echoing credentials;
+HTTPS tokens are redacted from captured process output. Profile load failures
+fail closed, without falling back to ambient credentials.
+
+Example local Compose override (adapt owner/permissions to the instance UID):
+
+```yaml
+services:
+  kimono-mcp-server:
+    environment:
+      KIMONO_GIT_PROFILE_FILE: /run/kimono-git/profile.json
+    volumes:
+      - /secure/project-git:/run/kimono-git:ro
+    tmpfs:
+      - /tmp:mode=1777
+  install-aikido:
+    environment:
+      KIMONO_GIT_PROFILE_FILE: /run/kimono-git/profile.json
+    volumes:
+      - /secure/project-git:/run/kimono-git:ro
+    tmpfs:
+      - /tmp:mode=1777
+```
+
+Without `KIMONO_GIT_PROFILE_FILE`, the existing runner environment/SSH-agent
+behavior is unchanged. Managed credentials never bypass official-origin write
+protection, `AIKIDO_WRITABLE`, writable-mount requirements or push approval.
+
 Writable mode is for trusted repositories and authorized clients: Git configuration/filters and remote servers can execute code. This API is not a sandbox. HTTP tokens authorize the whole configured instance, including enabled writes. Git history/diff tools expose repository contents independently of the search index exclusions; those exclusions are not Git access controls.
 
 ## Validation and publication
@@ -398,6 +477,7 @@ MIT. See [LICENSE](LICENSE). Third-party dependencies retain their own licenses.
 | `AIKIDO_REF` | `main` | Branch/tag for explicit installation. |
 | `AIKIDO_WRITABLE` | `false` | Opt-in project mutations; cannot unlock the official base. |
 | `AIKIDO_INCLUDE_SPEC` | `false` | Explicitly expose private personal specs in discovery/indexing. |
+| `KIMONO_GIT_PROFILE_FILE` | unset | Private server-managed SSH/HTTPS profile outside ROOT; reread for Git commands, supports rotation without restart. |
 | `KIMONO_CACHE_DIR` | `~/.cache/kimono` | Cache parent outside ROOT; contains sensitive document copies. |
 | `FGR_BIN` | `fgr` | Path to the fast-grep executable. |
 | `KIMONO_SEMANTIC_BIN` | `kimono-semantic` | Local embsearch-core helper executable. |

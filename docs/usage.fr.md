@@ -141,5 +141,28 @@ gestionnaire dynamique Tatami reste une étape d'intégration distincte.
 Kimono n'est pas actuellement un serveur multi-tenant acceptant des chemins
 de projets arbitraires dans un même processus.
 
+### Comptes Git et rotation
+
+Configurer `KIMONO_GIT_PROFILE_FILE` avec le chemin d'un fichier JSON privé hors
+ROOT (0600/0400, lisible par le runner). Il contient `transport` (`ssh` ou
+`https`), `host`, `username`, `secret`, `authorName`, `authorEmail` et, pour SSH,
+`knownHosts` avec les clés serveur vérifiées. Voir le
+[schéma et l'exemple Compose](../README.md#dynamic-per-instance-git-profile).
+La plateforme récupère les identifiants du compte autorisé et fournit ce fichier ;
+ne jamais placer clés privées ou jetons dans les arguments MCP ou le dépôt.
+Monter son répertoire en lecture seule et remplacer le fichier atomiquement
+pour la rotation. Les commandes Git le relisent sans redémarrage ; les commandes
+en cours gardent leur instantané. Les fichiers temporaires sont nettoyés ;
+utiliser un tmpfs `/tmp` privé en cas d'arrêt brutal du conteneur.
+
+SSH utilise la clé choisie (sans passphrase/agent), vérifie strictement le
+serveur et utilise le port 22 ; HTTPS utilise un jeton sur le port 443, sans
+redirection. Autres serveurs, transports, ports et dépôts distants par chemin
+local sont refusés dans ce mode. Tous les clients d'une instance partagent son
+identité Git ; séparer les instances pour des identités différentes. Un profil
+absent/invalide provoque une erreur, sans repli sur les identifiants ambiants.
+Sans cette configuration, les identifiants natifs du runner restent utilisables.
+La protection de la base officielle et la confirmation du push restent actives.
+
 Configuration, protections et limites : voir le
 [contrat d'intégration du README](../README.md#integration-with-per-workspace-instance-managers).

@@ -1,11 +1,9 @@
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
 import { lstat, mkdir, mkdtemp, readdir, realpath, rename, rm, rmdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { runProcess } from './process.js';
+import { withGitProfile } from './git-profile.js';
 
-const execute = promisify(execFile);
 export const AIKIDO_REPOSITORY = 'https://github.com/lcalmejane/aikido.git';
 
 export function isOfficialRepository(url: string): boolean {
@@ -45,8 +43,13 @@ export async function installAikido(targetPath: string, ref = 'main', repository
   const checkout = path.join(temporary, 'checkout');
   try {
     // Keep full history: the project checkout also supports normal Git workflows.
-    await execute('git', ['-c', 'core.hooksPath=/dev/null', 'clone', '--branch', ref, '--', repository, checkout],
-      { timeout: 600_000, maxBuffer: 4 * 1024 * 1024, env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } });
+    await withGitProfile(target, async (context) => {
+      const effective = await runProcess('git', [...context.args, 'ls-remote', '--get-url', repository],
+        temporary, [0], 120_000, undefined, context.env);
+      context.validateUrl(effective.stdout.trim());
+      await runProcess('git', [...context.args, '-c', 'core.hooksPath=/dev/null', 'clone', '--branch', ref, '--', repository, checkout],
+        temporary, [0], 600_000, undefined, context.env);
+    });
     const entryPoints = await Promise.all(['prompts/index.md', 'index.md'].map(async (file) => {
       try { return (await lstat(path.join(checkout, file))).isFile(); }
       catch (error) {
@@ -155,26 +158,31 @@ export class RepositoryAccess {
   }
 
   private async gitProcess(args: string[], allowedExitCodes = [0]) {
-    // Only named remotes are accepted by network operations. Check every effective
-    // fetch/push URL, including url.*.insteadOf expansion, before starting Git.
-    let localRemote = false;
-    if (['fetch', 'pull', 'push'].includes(args[0])) {
-      const remote = args[args[0] === 'pull' ? 2 : 1];
-      if (!/^[A-Za-z0-9_.-]+$/.test(remote)) throw new Error('Network operations require a configured remote name, not a URL');
-      for (const push of [false, true]) {
-        const result = await runProcess('git', [...GIT_OPTIONS, 'remote', 'get-url', '--all', ...(push ? ['--push'] : []), remote], this.root);
-        for (const url of result.stdout.trim().split('\n')) {
-          if (isOfficialRepository(url)) throw new Error('Network writes/fetches against the official AI-KIDO base are disabled');
-          validateRepository(url);
-          if (path.isAbsolute(url)) {
-            const source = await runProcess('git', [...GIT_OPTIONS, 'config', '--get', 'remote.origin.url'], url, [0, 1]);
-            if (isOfficialRepository(source.stdout)) throw new Error('The local remote is an official AI-KIDO base and is protected');
+    return withGitProfile(this.root, async (context) => {
+      const run = (gitArgs: string[], cwd = this.root, codes = [0]) =>
+        runProcess('git', [...GIT_OPTIONS, ...context.args, ...gitArgs], cwd, codes, 120_000, undefined, context.env);
+      // Only named remotes are accepted by network operations. Check every effective
+      // fetch/push URL, including url.*.insteadOf expansion, before starting Git.
+      let localRemote = false;
+      if (['fetch', 'pull', 'push'].includes(args[0])) {
+        const remote = args[args[0] === 'pull' ? 2 : 1];
+        if (!/^[A-Za-z0-9_.-]+$/.test(remote)) throw new Error('Network operations require a configured remote name, not a URL');
+        for (const push of [false, true]) {
+          const result = await run(['remote', 'get-url', '--all', ...(push ? ['--push'] : []), remote]);
+          for (const url of result.stdout.trim().split('\n')) {
+            if (isOfficialRepository(url)) throw new Error('Network writes/fetches against the official AI-KIDO base are disabled');
+            validateRepository(url);
+            context.validateUrl(url);
+            if (path.isAbsolute(url)) {
+              const source = await run(['config', '--get', 'remote.origin.url'], url, [0, 1]);
+              if (isOfficialRepository(source.stdout)) throw new Error('The local remote is an official AI-KIDO base and is protected');
+            }
+            localRemote ||= path.isAbsolute(url);
           }
-          localRemote ||= path.isAbsolute(url);
         }
       }
-    }
-    return runProcess('git', [...GIT_OPTIONS, ...(localRemote ? ['-c', 'protocol.file.allow=always'] : []), ...args], this.root, allowedExitCodes);
+      return run([...(localRemote ? ['-c', 'protocol.file.allow=always'] : []), ...args], this.root, allowedExitCodes);
+    });
   }
 }
 

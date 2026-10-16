@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.1 - 2026-10-16
+
+- Dynamic per-instance SSH/HTTPS Git profiles from a private mounted file: rotation without restart, scoped remote validation, strict SSH host keys, commit identity, temporary credential cleanup and sanitized failures. Applies to initialization and project Git tools; official-origin protections remain.
+
 ## 0.1.0 - 2026-10-16
 
 - Concise English/French usage guides for standalone deployments, platform integration and concurrent agents/humans sharing a knowledge base, with explicit coordination and authorization limits.

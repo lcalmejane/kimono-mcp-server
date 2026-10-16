@@ -21,7 +21,7 @@ import { RUNTIME_TOOLS, runtimeFor } from './runtime-tools.js';
 import { Lifecycle, shutdownSignals } from './lifecycle.js';
 
 const SERVER_NAME = 'kimono-mcp-server';
-const SERVER_VERSION = '0.1.0';
+const SERVER_VERSION = '0.1.1';
 const MCP_TOOL: Tool = {
   name: 'aikido',
   description: 'Discover, search, read, and activate the AI-KIDO knowledge base. Activating returns the documented instructions for the connected AI assistant to carry out; this server does not execute an LLM workflow itself.',
