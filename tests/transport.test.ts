@@ -37,7 +37,7 @@ it('initializes an absent ROOT and edits/commits/pushes a project over real stdi
   });
   try {
     await client.connect(transport);
-    expect((await client.listTools()).tools).toHaveLength(6);
+    expect((await client.listTools()).tools).toHaveLength(7);
     expect((await client.listResources()).resources).toEqual([]);
     const call = async (name: string, args: Record<string, unknown>) => {
       const response = await client.callTool({ name, arguments: args });

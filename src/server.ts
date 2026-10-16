@@ -29,6 +29,9 @@ const MCP_TOOL: Tool = {
       operation: { type: 'string', enum: ['list', 'search', 'read', 'activate', 'execute', 'refresh'] },
       kind: { type: 'string', enum: ['command', 'agent', 'skill', 'workflow', 'knowledge'] },
       query: { type: 'string', description: 'Filter or full-text search query.' },
+      vector: { type: 'array', minItems: 1, maxItems: 16384, items: { type: 'number' }, description: 'Search only: alternative to query, requires mode=semantic and embeddingModel.' },
+      embeddingModel: { type: 'string', description: 'Exact model identifier from aikido_embed; vectors must use matching weights and preprocessing.' },
+      mode: { type: 'string', enum: ['literal', 'regex', 'semantic'], default: 'literal' },
       id: { type: 'string', description: 'Knowledge-base relative path, as returned by list/search.' },
       context: { type: 'string', description: 'Optional user request to include when activating a command, agent, or skill.' },
       limit: { type: 'number', description: 'Maximum search results (1-100).', minimum: 1, maximum: 100 },
@@ -121,11 +124,7 @@ async function callAikidoTool(knowledge: AikidoKnowledgeBase, raw: Record<string
     return toolResult(JSON.stringify({ count: entries.length, entries }, null, 2));
   }
   if (operation === 'search') {
-    const query = stringArg(raw.query, 'query', true)!;
-    const limit = raw.limit === undefined ? 25 : raw.limit;
-    if (typeof limit !== 'number') throw new Error('limit must be a number');
-    const results = await knowledge.search(query, kind, limit);
-    return toolResult(JSON.stringify({ count: results.length, results }, null, 2));
+    return toolResult(await runtimeFor(knowledge).call('aikido_search', raw));
   }
   if (operation === 'read' || operation === 'activate' || operation === 'execute') {
     const id = stringArg(raw.id, 'id', true)!;

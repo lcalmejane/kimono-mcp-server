@@ -1,0 +1,18 @@
+{
+  "fastGrep": "0.5.0",
+  "embsearchCore": "0.3.4",
+  "onnxRuntime": "1.31.0",
+  "onnxArchives": {
+    "arm64": "c5b8b3cca31f3d643a3b313b8f42e2d0f16a4fcefd02cda343d97bd5306afaab",
+    "x64": "cc5c72baf5ae5c8238a6841f0897227be2d02826b9cf98eaf02fdefaeeb03a57"
+  },
+  "model": {
+    "repository": "Xenova/multilingual-e5-small",
+    "revision": "761b726dd34fb83930e26aab4e9ac3899aa1fa78",
+    "weights": "onnx/model_int8.onnx",
+    "weightsSha256": "4d24e2bc01a447951524466ef533e52944bf48509e6552810bcee1a2711cb02c",
+    "tokenizerSha256": "0b44a9d7b51c3c62626640cda0e2c2f70fdacdc25bbbd68038369d14ebdf4c39",
+    "licenseUrl": "https://raw.githubusercontent.com/microsoft/unilm/31c5b904ca1bf2afb4c234a6675c683a4e5fc7cd/LICENSE",
+    "licenseSha256": "904dc4d8749877f1dba1cda48200d2462dccbeb7c134d5e4ef6fa75e0198c8fe"
+  }
+}

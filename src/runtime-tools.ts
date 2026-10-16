@@ -6,6 +6,23 @@ import { AIKIDO_REPOSITORY, installAikido, RepositoryAccess, validateRelativePat
 
 export const RUNTIME_TOOLS: Tool[] = [
   {
+    name: 'aikido_embed',
+    description: 'operation=info introspects the active local embedding model without inference: exact identifier, name, dimensions, pooling, normalization, prefixes, token cap and SHA-256 of model/tokenizer/spec. Default operation=embed generates a text vector with usage=query or document. Neither operation reads or modifies ROOT/indexes. Text beyond the token cap is truncated.',
+    inputSchema: {
+      type: 'object', additionalProperties: false,
+      oneOf: [
+        { required: ['operation'], properties: { operation: { const: 'info' } }, not: { anyOf: [{ required: ['text'] }, { required: ['usage'] }] } },
+        { required: ['text'], properties: { operation: { const: 'embed' } } },
+      ],
+      properties: {
+        operation: { type: 'string', enum: ['embed', 'info'], default: 'embed' },
+        text: { type: 'string', minLength: 1, description: 'Non-blank text, maximum 32768 UTF-8 bytes.' },
+        usage: { type: 'string', enum: ['query', 'document'], default: 'query' },
+      },
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+  },
+  {
     name: 'aikido_root',
     description: 'Inspect or initialize the configured AIKIDO_ROOT. init clones the standard AI-KIDO repository or another Git repository into this ROOT only; never overwrites non-empty paths.',
     inputSchema: {
@@ -19,11 +36,18 @@ export const RUNTIME_TOOLS: Tool[] = [
   },
   {
     name: 'aikido_search',
-    description: 'Search the current AI-KIDO knowledge using the real Rust fast-grep (fgr) index, refreshed before every search. Literal or regex, bounded results with paths and line numbers. Not an embedding/semantic engine.',
+    description: 'Search knowledge with literal/regex text or mode=semantic using exactly one of query or vector. Vector search requires embeddingModel from aikido_embed, matching the active model; equal dimensions alone do not imply compatibility. Caller must use the same weights/tokenizer/pooling/prefix conventions. Indexes refresh before querying. Returns bounded cosine-ranked passages.',
     inputSchema: {
-      type: 'object', additionalProperties: false, required: ['query'],
+      type: 'object', additionalProperties: false,
+      oneOf: [
+        { required: ['query'], not: { anyOf: [{ required: ['vector'] }, { required: ['embeddingModel'] }] } },
+        { required: ['vector', 'embeddingModel', 'mode'], properties: { mode: { const: 'semantic' } }, not: { required: ['query'] } },
+      ],
       properties: {
         query: { type: 'string' }, regex: { type: 'boolean', default: false },
+        vector: { type: 'array', minItems: 1, maxItems: 16384, items: { type: 'number' }, description: 'Finite non-zero embedding; must match the active model dimension.' },
+        embeddingModel: { type: 'string', description: 'Exact model identifier returned by aikido_embed; caller is responsible for vector provenance and matching preprocessing.' },
+        mode: { type: 'string', enum: ['literal', 'regex', 'semantic'], default: 'literal' },
         kind: { type: 'string', enum: ['command', 'agent', 'skill', 'workflow', 'knowledge'] },
         limit: { type: 'integer', minimum: 1, maximum: 100, default: 25 },
       },
@@ -32,10 +56,13 @@ export const RUNTIME_TOOLS: Tool[] = [
   },
   {
     name: 'aikido_index',
-    description: 'Update, rebuild, compact or inspect the persistent fast-grep index. Cache is outside AIKIDO_ROOT; private spec documents are excluded unless explicitly configured.',
+    description: 'Update, rebuild, compact or inspect the persistent literal (fast-grep) or semantic (embsearch-core) index. Cache is outside ROOT; private specs remain opt-in.',
     inputSchema: {
       type: 'object', additionalProperties: false, required: ['operation'],
-      properties: { operation: { type: 'string', enum: ['update', 'rebuild', 'compact', 'stats'] } },
+      properties: {
+        operation: { type: 'string', enum: ['update', 'rebuild', 'compact', 'stats'] },
+        mode: { type: 'string', enum: ['literal', 'semantic'], default: 'literal' },
+      },
     },
   },
   {
@@ -96,6 +123,18 @@ class RuntimeTools {
   }
 
   private async execute(name: string, input: Record<string, unknown>): Promise<string> {
+    if (name === 'aikido_embed') {
+      const operation = input.operation ?? 'embed';
+      if (operation === 'info') {
+        if (input.text !== undefined || input.usage !== undefined) throw new Error('info does not accept text or usage');
+        return JSON.stringify(await this.knowledge.semanticIndex.info());
+      }
+      if (operation !== 'embed') throw new Error('operation must be embed or info');
+      const value = text(input, 'text', true)!;
+      const usage = input.usage ?? 'query';
+      if (usage !== 'query' && usage !== 'document') throw new Error('usage must be query or document');
+      return JSON.stringify(await this.knowledge.semanticIndex.embed(value, usage));
+    }
     if (name === 'aikido_root') {
       const operation = text(input, 'operation', true);
       if (operation === 'status') {
@@ -113,20 +152,42 @@ class RuntimeTools {
       return JSON.stringify({ root: this.knowledge.root, initialized: true, documents: this.knowledge.list().length });
     }
     if (name === 'aikido_search') {
-      const query = text(input, 'query', true)!;
       const kind = input.kind;
       if (kind !== undefined && kind !== 'agent' && kind !== 'skill' && kind !== 'command' && kind !== 'workflow' && kind !== 'knowledge') throw new Error('Invalid knowledge kind');
       const limit = input.limit ?? 25;
       if (typeof limit !== 'number' || !Number.isInteger(limit) || limit < 1 || limit > 100) throw new Error('limit must be between 1 and 100');
       if (input.regex !== undefined && typeof input.regex !== 'boolean') throw new Error('regex must be boolean');
-      if (!query.trim()) throw new Error('query must not be empty');
+      const mode = input.mode ?? (input.regex === true ? 'regex' : 'literal');
+      if (mode !== 'literal' && mode !== 'regex' && mode !== 'semantic') throw new Error('mode must be literal, regex or semantic');
+      if (input.regex === true && mode !== 'regex') throw new Error('regex=true conflicts with the requested search mode');
+      if (input.vector !== undefined) {
+        if (mode !== 'semantic') throw new Error('vector requires mode=semantic');
+        if (input.query !== undefined) throw new Error('Provide exactly one of query or vector');
+        const vector = input.vector;
+        if (!Array.isArray(vector) || vector.length < 1 || vector.length > 16384
+          || !vector.every((value: unknown): value is number => typeof value === 'number'
+            && Number.isFinite(value) && Math.abs(value) <= 3.4028234663852886e38)
+          || !vector.some((value) => Math.abs(value) >= 1.1754943508222875e-38)) {
+          throw new Error('vector must contain 1-16384 finite float32 numbers with non-zero norm');
+        }
+        const embeddingModel = text(input, 'embeddingModel', true)!;
+        return JSON.stringify(await this.knowledge.semanticIndex.run('search', { vector, embeddingModel, kind, limit }));
+      }
+      if (input.embeddingModel !== undefined) throw new Error('embeddingModel requires vector');
+      const query = text(input, 'query', true)!;
+      if (mode === 'semantic') {
+        return JSON.stringify(await this.knowledge.semanticIndex.run('search', { query, kind, limit }));
+      }
       await this.knowledge.refresh();
-      const results = await this.knowledge.searchIndex.search(query, kind, limit, input.regex === true);
+      const results = await this.knowledge.searchIndex.search(query, kind, limit, mode === 'regex');
       return JSON.stringify({ engine: 'fast-grep', count: results.length, results });
     }
     if (name === 'aikido_index') {
       const operation = text(input, 'operation', true);
       if (operation !== 'update' && operation !== 'rebuild' && operation !== 'compact' && operation !== 'stats') throw new Error('Invalid index operation');
+      const mode = input.mode ?? 'literal';
+      if (mode !== 'literal' && mode !== 'semantic') throw new Error('Index mode must be literal or semantic');
+      if (mode === 'semantic') return JSON.stringify(await this.knowledge.semanticIndex.run(operation));
       await this.knowledge.refresh();
       return this.knowledge.searchIndex.maintain(operation);
     }

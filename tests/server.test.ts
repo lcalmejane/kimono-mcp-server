@@ -34,7 +34,7 @@ describe('AI-KIDO MCP surface', () => {
 
     try {
       const tools = await client.listTools();
-      expect(tools.tools.map((tool) => tool.name)).toEqual(['aikido', 'aikido_root', 'aikido_search', 'aikido_index', 'aikido_git', 'aikido_file']);
+      expect(tools.tools.map((tool) => tool.name)).toEqual(['aikido', 'aikido_embed', 'aikido_root', 'aikido_search', 'aikido_index', 'aikido_git', 'aikido_file']);
 
       const listed = await client.callTool({ name: 'aikido', arguments: { operation: 'list', kind: 'command' } });
       expect(JSON.stringify(listed)).toContain('prompts/hard_points/commands/check-truth.md');

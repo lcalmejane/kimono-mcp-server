@@ -26,16 +26,38 @@ RUN ln -s /usr/local/lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
 ENV KIMONO_CACHE_DIR=/home/node/.cache/kimono
 WORKDIR /app
 
-FROM tooling AS test
+FROM tooling AS semantic-build
+ENV ORT_SKIP_DOWNLOAD=1
+WORKDIR /semantic
+COPY semantic/Cargo.toml semantic/Cargo.lock ./
+COPY semantic/src ./src
+RUN cargo build --release --locked && cargo test --locked
+
+FROM tooling AS semantic-assets
+WORKDIR /assets
+COPY semantic/model.json semantic/versions.json ./semantic/
+COPY scripts/prepare-semantic.mjs ./scripts/
+RUN node scripts/prepare-semantic.mjs /opt/kimono
+
+FROM tooling AS semantic-tooling
+COPY --from=semantic-build /semantic/target/release/kimono-semantic /usr/local/bin/kimono-semantic
+COPY --from=semantic-assets /opt/kimono /opt/kimono
+COPY THIRD_PARTY_NOTICES.md /opt/kimono/THIRD_PARTY_NOTICES.md
+ENV ORT_DYLIB_PATH=/opt/kimono/onnxruntime/lib/libonnxruntime.so \
+    KIMONO_MODEL_DIR=/opt/kimono/model
+
+FROM semantic-tooling AS test
 COPY --from=build --chown=node:node /app/node_modules ./node_modules
-COPY --chown=node:node package*.json tsconfig.json ./
+COPY --chown=node:node package*.json tsconfig.json Dockerfile ./
 COPY --chown=node:node src ./src
 COPY --chown=node:node tests ./tests
+COPY --chown=node:node semantic ./semantic
+COPY --chown=node:node scripts ./scripts
 RUN chown node:node /app
 USER node
 CMD ["npm", "test"]
 
-FROM tooling AS runtime
+FROM semantic-tooling AS runtime
 ENV NODE_ENV=production
 COPY --from=production-dependencies --chown=node:node /app/node_modules ./node_modules
 COPY --from=build --chown=node:node /app/dist ./dist

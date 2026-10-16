@@ -1,0 +1,9 @@
+{
+  "name": "multilingual-e5-small-int8-761b726dd34fb83930e26aab4e9ac3899aa1fa78",
+  "dim": 384,
+  "pooling": "mean",
+  "normalize": true,
+  "max_tokens": 512,
+  "query_prefix": "query: ",
+  "document_prefix": "passage: "
+}

@@ -1,6 +1,7 @@
 import { readdir, readFile, realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { FastGrepIndex } from './search.js';
+import { SemanticIndex } from './semantic.js';
 
 export type KnowledgeKind = 'command' | 'agent' | 'skill' | 'workflow' | 'knowledge';
 
@@ -25,12 +26,14 @@ const MAX_FILE_BYTES = 2 * 1024 * 1024;
 export class AikidoKnowledgeBase {
   readonly root: string;
   readonly searchIndex: FastGrepIndex;
+  readonly semanticIndex: SemanticIndex;
   private initialized = false;
   private entries: KnowledgeEntry[] = [];
 
   constructor(root: string) {
     this.root = path.resolve(root);
     this.searchIndex = new FastGrepIndex(this);
+    this.semanticIndex = new SemanticIndex(this);
   }
 
   get isInitialized(): boolean { return this.initialized; }

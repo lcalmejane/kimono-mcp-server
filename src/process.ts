@@ -8,10 +8,11 @@ export async function runProcess(
   args: string[],
   cwd: string,
   allowedExitCodes: number[] = [0],
+  timeout = 120_000,
 ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
   try {
     const result = await execute(executable, args, {
-      cwd, timeout: 120_000, maxBuffer: 4 * 1024 * 1024,
+      cwd, timeout, maxBuffer: 4 * 1024 * 1024,
       env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_PAGER: 'cat', PAGER: 'cat', GIT_EDITOR: 'true', GIT_SEQUENCE_EDITOR: 'true' },
     });
     return { ...result, exitCode: 0 };
