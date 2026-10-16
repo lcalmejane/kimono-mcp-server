@@ -1,0 +1,305 @@
+import { randomUUID, timingSafeEqual } from 'node:crypto';
+import { createServer as createHttpServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import { Server } from '@modelcontextprotocol/sdk/server/index.js';
+import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
+import {
+  CallToolRequestSchema,
+  CompleteRequestSchema,
+  GetPromptRequestSchema,
+  ListPromptsRequestSchema,
+  ListResourceTemplatesRequestSchema,
+  ListResourcesRequestSchema,
+  ListToolsRequestSchema,
+  ReadResourceRequestSchema,
+  type Tool,
+} from '@modelcontextprotocol/sdk/types.js';
+import { AikidoKnowledgeBase, type KnowledgeEntry, type KnowledgeKind } from './knowledge.js';
+import { lstat, readdir } from 'node:fs/promises';
+import { RUNTIME_TOOLS, runtimeFor } from './runtime-tools.js';
+
+const SERVER_NAME = 'kimono-mcp-server';
+const SERVER_VERSION = '0.1.0';
+const MCP_TOOL: Tool = {
+  name: 'aikido',
+  description: 'Discover, search, read, and activate the AI-KIDO knowledge base. Activating returns the documented instructions for the connected AI assistant to carry out; this server does not execute an LLM workflow itself.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      operation: { type: 'string', enum: ['list', 'search', 'read', 'activate', 'execute', 'refresh'] },
+      kind: { type: 'string', enum: ['command', 'agent', 'skill', 'workflow', 'knowledge'] },
+      query: { type: 'string', description: 'Filter or full-text search query.' },
+      id: { type: 'string', description: 'Knowledge-base relative path, as returned by list/search.' },
+      context: { type: 'string', description: 'Optional user request to include when activating a command, agent, or skill.' },
+      limit: { type: 'number', description: 'Maximum search results (1-100).', minimum: 1, maximum: 100 },
+    },
+    required: ['operation'],
+  },
+};
+
+export function createAikidoMcpServer(knowledge: AikidoKnowledgeBase): Server {
+  const server = new Server(
+    { name: SERVER_NAME, version: SERVER_VERSION },
+    { capabilities: { tools: {}, resources: { subscribe: false, listChanged: false }, prompts: {}, completions: {} } },
+  );
+
+  server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: [MCP_TOOL, ...RUNTIME_TOOLS] }));
+  server.setRequestHandler(CallToolRequestSchema, async (request) => {
+    try {
+      if (request.params.name !== 'aikido') {
+        return toolResult(await runtimeFor(knowledge).call(request.params.name, request.params.arguments ?? {}));
+      }
+      return await callAikidoTool(knowledge, request.params.arguments ?? {});
+    } catch (error) {
+      return toolError(error instanceof Error ? error.message : String(error));
+    }
+  });
+
+  server.setRequestHandler(ListResourcesRequestSchema, async () => ({
+    resources: (knowledge.isInitialized ? knowledge.list() : []).map((entry) => ({
+      uri: resourceUri(entry.path),
+      name: entry.path,
+      description: `${entry.kind}: ${entry.title}`,
+      mimeType: mimeType(entry.path),
+    })),
+  }));
+  server.setRequestHandler(ListResourceTemplatesRequestSchema, async () => ({
+    resourceTemplates: [{
+      uriTemplate: 'aikido://{path}',
+      name: 'AI-KIDO knowledge document',
+      description: 'Read a text document from the configured AIKIDO_ROOT.',
+      mimeType: 'text/markdown',
+    }],
+  }));
+  server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
+    const filePath = pathFromResourceUri(request.params.uri);
+    const { content } = await knowledge.read(filePath);
+    return { contents: [{ uri: request.params.uri, mimeType: mimeType(filePath), text: content }] };
+  });
+
+  server.setRequestHandler(ListPromptsRequestSchema, async () => ({
+    prompts: (knowledge.isInitialized ? knowledge.list() : []).map((entry) => ({
+      name: promptName(entry),
+      description: `Load AI-KIDO ${entry.kind} instructions: ${entry.path}`,
+      arguments: [{ name: 'context', description: 'Optional user request/context for the AI-KIDO instructions.', required: false }],
+    })),
+  }));
+  server.setRequestHandler(GetPromptRequestSchema, async (request) => {
+    const entry = knowledge.list().find((item) => promptName(item) === request.params.name);
+    if (!entry) throw new Error(`AI-KIDO prompt not found: ${request.params.name}`);
+    const { content } = await knowledge.read(entry.id);
+    const context = request.params.arguments?.context;
+    const message = typeof context === 'string' && context.trim()
+      ? `User context:\n${context.trim()}\n\nAI-KIDO instructions (${entry.path}):\n\n${content}`
+      : `AI-KIDO instructions (${entry.path}):\n\n${content}`;
+    return { description: `AI-KIDO ${entry.kind}: ${entry.title}`, messages: [{ role: 'user', content: { type: 'text', text: message } }] };
+  });
+  server.setRequestHandler(CompleteRequestSchema, async (request) => {
+    const { argument, ref } = request.params;
+    const value = argument.value.toLocaleLowerCase();
+    const candidates = !knowledge.isInitialized ? [] : ref.type === 'ref/prompt'
+      ? knowledge.list().map(promptName)
+      : ref.type === 'ref/resource'
+        ? knowledge.list().map((entry) => resourceUri(entry.path))
+        : [];
+    const values = candidates.filter((candidate) => candidate.toLocaleLowerCase().includes(value)).slice(0, 100);
+    return { completion: { values, total: values.length, hasMore: false } };
+  });
+  return server;
+}
+
+async function callAikidoTool(knowledge: AikidoKnowledgeBase, raw: Record<string, unknown>) {
+  const operation = raw.operation;
+  const kind = parseKind(raw.kind);
+  if (operation === 'refresh') {
+    const count = await knowledge.refresh();
+    await knowledge.searchIndex.synchronize();
+    return toolResult(`AI-KIDO index refreshed: ${count} text files discovered.`);
+  }
+  if (operation === 'list') {
+    const entries = knowledge.list(kind, stringArg(raw.query, 'query', false));
+    return toolResult(JSON.stringify({ count: entries.length, entries }, null, 2));
+  }
+  if (operation === 'search') {
+    const query = stringArg(raw.query, 'query', true)!;
+    const limit = raw.limit === undefined ? 25 : raw.limit;
+    if (typeof limit !== 'number') throw new Error('limit must be a number');
+    const results = await knowledge.search(query, kind, limit);
+    return toolResult(JSON.stringify({ count: results.length, results }, null, 2));
+  }
+  if (operation === 'read' || operation === 'activate' || operation === 'execute') {
+    const id = stringArg(raw.id, 'id', true)!;
+    const { entry, content } = await knowledge.read(id);
+    if (operation === 'read') return toolResult(content);
+    if (!['command', 'agent', 'skill', 'workflow'].includes(entry.kind)) {
+      throw new Error(`Only commands, agents, skills and workflows can be activated; ${entry.path} is ${entry.kind}`);
+    }
+    const context = stringArg(raw.context, 'context', false);
+    return toolResult([
+      `AI-KIDO ${entry.kind} instructions loaded from ${entry.path}.`,
+      'Follow these instructions as the connected AI assistant; the MCP server does not execute model workflows. Use aikido_file and aikido_git for approved project actions; the standard base is protected.',
+      context ? `\nUser context:\n${context}` : '',
+      `\n---\n${content}`,
+    ].filter(Boolean).join('\n'));
+  }
+  throw new Error(`Unknown operation: ${String(operation)}. Use list, search, read, activate, execute, or refresh.`);
+}
+
+function toolResult(text: string) {
+  return { content: [{ type: 'text' as const, text }] };
+}
+
+function toolError(message: string) {
+  return { isError: true, content: [{ type: 'text' as const, text: message }] };
+}
+
+function parseKind(value: unknown): KnowledgeKind | undefined {
+  if (value === undefined) return undefined;
+  if (value === 'command' || value === 'agent' || value === 'skill' || value === 'workflow' || value === 'knowledge') return value;
+  throw new Error('kind must be command, agent, skill, workflow or knowledge');
+}
+
+function stringArg(value: unknown, name: string, required: true): string;
+function stringArg(value: unknown, name: string, required: false): string | undefined;
+function stringArg(value: unknown, name: string, required: boolean): string | undefined {
+  if (value === undefined && !required) return undefined;
+  if (typeof value !== 'string' || (required && !value.trim())) throw new Error(`${name} must be a non-empty string`);
+  return value;
+}
+
+function promptName(entry: KnowledgeEntry): string {
+  return `aikido.${entry.kind}.${encodeURIComponent(entry.path)}`;
+}
+
+function resourceUri(filePath: string): string {
+  return `aikido://${encodeURIComponent(filePath)}`;
+}
+
+function pathFromResourceUri(uri: string): string {
+  const prefix = 'aikido://';
+  if (!uri.startsWith(prefix)) throw new Error(`Unsupported AI-KIDO resource URI: ${uri}`);
+  try {
+    return decodeURIComponent(uri.slice(prefix.length));
+  } catch (error) {
+    throw new Error(`Malformed AI-KIDO resource URI: ${uri}`, { cause: error });
+  }
+}
+
+function mimeType(filePath: string): string {
+  if (filePath.endsWith('.md') || filePath.endsWith('.mdc')) return 'text/markdown';
+  if (filePath.endsWith('.json')) return 'application/json';
+  if (filePath.endsWith('.yaml') || filePath.endsWith('.yml')) return 'application/yaml';
+  if (filePath.endsWith('.js') || filePath.endsWith('.mjs') || filePath.endsWith('.cjs')) return 'text/javascript';
+  if (filePath.endsWith('.sh')) return 'text/x-shellscript';
+  if (filePath.endsWith('.xml')) return 'application/xml';
+  return 'text/plain';
+}
+
+export async function startStdioServer(knowledge: AikidoKnowledgeBase): Promise<void> {
+  await prepareKnowledge(knowledge);
+  const server = createAikidoMcpServer(knowledge);
+  await server.connect(new StdioServerTransport());
+  console.error(`${SERVER_NAME} ready on stdio (${knowledge.isInitialized ? knowledge.list().length : 0} documents)`);
+}
+
+export async function startHttpServer(knowledge: AikidoKnowledgeBase, options: { host: string; port: number; authToken: string }): Promise<void> {
+  if (!options.authToken.trim()) throw new Error('MCP_AUTH_TOKEN is required for the HTTP transport');
+  await prepareKnowledge(knowledge);
+  const transports = new Map<string, StreamableHTTPServerTransport>();
+
+  const httpServer = createHttpServer((request, response) => {
+    void handleHttpRequest(request, response, knowledge, options.authToken, transports).catch((error: unknown) => {
+      console.error('MCP HTTP handler failed:', error instanceof Error ? error.message : String(error));
+      if (!response.headersSent) response.writeHead(500).end('MCP request failed');
+      else response.end();
+    });
+  });
+  await new Promise<void>((resolve, reject) => {
+    httpServer.once('error', reject);
+    httpServer.listen(options.port, options.host, resolve);
+  });
+  console.error(`${SERVER_NAME} listening on http://${options.host}:${options.port}/mcp`);
+}
+
+async function prepareKnowledge(knowledge: AikidoKnowledgeBase): Promise<void> {
+  try {
+    const info = await lstat(knowledge.root);
+    if (info.isDirectory() && (await readdir(knowledge.root)).length === 0) return;
+  } catch (error) {
+    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return;
+    throw error;
+  }
+  await knowledge.initialize();
+  await knowledge.searchIndex.synchronize();
+}
+
+async function handleHttpRequest(
+  request: IncomingMessage,
+  response: ServerResponse<IncomingMessage>,
+  knowledge: AikidoKnowledgeBase,
+  authToken: string,
+  transports: Map<string, StreamableHTTPServerTransport>,
+): Promise<void> {
+  const pathname = new URL(request.url ?? '/', 'http://localhost').pathname;
+  if (pathname === '/healthz' && request.method === 'GET') {
+    response.writeHead(200, { 'content-type': 'application/json' }).end('{"status":"ok"}');
+    return;
+  }
+  if (pathname !== '/mcp') {
+    response.writeHead(404).end('Not found');
+    return;
+  }
+  if (!authorized(request, authToken)) {
+    response.writeHead(401, { 'www-authenticate': 'Bearer', 'content-type': 'application/json' }).end('{"error":"Unauthorized"}');
+    return;
+  }
+
+  const sessionId = request.headers['mcp-session-id'];
+  let transport: StreamableHTTPServerTransport | undefined;
+  if (typeof sessionId === 'string') {
+    transport = transports.get(sessionId);
+    if (!transport) {
+      response.writeHead(404).end('Unknown MCP session');
+      return;
+    }
+  } else if (request.method === 'POST') {
+    let initializedSessionId: string | undefined;
+    transport = new StreamableHTTPServerTransport({
+      sessionIdGenerator: () => randomUUID(),
+      onsessioninitialized: (id) => {
+        initializedSessionId = id;
+        transports.set(id, transport!);
+      },
+      onsessionclosed: (id) => {
+        transports.delete(id);
+      },
+    });
+    const mcpServer = createAikidoMcpServer(knowledge);
+    await mcpServer.connect(transport);
+    transport.onclose = () => {
+      if (initializedSessionId) transports.delete(initializedSessionId);
+      void mcpServer.close().catch((error: unknown) => {
+        console.error('Unable to close MCP session:', error instanceof Error ? error.message : String(error));
+      });
+    };
+  } else {
+    response.writeHead(400).end('MCP session ID required');
+    return;
+  }
+
+  try {
+    await transport.handleRequest(request, response);
+  } catch (error) {
+    console.error('MCP HTTP request failed:', error instanceof Error ? error.message : String(error));
+    if (!response.headersSent) response.writeHead(500).end('MCP request failed');
+    else response.end();
+  }
+}
+
+function authorized(request: IncomingMessage, expectedToken: string): boolean {
+  const header = request.headers.authorization;
+  if (!header?.startsWith('Bearer ')) return false;
+  const actual = Buffer.from(header.slice(7));
+  const expected = Buffer.from(expectedToken);
+  return actual.length === expected.length && timingSafeEqual(actual, expected);
+}

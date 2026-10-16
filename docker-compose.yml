@@ -1,0 +1,39 @@
+services:
+  kimono-mcp-server:
+    build: .
+    image: ${KIMONO_IMAGE:-kimono-mcp-server:local}
+    restart: unless-stopped
+    environment:
+      AIKIDO_ROOT: /knowledge/${AIKIDO_DIR:-aikido}
+      AIKIDO_WRITABLE: ${AIKIDO_WRITABLE:-false}
+      AIKIDO_INCLUDE_SPEC: ${AIKIDO_INCLUDE_SPEC:-false}
+      AIKIDO_REPOSITORY: ${AIKIDO_REPOSITORY:-https://github.com/lcalmejane/aikido.git}
+      AIKIDO_REF: ${AIKIDO_REF:-main}
+      MCP_TRANSPORT: http
+      MCP_HOST: 0.0.0.0
+      MCP_PORT: 3000
+      MCP_AUTH_TOKEN: ${MCP_AUTH_TOKEN:?Set MCP_AUTH_TOKEN in .env}
+    ports:
+      - "127.0.0.1:${MCP_PORT:-3000}:3000"
+    volumes:
+      - ${AIKIDO_HOST_PARENT:-./data}:/knowledge:${AIKIDO_VOLUME_MODE:-ro}
+      - kimono-cache:/home/node/.cache/kimono
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/healthz').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  install-aikido:
+    build: .
+    profiles: ["install"]
+    entrypoint: ["node", "dist/cli.js"]
+    command: ["init", "--root", "/knowledge/${AIKIDO_DIR:-aikido}", "--ref", "${AIKIDO_REF:-main}", "--repository", "${AIKIDO_REPOSITORY:-https://github.com/lcalmejane/aikido.git}"]
+    environment:
+      AIKIDO_ROOT: /knowledge/${AIKIDO_DIR:-aikido}
+    volumes:
+      - ${AIKIDO_HOST_PARENT:-./data}:/knowledge:rw
+
+volumes:
+  kimono-cache:
