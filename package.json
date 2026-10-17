@@ -1,6 +1,6 @@
 {
   "name": "kimono-mcp-server",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "MCP server for discovering and activating AI-KIDO knowledge-base capabilities",
   "license": "MIT",
   "repository": {
@@ -25,7 +25,8 @@
     "node": ">=24"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.12.1"
+    "@modelcontextprotocol/sdk": "^1.12.1",
+    "ignore": "^7.0.5"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

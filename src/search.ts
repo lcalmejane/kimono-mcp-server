@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
-import type { AikidoKnowledgeBase, KnowledgeKind, SearchMatch } from './knowledge.js';
+import type { AikidoKnowledgeBase, KnowledgeEntry, KnowledgeKind, SearchMatch } from './knowledge.js';
 import { runProcess } from './process.js';
 
 export class FastGrepIndex {
@@ -37,15 +37,15 @@ export class FastGrepIndex {
     });
   }
 
-  async search(query: string, kind: KnowledgeKind | undefined, limit: number, regex = false): Promise<SearchMatch[]> {
+  async search(query: string, kind: KnowledgeKind | undefined, limit: number, regex = false, filter?: (entry: KnowledgeEntry) => boolean): Promise<SearchMatch[]> {
     return this.exclusive(async () => {
       await this.update();
       // Restrict the engine itself to the selected kind before applying its result cap.
-      const entries = this.knowledge.list(kind);
+      const entries = this.knowledge.list(kind).filter(entry => !filter || filter(entry));
       if (!entries.length) return [];
       const args = ['--format', 'json', '--ignore-case', '--hidden', '--no-ignore', '--index', this.index, '--max-results', String(limit)];
       if (!regex) args.push('--fixed-strings');
-      if (kind) for (const entry of entries) args.push('--include', entry.path);
+      if (kind || filter) for (const entry of entries) args.push('--include', entry.path);
       args.push('--', query, this.documents);
       const result = await runProcess(this.binary, args, this.documents, [0, 1]);
       if (result.exitCode === 1) return [];

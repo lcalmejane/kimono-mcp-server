@@ -19,22 +19,31 @@ import { access, lstat, readdir, stat } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { RUNTIME_TOOLS, runtimeFor } from './runtime-tools.js';
 import { Lifecycle, shutdownSignals } from './lifecycle.js';
+import { Retrieval, RETRIEVAL_PROPERTIES, READ_PROPERTIES } from './retrieval.js';
 
 const SERVER_NAME = 'kimono-mcp-server';
-const SERVER_VERSION = '0.1.1';
+const SERVER_VERSION = '0.2.0';
 const MCP_TOOL: Tool = {
   name: 'aikido',
-  description: 'Discover, search, read, and activate the AI-KIDO knowledge base. Activating returns the documented instructions for the connected AI assistant to carry out; this server does not execute an LLM workflow itself.',
+  description: 'Discover AI-KIDO progressively: list returns paginated metadata and headers (25 entries, 16 KiB by default); search delegates to aikido_search. Prefer aikido_file metadata/outline/read for bounded JSON passages. Legacy read without selectors and activate/execute return complete instructions, explicitly requested only. Activation does not execute an LLM.',
   inputSchema: {
     type: 'object',
+    allOf: [{
+      if: { properties: { operation: { enum: ['list', 'search'] } }, required: ['operation'] },
+      then: { properties: { maxBytes: RETRIEVAL_PROPERTIES.maxBytes } },
+    }],
     properties: {
+      ...RETRIEVAL_PROPERTIES,
+      ...READ_PROPERTIES,
+      offset: { type: 'integer', minimum: 0, default: 0 },
+      contextLines: { type: 'integer', minimum: 0, maximum: 20, default: 2 },
       operation: { type: 'string', enum: ['list', 'search', 'read', 'activate', 'execute', 'refresh'] },
       kind: { type: 'string', enum: ['command', 'agent', 'skill', 'workflow', 'knowledge'] },
       query: { type: 'string', description: 'Filter or full-text search query.' },
       vector: { type: 'array', minItems: 1, maxItems: 16384, items: { type: 'number' }, description: 'Search only: alternative to query, requires mode=semantic and embeddingModel.' },
       embeddingModel: { type: 'string', description: 'Exact model identifier from aikido_embed; vectors must use matching weights and preprocessing.' },
       mode: { type: 'string', enum: ['literal', 'regex', 'semantic'], default: 'literal' },
-      id: { type: 'string', description: 'Knowledge-base relative path, as returned by list/search.' },
+      id: { type: 'string', description: 'Knowledge-base relative path or V3.1 SHA-256(path)[:12] file_id.' },
       context: { type: 'string', description: 'Optional user request to include when activating a command, agent, or skill.' },
       limit: { type: 'number', description: 'Maximum search results (1-100).', minimum: 1, maximum: 100 },
     },
@@ -62,14 +71,18 @@ export function createAikidoMcpServer(knowledge: AikidoKnowledgeBase, lifecycle 
     }
   });
 
-  server.setRequestHandler(ListResourcesRequestSchema, async () => ({
-    resources: (knowledge.isInitialized ? knowledge.list() : []).map((entry) => ({
-      uri: resourceUri(entry.path),
-      name: entry.path,
-      description: `${entry.kind}: ${entry.title}`,
-      mimeType: mimeType(entry.path),
-    })),
-  }));
+  server.setRequestHandler(ListResourcesRequestSchema, async request => {
+    const entries = knowledge.isInitialized ? knowledge.list() : [];
+    const page = cataloguePage(entries, request.params?.cursor);
+    return {
+      resources: page.entries.map((entry) => ({
+        uri: resourceUri(entry.path),
+        name: entry.path,
+        description: `${entry.kind}: ${entry.title}`,
+        mimeType: mimeType(entry.path),
+      })), ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}),
+    };
+  });
   server.setRequestHandler(ListResourceTemplatesRequestSchema, async () => ({
     resourceTemplates: [{
       uriTemplate: 'aikido://{path}',
@@ -80,18 +93,24 @@ export function createAikidoMcpServer(knowledge: AikidoKnowledgeBase, lifecycle 
   }));
   server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
     const filePath = pathFromResourceUri(request.params.uri);
+    await knowledge.refresh();
     const { content } = await knowledge.read(filePath);
     return { contents: [{ uri: request.params.uri, mimeType: mimeType(filePath), text: content }] };
   });
 
-  server.setRequestHandler(ListPromptsRequestSchema, async () => ({
-    prompts: (knowledge.isInitialized ? knowledge.list() : []).map((entry) => ({
-      name: promptName(entry),
-      description: `Load AI-KIDO ${entry.kind} instructions: ${entry.path}`,
-      arguments: [{ name: 'context', description: 'Optional user request/context for the AI-KIDO instructions.', required: false }],
-    })),
-  }));
+  server.setRequestHandler(ListPromptsRequestSchema, async request => {
+    const entries = knowledge.isInitialized ? knowledge.list() : [];
+    const page = cataloguePage(entries, request.params?.cursor);
+    return {
+      prompts: page.entries.map((entry) => ({
+        name: promptName(entry),
+        description: `Load AI-KIDO ${entry.kind} instructions: ${entry.path}`,
+        arguments: [{ name: 'context', description: 'Optional user request/context for the AI-KIDO instructions.', required: false }],
+      })), ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}),
+    };
+  });
   server.setRequestHandler(GetPromptRequestSchema, async (request) => {
+    await knowledge.refresh();
     const entry = knowledge.list().find((item) => promptName(item) === request.params.name);
     if (!entry) throw new Error(`AI-KIDO prompt not found: ${request.params.name}`);
     const { content } = await knowledge.read(entry.id);
@@ -109,8 +128,9 @@ export function createAikidoMcpServer(knowledge: AikidoKnowledgeBase, lifecycle 
       : ref.type === 'ref/resource'
         ? knowledge.list().map((entry) => resourceUri(entry.path))
         : [];
-    const values = candidates.filter((candidate) => candidate.toLocaleLowerCase().includes(value)).slice(0, 100);
-    return { completion: { values, total: values.length, hasMore: false } };
+    const filtered = candidates.filter((candidate) => candidate.toLocaleLowerCase().includes(value));
+    const values = filtered.slice(0, 100);
+    return { completion: { values, total: filtered.length, hasMore: filtered.length > values.length } };
   });
   return server;
 }
@@ -124,14 +144,17 @@ async function callAikidoTool(knowledge: AikidoKnowledgeBase, raw: Record<string
     return toolResult(`AI-KIDO index refreshed: ${count} text files discovered.`);
   }
   if (operation === 'list') {
-    const entries = knowledge.list(kind, stringArg(raw.query, 'query', false));
-    return toolResult(JSON.stringify({ count: entries.length, entries }, null, 2));
+    return toolResult(await new Retrieval(knowledge).list(raw, kind));
   }
   if (operation === 'search') {
     return toolResult(await runtimeFor(knowledge).call('aikido_search', raw));
   }
   if (operation === 'read' || operation === 'activate' || operation === 'execute') {
     const id = stringArg(raw.id, 'id', true)!;
+    if (operation === 'read' && ['startLine', 'endLine', 'section', 'full', 'maxBytes'].some(key => raw[key] !== undefined)) {
+      return toolResult(await new Retrieval(knowledge).read(raw, id));
+    }
+    await knowledge.refresh();
     const { entry, content } = await knowledge.read(id);
     if (operation === 'read') return toolResult(content);
     if (!['command', 'agent', 'skill', 'workflow'].includes(entry.kind)) {
@@ -174,6 +197,15 @@ function promptName(entry: KnowledgeEntry): string {
   return `aikido.${entry.kind}.${encodeURIComponent(entry.path)}`;
 }
 
+function cataloguePage(entries: KnowledgeEntry[], cursor?: string) {
+  if (cursor !== undefined && (!/^(0|[1-9]\d*)$/.test(cursor) || !Number.isSafeInteger(Number(cursor)))) {
+    throw new Error('Invalid catalogue cursor');
+  }
+  const start = Number(cursor ?? 0);
+  const selected = entries.slice(start, start + 25);
+  return { entries: selected, nextCursor: start + selected.length < entries.length ? String(start + selected.length) : undefined };
+}
+
 function resourceUri(filePath: string): string {
   return `aikido://${encodeURIComponent(filePath)}`;
 }
@@ -189,7 +221,7 @@ function pathFromResourceUri(uri: string): string {
 }
 
 function mimeType(filePath: string): string {
-  if (filePath.endsWith('.md') || filePath.endsWith('.mdc')) return 'text/markdown';
+  if (/\.(md|mdc|mdx)$/.test(filePath)) return 'text/markdown';
   if (filePath.endsWith('.json')) return 'application/json';
   if (filePath.endsWith('.yaml') || filePath.endsWith('.yml')) return 'application/yaml';
   if (filePath.endsWith('.js') || filePath.endsWith('.mjs') || filePath.endsWith('.cjs')) return 'text/javascript';

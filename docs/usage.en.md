@@ -25,6 +25,11 @@ preprocessing settings and file hashes. Vector searches require its model
 identifier; callers must ensure the actual vector uses compatible preprocessing.
 See the [full reference](../README.md#local-semantic-search).
 
+For a low-token harness, use the [progressive JSON retrieval contract](retrieval.md):
+metadata/header discovery, bounded search passages, then only the selected
+line range or Markdown section through `aikido_file`. Complete file reads remain
+explicit; follow pagination/truncation fields rather than requesting the corpus.
+
 ## Standalone
 
 **Recommended: Docker Compose**, which includes Git, Rust search tools, the

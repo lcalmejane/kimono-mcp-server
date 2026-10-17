@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.0 - 2026-10-17
+
+- Progressive JSON retrieval aligned with AI-KIDO structure V3.1: deterministic SHA-256 path IDs, file/header/type/check metadata, paginated filtered discovery and MCP resource/prompt catalogues.
+- Source-grounded search ranges with bounded context/excerpts, deduplicated document headers, UTF-8 JSON budgets and explicit truncation. Scope/path/type/extension filters precede literal/regex and semantic/vector top-k limits.
+- Read-only `aikido_file` metadata, Markdown outline and line/section/full reads, with continuation. Legacy complete reads and activation stay available.
+- Nested gitignore rules, cache/environment exclusions and prompts-directory ROOT private-spec handling; bilingual harness migration guide and actual-engine/MCP budget regression tests.
+
 ## 0.1.1 - 2026-10-16
 
 - Dynamic per-instance SSH/HTTPS Git profiles from a private mounted file: rotation without restart, scoped remote validation, strict SSH host keys, commit identity, temporary credential cleanup and sanitized failures. Applies to initialization and project Git tools; official-origin protections remain.

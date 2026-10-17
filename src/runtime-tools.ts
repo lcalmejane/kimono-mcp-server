@@ -3,6 +3,7 @@ import path from 'node:path';
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import { AikidoKnowledgeBase } from './knowledge.js';
 import { AIKIDO_REPOSITORY, installAikido, RepositoryAccess, validateRelativePath } from './repository.js';
+import { Retrieval, RETRIEVAL_PROPERTIES, READ_PROPERTIES, integer, selection } from './retrieval.js';
 
 export const RUNTIME_TOOLS: Tool[] = [
   {
@@ -36,7 +37,7 @@ export const RUNTIME_TOOLS: Tool[] = [
   },
   {
     name: 'aikido_search',
-    description: 'Search knowledge with literal/regex text or mode=semantic using exactly one of query or vector. Vector search requires embeddingModel from aikido_embed, matching the active model; equal dimensions alone do not imply compatibility. Caller must use the same weights/tokenizer/pooling/prefix conventions. Indexes refresh before querying. Returns bounded cosine-ranked passages.',
+    description: 'Progressive AI-KIDO search: compact JSON results with 1-based source ranges and excerpts, and one document metadata/header per file in documents keyed by SHA-256(path)[:12]. Filter by scope/pathPrefix/type/extension before ranking/limit. Default 2 context lines and 16 KiB JSON budget; truncated reports omitted results. No full files. Use aikido_file metadata/outline/read to expand only selected passages. Semantic query/vector requires the exact local embedding model.',
     inputSchema: {
       type: 'object', additionalProperties: false,
       oneOf: [
@@ -44,6 +45,8 @@ export const RUNTIME_TOOLS: Tool[] = [
         { required: ['vector', 'embeddingModel', 'mode'], properties: { mode: { const: 'semantic' } }, not: { required: ['query'] } },
       ],
       properties: {
+        ...RETRIEVAL_PROPERTIES,
+        contextLines: { type: 'integer', minimum: 0, maximum: 20, default: 2 },
         query: { type: 'string' }, regex: { type: 'boolean', default: false },
         vector: { type: 'array', minItems: 1, maxItems: 16384, items: { type: 'number' }, description: 'Finite non-zero embedding; must match the active model dimension.' },
         embeddingModel: { type: 'string', description: 'Exact model identifier returned by aikido_embed; caller is responsible for vector provenance and matching preprocessing.' },
@@ -87,11 +90,14 @@ export const RUNTIME_TOOLS: Tool[] = [
   },
   {
     name: 'aikido_file',
-    description: 'Create/update/delete a text knowledge document in a writable project ROOT. Existing-file updates/deletes require its exact expected content to prevent lost updates. Rejects symlinks, .git, path traversal and protected official bases.',
+    description: 'Progressive JSON retrieval: metadata (header, hash ID, type, size, lines), paginated Markdown outline, or read by inclusive 1-based startLine/endLine, exact section, or explicit full=true. Default read 200 lines and 16 KiB, nextLine resumes truncation. path accepts a discovered relative path or hash ID for reads. Also write/delete in writable non-official projects, with exact expected content for overwrites/deletes.',
     inputSchema: {
       type: 'object', additionalProperties: false, required: ['operation', 'path'],
       properties: {
-        operation: { type: 'string', enum: ['write', 'delete'] }, path: { type: 'string' },
+        ...READ_PROPERTIES,
+        offset: { type: 'integer', minimum: 0, default: 0 },
+        limit: { type: 'integer', minimum: 1, maximum: 100, default: 25 },
+        operation: { type: 'string', enum: ['metadata', 'outline', 'read', 'write', 'delete'] }, path: { type: 'string' },
         content: { type: 'string' }, expected: { type: 'string', description: 'Exact previous contents, required for overwriting/deleting a file.' },
       },
     },
@@ -112,8 +118,10 @@ export function runtimeFor(knowledge: AikidoKnowledgeBase): RuntimeTools {
 class RuntimeTools {
   private pending: Promise<unknown> = Promise.resolve();
   private readonly repository: RepositoryAccess;
+  readonly retrieval: Retrieval;
   constructor(private readonly knowledge: AikidoKnowledgeBase) {
     this.repository = new RepositoryAccess(knowledge.root);
+    this.retrieval = new Retrieval(knowledge);
   }
 
   async call(name: string, input: Record<string, unknown>): Promise<string> {
@@ -164,6 +172,16 @@ class RuntimeTools {
       const mode = input.mode ?? (input.regex === true ? 'regex' : 'literal');
       if (mode !== 'literal' && mode !== 'regex' && mode !== 'semantic') throw new Error('mode must be literal, regex or semantic');
       if (input.regex === true && mode !== 'regex') throw new Error('regex=true conflicts with the requested search mode');
+      const filter = selection(input, this.knowledge.isMemoryRoot);
+      integer(input, 'contextLines', 2, 0, 20);
+      integer(input, 'maxBytes', 16384, 2048, 262144);
+      const semanticSearch = async (options: { query?: string; vector?: number[]; embeddingModel?: string }) => {
+        await this.knowledge.refresh();
+        const paths = this.knowledge.list(kind).filter(filter).map(entry => entry.path);
+        const result = await this.knowledge.semanticIndex.run('search', { ...options, paths, kind, limit: limit + 1 });
+        const { results, count: _count, ...metadata } = result;
+        return this.retrieval.search(input, results, metadata);
+      };
       if (input.vector !== undefined) {
         if (mode !== 'semantic') throw new Error('vector requires mode=semantic');
         if (input.query !== undefined) throw new Error('Provide exactly one of query or vector');
@@ -175,16 +193,18 @@ class RuntimeTools {
           throw new Error('vector must contain 1-16384 finite float32 numbers with non-zero norm');
         }
         const embeddingModel = text(input, 'embeddingModel', true)!;
-        return JSON.stringify(await this.knowledge.semanticIndex.run('search', { vector, embeddingModel, kind, limit }));
+        return semanticSearch({ vector, embeddingModel });
       }
       if (input.embeddingModel !== undefined) throw new Error('embeddingModel requires vector');
       const query = text(input, 'query', true)!;
+      if (Buffer.byteLength(query) > 8192) throw new Error('query must be at most 8192 UTF-8 bytes');
       if (mode === 'semantic') {
-        return JSON.stringify(await this.knowledge.semanticIndex.run('search', { query, kind, limit }));
+        return semanticSearch({ query });
       }
       await this.knowledge.refresh();
-      const results = await this.knowledge.searchIndex.search(query, kind, limit, mode === 'regex');
-      return JSON.stringify({ engine: 'fast-grep', count: results.length, results });
+      const scoped = ['scope', 'pathPrefix', 'type', 'extension'].some(key => input[key] !== undefined);
+      const results = await this.knowledge.searchIndex.search(query, kind, limit + 1, mode === 'regex', scoped ? filter : undefined);
+      return this.retrieval.search(input, results, { engine: 'fast-grep' });
     }
     if (name === 'aikido_index') {
       const operation = text(input, 'operation', true);
@@ -208,11 +228,15 @@ class RuntimeTools {
       return JSON.stringify(result);
     }
     if (name === 'aikido_file') {
+      if (['read', 'metadata', 'outline'].includes(String(input.operation))) {
+        return this.retrieval.read(input, text(input, 'path', true)!);
+      }
       await this.repository.requireWritable();
       const file = text(input, 'path', true)!;
       validateRelativePath(file);
-      if (!/\.(md|mdc|txt|json|ya?ml|toml|[cm]?js|sh|py|ts|xml)$/i.test(file)) throw new Error('Only supported text knowledge files can be edited');
-      if (file.startsWith('prompts/spec/') && process.env.AIKIDO_INCLUDE_SPEC !== 'true') throw new Error('Personal specs require AIKIDO_INCLUDE_SPEC=true');
+      if (!/\.(md|mdx|mdc|txt|json|ya?ml|toml|[cm]?js|sh|py|ts|xml)$/i.test(file)) throw new Error('Only supported text knowledge files can be edited');
+      if ((file.startsWith('prompts/spec/') || (this.knowledge.isMemoryRoot && file.startsWith('spec/'))) &&
+        process.env.AIKIDO_INCLUDE_SPEC !== 'true') throw new Error('Personal specs require AIKIDO_INCLUDE_SPEC=true');
       const root = await realpath(this.knowledge.root);
       let current = root;
       for (const part of file.split('/')) {

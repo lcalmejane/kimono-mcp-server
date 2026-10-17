@@ -61,6 +61,12 @@ describe.skipIf(!process.env.KIMONO_MODEL_DIR)('real multilingual ONNX semantic 
       const filtered = await call('aikido', { operation: 'search', ...args, kind: 'command', limit: 1 });
       expect(filtered.results).toHaveLength(1);
       expect(filtered.results[0].kind).toBe('command');
+      const pathFiltered = await call('aikido_search', { ...args, pathPrefix: 'prompts/cooking.md', limit: 1, contextLines: 0 });
+      expect(pathFiltered.results).toHaveLength(1);
+      expect(pathFiltered.results[0].path).toBe('prompts/cooking.md');
+      expect(pathFiltered.embedded).toBe(0);
+      expect(pathFiltered.documents[pathFiltered.results[0].file_id]).toMatchObject({ lines: 1, type: 'markdown' });
+      expect((await call('aikido_search', { ...args, scope: 'code' })).results).toEqual([]);
       const document = await call('aikido_embed', { text: 'Never store passwords or API keys in source code.', usage: 'document' });
       const similar = await call('aikido_search', { ...args, vector: document.vector, embeddingModel: document.model, limit: 1 });
       expect(similar.results[0].path).toBe('prompts/secrets.md');

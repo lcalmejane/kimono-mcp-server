@@ -26,6 +26,11 @@ exige cet identifiant ; le client reste responsable de la compatibilité réelle
 du vecteur et de son prétraitement. Voir la
 [référence complète](../README.md#local-semantic-search).
 
+Pour un harnais économe en tokens, suivre le [contrat JSON progressif](retrieval.md) :
+métadonnées/en-têtes, extraits bornés, puis lecture des seules lignes ou sections
+retenues avec `aikido_file`. Les fichiers complets restent une demande explicite ;
+suivre les indications de pagination/troncature plutôt que charger toute la base.
+
 ## Utilisation autonome
 
 **Docker Compose est recommandé** : Git, outils de recherche Rust, runtime et

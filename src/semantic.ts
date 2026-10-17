@@ -31,6 +31,7 @@ interface SemanticOptions {
   embeddingModel?: string;
   kind?: KnowledgeKind;
   limit?: number;
+  paths?: string[];
 }
 
 export class SemanticIndex {
@@ -144,7 +145,7 @@ export class SemanticIndex {
       if (!record(hit) || typeof hit.path !== 'string' || !Number.isInteger(hit.line)
         || typeof hit.line !== 'number' || hit.line < 1 || typeof hit.score !== 'number'
         || !Number.isFinite(hit.score) || typeof hit.excerpt !== 'string') throw new Error('Invalid semantic hit');
-      const entry = this.knowledge.list(options.kind).find((item) => item.path === hit.path);
+      const entry = this.knowledge.list(options.kind).find((item) => item.path === hit.path && (!options.paths || options.paths.includes(item.path)));
       if (!entry) throw new Error(`Semantic engine returned an out-of-scope document: ${hit.path}`);
       return { ...entry, line: hit.line, score: hit.score, excerpt: hit.excerpt };
     });

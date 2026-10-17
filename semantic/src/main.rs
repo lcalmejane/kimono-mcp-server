@@ -31,6 +31,7 @@ struct Request {
     embedding_model: Option<String>,
     kind: Option<String>,
     limit: Option<usize>,
+    paths: Option<Vec<String>>,
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -159,8 +160,8 @@ fn execute(request: Request) -> Result<serde_json::Value> {
         return Err("Invalid semantic operation".into());
     }
     let limit = request.limit.unwrap_or(25);
-    if !(1..=100).contains(&limit) {
-        return Err("limit must be 1-100".into());
+    if !(1..=101).contains(&limit) {
+        return Err("limit must be 1-101 (including the server look-ahead)".into());
     }
     if request.operation == "search" {
         if request.vector.is_some() {
@@ -306,6 +307,9 @@ fn execute(request: Request) -> Result<serde_json::Value> {
                 .as_ref()
                 .is_some_and(|kind| kind != &chunk.kind)
             {
+                continue;
+            }
+            if request.paths.as_ref().is_some_and(|paths| !paths.contains(&chunk.path)) {
                 continue;
             }
             hits.push(Hit {

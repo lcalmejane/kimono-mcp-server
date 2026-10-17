@@ -8,6 +8,7 @@ The standard AI-KIDO base is protected. A separate, explicitly writable project/
 
 - [English: standalone, integration and concurrent clients](docs/usage.en.md)
 - [Français : standalone, intégration et clients concurrents](docs/usage.fr.md)
+- [English / Français: progressive JSON search, metadata, ranges and harness integration](docs/retrieval.md)
 
 ## MCP capabilities
 
@@ -16,10 +17,10 @@ The standard AI-KIDO base is protected. A separate, explicitly writable project/
 | `aikido` | `list`, `search`, `read`, `activate`, `execute`, `refresh` |
 | `aikido_embed` | Generate a local text embedding with `usage=query` (default) or `document`; returns the numeric vector and model metadata without changing ROOT/indexes |
 | `aikido_root` | `status`, `init`: initialize the configured ROOT from the official or another Git repository |
-| `aikido_search` | `mode`: `literal` (default), `regex` (fast-grep), or `semantic` (local multilingual embsearch-core/ONNX); paths, lines, excerpts and semantic scores |
+| `aikido_search` | Literal/regex/semantic/vector search; pre-limit scope/path/type filters, source ranges, bounded excerpts, deduplicated headers and JSON byte budget |
 | `aikido_index` | `update`, `rebuild`, `compact`, `stats`; non-blocking `status` for `mode=semantic`; otherwise `mode`: `literal` (default) or `semantic` |
 | `aikido_git` | Scoped, structured Git operations on the configured project |
-| `aikido_file` | Create/update/delete text documents; overwrites/deletes require exact previous contents |
+| `aikido_file` | Read-only JSON `metadata`, `outline`, `read` (lines/section/full); writable-project `write`/`delete` retain exact previous-content guards |
 
 Documents also appear as resources (`aikido://<encoded-relative-path>`) and prompts (`aikido.<kind>.<encoded-relative-path>`), with completions.
 
@@ -73,7 +74,7 @@ Literal/regex searches use **fast-grep 0.5.0**, installed from crates.io. The de
 
 At startup, Kimono builds/updates the index for the actual ROOT. Before every search it rescans the catalogue and incrementally updates the index, covering added/changed/deleted files, including external edits. MCP Git/file operations also update it.
 
-Only discovered text documents enter a private search mirror. Binary files, symlinks, dependency/build directories and files over 2 MiB are excluded. `prompts/spec/` is excluded unless `AIKIDO_INCLUDE_SPEC=true` explicitly enables that private space. Excluded files never enter the fgr index.
+Only discovered text documents enter a private search mirror. Symlinks, dependency/build/cache directories, `.env*`, nested `.gitignore` exclusions and files over 2 MiB are excluded. `prompts/spec/` (or `spec/` when ROOT is the prompts directory) requires `AIKIDO_INCLUDE_SPEC=true`. Excluded files never enter the fgr index.
 
 The persistent cache lives **outside AIKIDO_ROOT**. This allows indexing a read-only standard base without changing it. Treat the cache as sensitive: it contains document copies. An image cannot ship a prebuilt index for a ROOT chosen later.
 
