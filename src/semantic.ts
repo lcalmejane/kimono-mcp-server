@@ -3,6 +3,7 @@ import path from 'node:path';
 import { tmpdir } from 'node:os';
 import type { AikidoKnowledgeBase, KnowledgeKind, SearchMatch } from './knowledge.js';
 import { runProcess } from './process.js';
+import { within, type ChangeReport } from './synchronization.js';
 
 export interface SemanticResult {
   engine: 'embsearch-core';
@@ -12,6 +13,7 @@ export interface SemanticResult {
   embedded: number;
   count: number;
   results: Array<SearchMatch & { score: number }>;
+  changes: ChangeReport;
 }
 
 export interface EmbeddingResult {
@@ -32,6 +34,8 @@ interface SemanticOptions {
   kind?: KnowledgeKind;
   limit?: number;
   paths?: string[];
+  syncPaths?: string[];
+  refreshed?: boolean;
 }
 
 export class SemanticIndex {
@@ -122,12 +126,13 @@ export class SemanticIndex {
   ): Promise<SemanticResult> {
     const model = process.env.KIMONO_MODEL_DIR;
     if (!model) throw new Error('Semantic search requires KIMONO_MODEL_DIR with model.onnx, tokenizer.json and model.json. Use the Kimono Docker image or install a local model.');
-    await this.knowledge.refresh();
+    if (!options.refreshed) await this.knowledge.refresh(options.syncPaths);
     const parent = this.knowledge.searchIndex.directory;
     await mkdir(parent, { recursive: true, mode: 0o700 });
     const documents = [];
     let bytes = 0;
     for (const entry of this.knowledge.list()) {
+      if (!within(entry.path, options.syncPaths)) continue;
       const { content } = await this.knowledge.read(entry.id);
       bytes += Buffer.byteLength(content);
       if (bytes > 64 * 1024 * 1024) throw new Error('Semantic corpus exceeds the supported 64 MiB text budget; use a narrower ROOT.');
@@ -150,9 +155,11 @@ export class SemanticIndex {
       return { ...entry, line: hit.line, score: hit.score, excerpt: hit.excerpt };
     });
     if (results.length > (options.limit ?? 25)) throw new Error('Semantic engine exceeded the result limit');
+    const changes = changeReport(raw.changes, options.syncPaths);
     return {
       engine: 'embsearch-core', model: raw.model, version: raw.version,
       chunks: raw.chunks, embedded: raw.embedded, count: results.length, results,
+      changes,
     };
   }
 }
@@ -194,4 +201,16 @@ async function invokeSemantic(
 
 function record(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function changeReport(value: unknown, scopes?: string[]): ChangeReport {
+  if (!record(value)) throw new Error('Invalid semantic synchronization report');
+  for (const key of ['added', 'modified', 'deleted']) {
+    const files = value[key];
+    if (!Array.isArray(files) || !files.every(file => typeof file === 'string' && file
+      && !path.isAbsolute(file) && !/[\\\0\r\n]/.test(file)
+      && !file.split('/').some(part => !part || part === '..' || part === '.')
+      && within(file, scopes))) throw new Error('Invalid semantic synchronization report');
+  }
+  return { added: value.added as string[], modified: value.modified as string[], deleted: value.deleted as string[] };
 }

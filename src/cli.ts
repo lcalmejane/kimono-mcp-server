@@ -2,6 +2,7 @@
 import { AikidoKnowledgeBase } from './knowledge.js';
 import { startHttpServer, startStdioServer } from './server.js';
 import { AIKIDO_REPOSITORY, installAikido } from './repository.js';
+import { runtimeFor } from './runtime-tools.js';
 export { installAikido } from './repository.js';
 
 interface ParsedArgs {
@@ -29,12 +30,11 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
   const knowledge = new AikidoKnowledgeBase(root);
   if (command === 'index') {
     await knowledge.initialize();
-    if (options.get('mode') === 'semantic') {
-      console.error(JSON.stringify(await knowledge.semanticIndex.run('update')));
-      return;
-    }
-    if (options.has('mode') && options.get('mode') !== 'literal') throw new Error('index --mode must be literal or semantic');
-    console.error(await knowledge.searchIndex.maintain('update'));
+    console.error(await runtimeFor(knowledge).call('aikido_index', {
+      operation: 'update', mode: options.get('mode') ?? 'literal',
+      ...(options.has('paths') ? { paths: /^[["]/.test(options.get('paths')!)
+        ? JSON.parse(options.get('paths')!) : options.get('paths') } : {}),
+    }));
     return;
   }
   const transport = process.env.MCP_TRANSPORT ?? 'stdio';
@@ -62,7 +62,7 @@ function parseArgs(argv: string[]): ParsedArgs {
     const inlineValue = separator < 0 ? undefined : token.slice(separator + 1);
     const value = inlineValue ?? tokens[++index];
     if (!value || value.startsWith('--')) throw new Error(`Option --${name} requires a value`);
-    if (!['root', 'ref', 'repository', 'mode'].includes(name)) throw new Error(`Unknown option: --${name}`);
+    if (!['root', 'ref', 'repository', 'mode', 'paths'].includes(name)) throw new Error(`Unknown option: --${name}`);
     if (options.has(name)) throw new Error(`Option --${name} was provided more than once`);
     options.set(name, value);
   }

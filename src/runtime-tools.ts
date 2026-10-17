@@ -4,6 +4,7 @@ import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import { AikidoKnowledgeBase } from './knowledge.js';
 import { AIKIDO_REPOSITORY, installAikido, RepositoryAccess, validateRelativePath } from './repository.js';
 import { Retrieval, RETRIEVAL_PROPERTIES, READ_PROPERTIES, integer, selection } from './retrieval.js';
+import { synchronizationPaths } from './synchronization.js';
 
 export const RUNTIME_TOOLS: Tool[] = [
   {
@@ -59,12 +60,14 @@ export const RUNTIME_TOOLS: Tool[] = [
   },
   {
     name: 'aikido_index',
-    description: 'Update, rebuild, compact or inspect indexes. operation=status with mode=semantic polls in-memory progress without waiting behind indexing or starting inference. Cache is outside ROOT; private specs remain opt-in.',
+    description: 'Synchronize indexes with a compact JSON added/modified/deleted report per engine. mode=all updates both independent caches in one call. Optional paths on update rereads/indexes only those ROOT-relative files/subtrees, including missing paths for deletion; omitted paths refresh the full corpus. Targeted cold caches stay partial until a full update/search. rebuild/compact/stats are full-corpus. status with mode=semantic polls progress without waiting. Readonly clients may update caches outside ROOT; private specs remain opt-in.',
     inputSchema: {
       type: 'object', additionalProperties: false, required: ['operation'],
       properties: {
         operation: { type: 'string', enum: ['update', 'rebuild', 'compact', 'stats', 'status'] },
-        mode: { type: 'string', enum: ['literal', 'semantic'], default: 'literal' },
+        mode: { type: 'string', enum: ['literal', 'semantic', 'all'], default: 'literal' },
+        paths: { anyOf: [{ type: 'string', minLength: 1 }, { type: 'array', minItems: 1, maxItems: 256, items: { type: 'string', minLength: 1 } }],
+          description: 'update only: ROOT-relative files/directories; deleted paths accepted, overlaps deduplicated. No globs, absolute paths or traversal.' },
       },
     },
   },
@@ -126,6 +129,7 @@ class RuntimeTools {
 
   async call(name: string, input: Record<string, unknown>): Promise<string> {
     if (name === 'aikido_index' && input.operation === 'status') {
+      if (input.paths !== undefined) throw new Error('paths requires operation=update');
       if (input.mode !== 'semantic') throw new Error('Index status requires mode=semantic');
       return JSON.stringify(this.knowledge.semanticIndex.status());
     }
@@ -210,10 +214,17 @@ class RuntimeTools {
       const operation = text(input, 'operation', true);
       if (operation !== 'update' && operation !== 'rebuild' && operation !== 'compact' && operation !== 'stats') throw new Error('Invalid index operation');
       const mode = input.mode ?? 'literal';
-      if (mode !== 'literal' && mode !== 'semantic') throw new Error('Index mode must be literal or semantic');
-      if (mode === 'semantic') return JSON.stringify(await this.knowledge.semanticIndex.run(operation));
-      await this.knowledge.refresh();
-      return this.knowledge.searchIndex.maintain(operation);
+      if (mode !== 'literal' && mode !== 'semantic' && mode !== 'all') throw new Error('Index mode must be literal, semantic or all');
+      const paths = synchronizationPaths(input.paths);
+      if (paths && operation !== 'update') throw new Error('paths requires operation=update');
+      await this.knowledge.refresh(paths);
+      const indexes: Record<string, unknown> = {};
+      if (mode !== 'semantic') indexes.literal = await this.knowledge.searchIndex.maintain(operation, paths);
+      if (mode !== 'literal') {
+        const { results: _results, count: _count, ...result } = await this.knowledge.semanticIndex.run(operation, { syncPaths: paths, refreshed: true });
+        indexes.semantic = result;
+      }
+      return JSON.stringify({ ...(mode === 'all' ? {} : indexes[mode] as object), operation, mode, scope: paths ?? null, indexes });
     }
     if (name === 'aikido_git') {
       if (input.paths !== undefined && (!Array.isArray(input.paths) || !input.paths.every((item) => typeof item === 'string'))) throw new Error('paths must be an array of strings');

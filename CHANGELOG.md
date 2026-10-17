@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.0 - 2026-10-17
+
+- Genuine paths-scoped index updates for a file, file list or directory subtree, including missing targets as deletions. Only selected source bodies are read and literal batch shards index only selected changes; semantic synchronization retains untouched vectors without re-embedding.
+- `aikido_index` adds `mode=all`, independent per-engine added/modified/deleted JSON reports, scoped cold caches, explicit validation and unchanged global automatic search freshness. CLI accepts `--mode all --paths '["prompts/concepts"]'`.
+- Actual fast-grep/ONNX regression tests cover targeting, deletion (including empty files), directory boundaries, exclusions, symlinks, independent baselines and automatic full refresh.
+
 ## 0.2.0 - 2026-10-17
 
 - Progressive JSON retrieval aligned with AI-KIDO structure V3.1: deterministic SHA-256 path IDs, file/header/type/check metadata, paginated filtered discovery and MCP resource/prompt catalogues.

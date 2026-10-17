@@ -22,7 +22,7 @@ import { Lifecycle, shutdownSignals } from './lifecycle.js';
 import { Retrieval, RETRIEVAL_PROPERTIES, READ_PROPERTIES } from './retrieval.js';
 
 const SERVER_NAME = 'kimono-mcp-server';
-const SERVER_VERSION = '0.2.0';
+const SERVER_VERSION = '0.3.0';
 const MCP_TOOL: Tool = {
   name: 'aikido',
   description: 'Discover AI-KIDO progressively: list returns paginated metadata and headers (25 entries, 16 KiB by default); search delegates to aikido_search. Prefer aikido_file metadata/outline/read for bounded JSON passages. Legacy read without selectors and activate/execute return complete instructions, explicitly requested only. Activation does not execute an LLM.',

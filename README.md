@@ -177,7 +177,8 @@ still produce nearest neighbors. Results are chunks, so a document can appear
 more than once.
 
 The semantic index initializes lazily, refreshes against the current catalogue
-before every MCP search/index call, and only re-embeds changed chunks. The
+before every MCP search/full-index call, and only re-embeds changed chunks. Targeted
+`aikido_index update` calls refresh only their explicit paths (see below). The
 persistent vector store lives alongside the literal index outside ROOT.
 The same exclusions apply, including private specs. Chunking bounds passages to
 500 Unicode characters with starting line numbers. It is not a reranker or an
@@ -292,6 +293,35 @@ published store after interrupted indexing.
 This adds the server-side integration contract only: container provisioning,
 workspace membership checks, public-client credentials, idle eviction and
 quotas are not implemented by Kimono.
+
+## Targeted synchronization (v0.3.0)
+
+```json
+{"operation":"update","mode":"all","paths":["prompts/concepts","src/changed.ts","src/deleted.ts"]}
+```
+
+Call `aikido_index` with `paths` as one ROOT-relative string or a list (1–256).
+Files and directory subtrees are accepted, including missing paths: previously
+indexed files under missing targets are deleted. Prefixes match directory boundaries,
+not similarly named neighbors. Overlapping paths are deduplicated. Absolute paths,
+traversal, backslashes, empty lists and `paths` on other operations fail explicitly.
+Gitignored/private/excluded paths and symlinks never expose source content.
+
+`mode` is `literal` (default), `semantic`, or `all`. Each engine reports its own
+`changes: {added:[], modified:[], deleted:[]}` ROOT-relative paths under
+`indexes.literal` / `indexes.semantic`; single-engine legacy metadata remains
+available at the top level. A cold targeted cache stays partial: unrelated source
+bodies are **not** read, indexed or embedded to build a baseline. Semantic model
+changes require a full update before targeted reuse. Reports are relative to each
+engine's last successful synchronization, not Git status; `all` is sequential,
+not an atomic cross-engine transaction (failures remain explicit).
+
+Search still refreshes the **whole** current catalogue automatically, so changes
+outside the targeted scope become searchable on the next search. Omitting `paths`
+keeps full synchronization; `rebuild`, `compact`, `stats` remain full-corpus.
+Both read-only and writable clients may update caches outside ROOT.
+
+CLI: `kimono index --root ./project --mode all --paths '["src/file.ts","prompts/concepts"]'`.
 
 ## MCP clients
 

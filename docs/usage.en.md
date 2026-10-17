@@ -4,6 +4,21 @@
 
 ## What Kimono provides
 
+### Targeted indexing (v0.3.0)
+
+Call `aikido_index` with `{"operation":"update","mode":"all","paths":["src/file.ts","prompts/concepts","deleted.md"]}`.
+`paths` also accepts one string. Only selected source bodies are read; directories
+use exact boundaries, missing targets delete previous entries, and both engines
+report independent `indexes.literal/semantic.changes` arrays (`added`, `modified`,
+`deleted`). Ignored/private files and symlinks stay excluded. Cold targeted caches
+remain partial; no unrelated baseline is built. Omit `paths` for full refresh.
+All searches still refresh the global catalogue automatically. Read-only clients
+may maintain caches outside ROOT; index maintenance never grants file writes.
+The CLI equivalent is `kimono index --mode all --paths '["src/file.ts"]' --root ./project`.
+`paths` is update-only; unsafe paths and engine errors fail explicitly. `all` is
+sequential, not an atomic transaction. The [full contract](../README.md#targeted-synchronization-v030)
+documents limits, model changes and legacy single-engine metadata.
+
 Kimono exposes one AI-KIDO knowledge ROOT through MCP: documents, commands,
 agents/personas, skills and workflows. Humans using an MCP client and connected
 agents can discover the same instructions, search them and act on an authorized

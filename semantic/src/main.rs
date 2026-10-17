@@ -32,6 +32,8 @@ struct Request {
     kind: Option<String>,
     limit: Option<usize>,
     paths: Option<Vec<String>>,
+    #[serde(rename = "syncPaths")]
+    sync_paths: Option<Vec<String>>,
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -48,6 +50,8 @@ struct State {
     generation: String,
     chunks: BTreeMap<String, Chunk>,
     model: String,
+    #[serde(default)]
+    documents: BTreeMap<String, String>,
 }
 
 #[derive(Serialize)]
@@ -202,7 +206,32 @@ fn execute(request: Request) -> Result<serde_json::Value> {
     } else {
         None
     };
-    let current = chunks(request.documents);
+    if request.sync_paths.is_some() && request.operation != "update" {
+        return Err("syncPaths requires update".into());
+    }
+    if request.sync_paths.is_some() && previous.model != fingerprint && !previous.generation.is_empty() {
+        return Err("Embedding model changed; run a full update before targeted synchronization".into());
+    }
+    let selected = |file: &str| request.sync_paths.as_ref().is_none_or(|paths|
+        paths.iter().any(|scope| file == scope || file.starts_with(&format!("{scope}/"))));
+    let mut previous_documents = previous.documents.clone();
+    // Migration from v0.2 state: hashes are unknown until each file is reread.
+    for chunk in previous.chunks.values() {
+        previous_documents.entry(chunk.path.clone()).or_default();
+    }
+    let mut documents: BTreeMap<String, String> = previous_documents.iter()
+        .filter(|(file, _)| !selected(file)).map(|(file, hash)| (file.clone(), hash.clone())).collect();
+    for document in &request.documents {
+        if !selected(&document.path) { return Err("Document outside synchronization scope".into()); }
+        documents.insert(document.path.clone(), hash(document.content.as_bytes()));
+    }
+    let added: Vec<_> = documents.keys().filter(|file| !previous_documents.contains_key(*file)).cloned().collect();
+    let modified: Vec<_> = documents.iter().filter(|(file, digest)|
+        previous_documents.get(*file).is_some_and(|old| old != *digest)).map(|(file, _)| file.clone()).collect();
+    let deleted: Vec<_> = previous_documents.keys().filter(|file| !documents.contains_key(*file)).cloned().collect();
+    let mut current: BTreeMap<String, Chunk> = previous.chunks.iter().filter(|(_, chunk)| !selected(&chunk.path))
+        .map(|(id, chunk)| (id.clone(), chunk.clone())).collect();
+    current.extend(chunks(request.documents));
     let reuse = previous.model == fingerprint
         && !previous.generation.is_empty()
         && request.operation != "rebuild";
@@ -246,7 +275,7 @@ fn execute(request: Request) -> Result<serde_json::Value> {
         changed = true;
     }
     let mut generation = previous.generation.clone();
-    if changed || serde_json::to_vec(&current)? != serde_json::to_vec(&previous.chunks)? {
+    if changed || documents != previous.documents || serde_json::to_vec(&current)? != serde_json::to_vec(&previous.chunks)? {
         let nonce = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)?
             .as_nanos();
@@ -269,6 +298,7 @@ fn execute(request: Request) -> Result<serde_json::Value> {
             generation: generation.clone(),
             chunks: current.clone(),
             model: fingerprint,
+            documents,
         };
         fs::write(
             request.cache.join("state.pending"),
@@ -326,7 +356,8 @@ fn execute(request: Request) -> Result<serde_json::Value> {
     Ok(serde_json::json!({
         "engine": "embsearch-core", "version": "0.3.4", "model": model_id,
         "chunks": db.len(), "embedded": embedded, "generation": generation,
-        "count": hits.len(), "results": hits
+        "count": hits.len(), "results": hits,
+        "changes": { "added": added, "modified": modified, "deleted": deleted }
     }))
 }
 

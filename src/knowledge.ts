@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 import ignore, { type Ignore } from 'ignore';
 import { FastGrepIndex } from './search.js';
 import { SemanticIndex } from './semantic.js';
+import { within } from './synchronization.js';
 
 export type KnowledgeKind = 'command' | 'agent' | 'skill' | 'workflow' | 'knowledge';
 
@@ -75,8 +76,15 @@ export class AikidoKnowledgeBase {
     this.initialized = true;
   }
 
-  async refresh(): Promise<number> {
-    await this.initialize();
+  async refresh(paths?: string[]): Promise<number> {
+    if (!paths) await this.initialize();
+    else {
+      this.requireInitialized();
+      const selected = await this.scanDirectory(await realpath(this.root), '', [], paths);
+      this.entries = [...this.entries.filter(entry => !within(entry.path, paths)), ...selected]
+        .sort((a, b) => a.path.localeCompare(b.path));
+      this.byId = new Map(this.entries.flatMap(entry => [[entry.path, entry], [fileId(entry.path), entry]]));
+    }
     return this.entries.length;
   }
 
@@ -116,7 +124,7 @@ export class AikidoKnowledgeBase {
     return this.searchIndex.search(query, kind, limit);
   }
 
-  private async scanDirectory(realRoot: string, relativeDirectory: string, inherited: Array<{ base: string; rules: Ignore }> = []): Promise<KnowledgeEntry[]> {
+  private async scanDirectory(realRoot: string, relativeDirectory: string, inherited: Array<{ base: string; rules: Ignore }> = [], scopes?: string[]): Promise<KnowledgeEntry[]> {
     const directoryPath = path.join(realRoot, relativeDirectory);
     const children = await readdir(directoryPath, { withFileTypes: true });
     const rules = [...inherited];
@@ -126,6 +134,9 @@ export class AikidoKnowledgeBase {
     const result: KnowledgeEntry[] = [];
     for (const child of children.sort((a, b) => a.name.localeCompare(b.name))) {
       const relativePath = path.posix.join(relativeDirectory.split(path.sep).join('/'), child.name);
+      // Visit only selected subtrees and their ancestors (for inherited ignore rules).
+      if (scopes && !within(relativePath, scopes)
+        && !scopes.some(scope => scope.startsWith(`${relativePath}/`))) continue;
       if (child.name.startsWith('.env') || /(?:\.log|\.tmp|\.sw[po]|~)$/.test(child.name)) continue;
       let ignored = false;
       for (const layer of rules) {
@@ -138,8 +149,9 @@ export class AikidoKnowledgeBase {
       if (child.isDirectory()) {
         if (EXCLUDED_DIRECTORIES.has(child.name)) continue;
         if (process.env.AIKIDO_INCLUDE_SPEC !== 'true' && (relativePath === 'prompts/spec' || relativePath === 'spec')) continue;
-        result.push(...await this.scanDirectory(realRoot, relativePath, rules));
+        result.push(...await this.scanDirectory(realRoot, relativePath, rules, scopes));
       } else if (child.isFile() && TEXT_EXTENSIONS.has(path.extname(child.name).toLowerCase())) {
+        if (!within(relativePath, scopes)) continue;
         const fullPath = path.join(realRoot, relativePath);
         const info = await stat(fullPath);
         if (info.size > MAX_FILE_BYTES) continue;

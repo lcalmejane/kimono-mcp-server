@@ -4,6 +4,22 @@
 
 ## Ce que fournit Kimono
 
+### Indexation ciblée (v0.3.0)
+
+Appeler `aikido_index` avec `{"operation":"update","mode":"all","paths":["src/fichier.ts","prompts/concepts","supprime.md"]}`.
+`paths` accepte aussi une chaîne unique. Seuls les contenus sélectionnés sont lus ;
+les répertoires respectent les frontières exactes, les cibles absentes suppriment
+les anciennes entrées et chaque moteur expose ses tableaux indépendants
+`indexes.literal/semantic.changes` (`added`, `modified`, `deleted`).
+Les exclusions gitignore/privées et les liens symboliques restent exclus.
+Un cache ciblé froid reste partiel, sans indexation implicite du reste du corpus.
+Sans `paths`, la synchronisation reste globale ; les recherches continuent
+toujours à rafraîchir automatiquement tout le catalogue. Les clients en lecture
+seule peuvent entretenir les caches hors ROOT sans obtenir de droits d’écriture.
+CLI : `kimono index --mode all --paths '["src/fichier.ts"]' --root ./projet`.
+`paths` ne s’utilise qu’avec `update` ; chemins dangereux et erreurs des moteurs
+sont explicites. `all` est séquentiel, non transactionnel entre moteurs.
+
 Kimono expose un ROOT AI-KIDO par MCP : documents, commandes, agents/personas,
 skills et workflows. Des humains utilisant un client MCP et des agents connectés
 peuvent retrouver les mêmes instructions, les rechercher et agir sur un projet
