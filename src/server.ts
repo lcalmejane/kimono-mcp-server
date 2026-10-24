@@ -28,7 +28,7 @@ import {
 } from './git-profile.js';
 
 const SERVER_NAME = 'kimono-mcp-server';
-const SERVER_VERSION = '0.4.0';
+const SERVER_VERSION = '0.4.1';
 export interface AikidoServerOptions {
   resolveGitProfile?: GitCredentialResolver;
   trustedGitProfileHeader?: boolean;
