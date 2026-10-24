@@ -75,7 +75,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
+          # Immutable releases reject uploads after publication: attach assets to a draft, then publish.
+          if gh release view "$GITHUB_REF_NAME" --json isDraft --jq .isDraft 2>/dev/null | grep -qx false; then
+            echo "Release $GITHUB_REF_NAME is already published and immutable." >&2; exit 1
+          fi
           gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 \
-            || gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" \
+            || gh release create "$GITHUB_REF_NAME" --draft --verify-tag --title "$GITHUB_REF_NAME" \
               --notes "Reproducible native Kimono bundles for this tagged release."
           gh release upload "$GITHUB_REF_NAME" kimono-native-*.tar.gz SHA256SUMS.txt --clobber
+          gh release edit "$GITHUB_REF_NAME" --draft=false

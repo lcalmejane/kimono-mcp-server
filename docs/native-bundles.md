@@ -8,7 +8,9 @@ self-contained and need no first-run downloads or container runtime.
 `workflow_dispatch` rebuilds all targets on demand; pushing a `v*` version tag
 also publishes one `.tar.gz` per target and a `SHA256SUMS.txt` file to that
 GitHub Release, after requiring the tag (for example, `v0.3.0`) to match the
-package version. Pull requests do not publish release assets. Each native
+package version. Assets are attached to a draft release that is published only
+afterwards, so the workflow works with GitHub immutable releases. Pull requests
+do not publish release assets. Each native
 packaging run compiles and tests the locked semantic crate and runs a real
 384-dimensional ONNX embedding against the packaged model/runtime.
 
