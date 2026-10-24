@@ -8,7 +8,7 @@ const [dockerfile, cargo, lock, helper, spec] = await Promise.all([
   readFile(new URL('../semantic/Cargo.lock', import.meta.url), 'utf8'),
   readFile(new URL('../semantic/src/main.rs', import.meta.url), 'utf8'),
   readFile(new URL('../semantic/model.json', import.meta.url), 'utf8'),
-]);
+]).then(files => files.map(text => text.replace(/\r\n/g, '\n')));
 assert.ok(dockerfile.includes(`ARG FAST_GREP_VERSION=${pinned.fastGrep}\n`), 'Docker fast-grep pin differs from versions.json');
 assert.ok(cargo.includes(`embsearch-core = { version = "=${pinned.embsearchCore}"`), 'Cargo embsearch-core pin differs from versions.json');
 assert.ok(lock.includes(`name = "embsearch-core"\nversion = "${pinned.embsearchCore}"`), 'Cargo.lock embsearch-core version differs from versions.json');
