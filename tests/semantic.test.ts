@@ -114,7 +114,7 @@ describe.skipIf(!process.env.KIMONO_MODEL_DIR)('real multilingual ONNX semantic 
       });
       const scaled = await call('aikido_search', { ...args, vector: embedding.vector.map((value: number) => value * 1e25) });
       expect(scaled.results[0].score).toBeCloseTo(vectorResult.results[0].score, 5);
-      const filtered = await call('aikido', { operation: 'search', ...args, kind: 'command', limit: 1 });
+      const filtered = await call('aikido', { operation: 'search', ...args, kind: 'command', limit: 1, detail: 'excerpts' });
       expect(filtered.results).toHaveLength(1);
       expect(filtered.results[0].kind).toBe('command');
       const pathFiltered = await call('aikido_search', { ...args, pathPrefix: 'prompts/cooking.md', limit: 1, contextLines: 0 });
@@ -281,7 +281,7 @@ describe.skipIf(!process.env.KIMONO_MODEL_DIR)('real multilingual ONNX semantic 
       process.env.KIMONO_MODEL_DIR = path.join(knowledge.root, 'missing-model');
       try {
         const error = await client.callTool({ name: 'aikido_search', arguments: { snapshotId, mode: 'semantic', query: 'secrets' } });
-        expect(error.isError).toBe(true);
+        expect(error.isError, JSON.stringify(error)).toBe(true);
         const status = await client.callTool({ name: 'aikido_index', arguments: { operation: 'status', mode: 'semantic' } });
         expect(status.isError).not.toBe(true);
         if (!Array.isArray(status.content) || status.content[0]?.type !== 'text') throw new Error('Expected status text');

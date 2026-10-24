@@ -319,7 +319,7 @@ it('reports semantic chunks as inclusive [start,end] locations without passage t
   ], { engine: 'embsearch-core', model: 'm', status: 'ok', chunks: 9, queryPlan: { terms: ['needle'], expansions: [
     { term: 'aiguille', relation: 'alias', concept: 'Needle', path: 'prompts/glossary.md', line: 4 }], warnings: [], semanticQuery: 'x', policy: 'long' },
   branches: [{ mode: 'semantic', status: 'ok', ms: 12.345, engine: 'embsearch-core', count: 2 }] }));
-  expect(located).toEqual({ engine: 'embsearch-core', model: 'm', status: 'ok', count: 1, files: 1, truncated: false,
+  expect(located).toEqual({ engine: 'embsearch-core', model: 'm', status: 'ok', chunks: 9, count: 1, files: 1, truncated: false,
     query: { terms: ['needle'], expansions: [{ term: 'aiguille', concept: 'Needle', relation: 'alias', source: 'prompts/glossary.md:4' }] },
     results: [{ path: docPath, lines: 20, score: 0.91, hits: [[11, 13]] }] });
   expect(knowledge).toBeDefined();

@@ -130,7 +130,7 @@ type QueryPlanLike = { terms?: unknown; expansions?: Array<{ term: string; relat
 
 function compactMetadata(extra: Record<string, unknown>): Record<string, unknown> {
   const result: Record<string, unknown> = {};
-  for (const key of ['engine', 'model', 'status', 'error', 'index']) if (extra[key] !== undefined) result[key] = extra[key];
+  for (const key of ['engine', 'model', 'status', 'error', 'index', 'chunks', 'embedded']) if (extra[key] !== undefined) result[key] = extra[key];
   const plan = extra.queryPlan as QueryPlanLike | undefined;
   if (plan && typeof plan === 'object') {
     result.query = {

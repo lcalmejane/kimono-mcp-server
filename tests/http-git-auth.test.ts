@@ -81,7 +81,7 @@ it.each([false, true])('isolates authenticated HTTP credential contexts (trusted
     await Promise.all(clients.map(client => client.close()));
     await instance.close();
     spy.mockRestore();
-    await rm(knowledge.searchIndex.directory, { recursive: true, force: true });
+    await rm(knowledge.searchIndex.directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
     await rm(parent, { recursive: true, force: true });
   }
 });

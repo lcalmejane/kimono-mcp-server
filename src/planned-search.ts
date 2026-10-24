@@ -106,6 +106,7 @@ export async function plannedSearch(knowledge: AikidoKnowledgeBase, plan: QueryP
   };
   const branches = await Promise.all((mode === 'hybrid' ? ['text', 'semantic'] as const : [mode]).map(timed));
   const successful = branches.filter(branch => branch.status === 'ok');
+  if (!successful.length) throw new Error(branches.map(branch => `${branch.mode}: ${branch.error}`).join('; '));
   const fused = new Map<string, RankedHit>();
   for (const branch of successful) {
     branch.results.forEach((hit, index) => {
@@ -122,10 +123,9 @@ export async function plannedSearch(knowledge: AikidoKnowledgeBase, plan: QueryP
   return { results, metadata: {
     engine: mode === 'hybrid' ? 'hybrid' : branches[0].engine, model: branches.find(branch => branch.model)?.model,
     ...(mode === 'semantic' ? { chunks: branches[0].chunks, embedded: branches[0].embedded, changes: branches[0].changes } : {}),
-    status: successful.length === branches.length ? 'ok' : successful.length ? 'partial' : branches[0].status,
+    status: successful.length === branches.length ? 'ok' : 'partial',
     queryPlan: plan, ranking: mode === 'hybrid' ? 'passage reciprocal-rank-fusion k=60' : mode === 'text'
       ? 'document-frequency weighted whole-term coverage (passage + document) + file-name/path boost + bounded project aliases + phrase/title/heading boosts; repeated-document penalty 0.2' : 'cosine similarity',
     branches: branches.map(({ results: hits, ...branch }) => ({ ...branch, count: hits.length })),
-    ...(successful.length ? {} : { error: branches.map(branch => branch.error).filter(Boolean).join('; ') }),
   } };
 }
