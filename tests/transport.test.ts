@@ -1,58 +1,50 @@
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { expect, it } from 'vitest';
 
-const exec = promisify(execFile);
-
-it('initializes an absent ROOT and edits/commits/pushes a project over real stdio MCP', async () => {
+it('serves snapshot-pinned knowledge over stdio and rejects legacy mutations', async () => {
   const parent = await mkdtemp(path.join(tmpdir(), 'kimono-stdio-'));
-  const source = path.join(parent, 'template');
-  const remote = path.join(parent, 'remote.git');
-  await mkdir(path.join(source, 'prompts'), { recursive: true });
-  await writeFile(path.join(source, 'prompts/index.md'), '# AI-KIDO\nStandard entry');
-  const git = (...args: string[]) => exec('git', args, { cwd: source });
-  await git('init', '-b', 'main');
-  await git('-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', 'add', '.');
-  await git('-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', 'commit', '-m', 'template');
-  await git('clone', '--bare', source, remote);
+  const root = path.join(parent, 'project');
+  await mkdir(path.join(root, 'prompts'), { recursive: true });
+  await writeFile(path.join(root, 'prompts/index.md'), '# AI-KIDO\nStandard entry');
   const client = new Client({ name: 'stdio-integration', version: '1.0.0' });
   const transport = new StdioClientTransport({
-    command: process.execPath,
-    args: ['--import', 'tsx', 'src/index.ts'],
+    command: process.execPath, args: ['--import', 'tsx', 'src/index.ts'],
     env: {
-      PATH: process.env.PATH ?? '/usr/bin:/bin',
-      AIKIDO_ROOT: path.join(parent, 'project'),
-      AIKIDO_WRITABLE: 'true',
-      KIMONO_CACHE_DIR: path.join(parent, 'cache'),
+      PATH: process.env.PATH ?? '/usr/bin:/bin', AIKIDO_ROOT: root,
+      AIKIDO_WRITABLE: 'true', KIMONO_CACHE_DIR: path.join(parent, 'cache'),
       FGR_BIN: process.env.FGR_BIN ?? 'fgr',
-      GIT_AUTHOR_NAME: 'MCP Client', GIT_AUTHOR_EMAIL: 'client@example.invalid',
-      GIT_COMMITTER_NAME: 'MCP Client', GIT_COMMITTER_EMAIL: 'client@example.invalid',
     },
     stderr: 'pipe',
   });
   try {
     await client.connect(transport);
-    expect((await client.listTools()).tools).toHaveLength(7);
-    expect((await client.listResources()).resources).toEqual([]);
-    const call = async (name: string, args: Record<string, unknown>) => {
-      const response = await client.callTool({ name, arguments: args });
-      expect(response.isError, JSON.stringify(response)).not.toBe(true);
-      return response;
-    };
-    await call('aikido_root', { operation: 'init', repository: remote });
-    await call('aikido_file', { operation: 'write', path: 'prompts/client.md', content: '# Stdio MCP live index' });
-    const search = await call('aikido_search', { query: 'Stdio MCP' });
-    expect(JSON.stringify(search)).toContain('prompts/client.md');
-    await call('aikido_git', { operation: 'add', paths: ['prompts/client.md'] });
-    await call('aikido_git', { operation: 'commit', message: 'docs: update through MCP' });
-    await call('aikido_git', { operation: 'push', ref: 'main', confirm: true });
-    const result = await exec('git', ['log', '-1', '--format=%s'], { cwd: remote });
-    expect(result.stdout.trim()).toBe('docs: update through MCP');
+    expect((await client.listTools()).tools.map(tool => tool.name)).toEqual([
+      'aikido', 'aikido_snapshot', 'aikido_embed', 'aikido_root', 'aikido_search',
+      'aikido_index', 'aikido_git', 'aikido_collaboration', 'aikido_file',
+    ]);
+    const begun = await client.callTool({ name: 'aikido_snapshot', arguments: { operation: 'begin' } });
+    expect(begun.isError).not.toBe(true);
+    const snapshotId = JSON.parse((begun.content as Array<{ text: string }>)[0].text).snapshotId;
+    await writeFile(path.join(root, 'prompts/index.md'), '# New knowledge');
+    const pinned = await client.callTool({
+      name: 'aikido_file', arguments: { operation: 'read', path: 'prompts/index.md', snapshotId },
+    });
+    expect(pinned.isError).not.toBe(true);
+    expect(JSON.stringify(pinned)).toContain('Standard entry');
+    for (const operation of ['add', 'commit', 'push', 'merge', 'branch', 'checkout', 'pull', 'fetch']) {
+      const denied = await client.callTool({ name: 'aikido_git', arguments: { operation, confirm: true } });
+      expect(denied.isError).toBe(true);
+    }
+    const deniedWrite = await client.callTool({
+      name: 'aikido_file', arguments: { operation: 'write', path: 'prompts/index.md', content: 'forbidden', snapshotId },
+    });
+    expect(deniedWrite.isError).toBe(true);
+    expect(await readFile(path.join(root, 'prompts/index.md'), 'utf8')).toBe('# New knowledge');
+    await client.callTool({ name: 'aikido_snapshot', arguments: { operation: 'end', snapshotId } });
   } finally {
     await client.close();
     await transport.close();

@@ -14,6 +14,12 @@ assert.ok(cargo.includes(`embsearch-core = { version = "=${pinned.embsearchCore}
 assert.ok(lock.includes(`name = "embsearch-core"\nversion = "${pinned.embsearchCore}"`), 'Cargo.lock embsearch-core version differs from versions.json');
 assert.ok(helper.includes(`"version": "${pinned.embsearchCore}"`), 'Semantic engine response version differs from versions.json');
 assert.ok(JSON.parse(spec).name.includes(pinned.model.revision), 'Model name differs from the pinned revision');
+for (const target of ['darwin-arm64', 'linux-arm64', 'linux-x64', 'win32-x64']) {
+  const native = pinned.nativeTargets?.[target];
+  assert.ok(native, `Missing native runtime pin for ${target}`);
+  assert.match(native.sha256, /^[a-f0-9]{64}$/, `Invalid ONNX Runtime archive checksum for ${target}`);
+  assert.ok(native.archive.includes(pinned.onnxRuntime), `ONNX Runtime archive version differs for ${target}`);
+}
 
 async function json(url) {
   const response = await fetch(url, {

@@ -13,7 +13,7 @@ RUN npm ci --omit=dev && npm cache clean --force
 
 FROM rust:1-bookworm AS tooling
 ARG FAST_GREP_VERSION=0.5.0
-RUN apt-get update && apt-get install -y --no-install-recommends git openssh-client ca-certificates libatomic1 \
+RUN apt-get update && apt-get install -y --no-install-recommends git gh jq openssh-client ca-certificates libatomic1 \
     && rm -rf /var/lib/apt/lists/* \
     && cargo install fast-grep --version "${FAST_GREP_VERSION}" --locked \
     && useradd --create-home --uid 1000 node \

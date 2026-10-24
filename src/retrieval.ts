@@ -126,8 +126,37 @@ function headings(lines: string[], headerEnd: number): Heading[] {
   return result;
 }
 
+type QueryPlanLike = { terms?: unknown; expansions?: Array<{ term: string; relation: string; concept: string; path: string; line: number }>; warnings?: unknown };
+
+function compactMetadata(extra: Record<string, unknown>): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+  for (const key of ['engine', 'model', 'status', 'error', 'index']) if (extra[key] !== undefined) result[key] = extra[key];
+  const plan = extra.queryPlan as QueryPlanLike | undefined;
+  if (plan && typeof plan === 'object') {
+    result.query = {
+      terms: plan.terms,
+      ...(plan.expansions?.length ? { expansions: plan.expansions.map(item => ({ term: item.term, concept: item.concept, relation: item.relation, source: `${item.path}:${item.line}` })) } : {}),
+      ...(Array.isArray(plan.warnings) && plan.warnings.length ? { warnings: plan.warnings } : {}),
+    };
+  }
+  if (Array.isArray(extra.branches) && extra.branches.length > 1 || (Array.isArray(extra.branches) && extra.branches.some(branch => (branch as Record<string, unknown>).status !== 'ok'))) {
+    result.branches = (extra.branches as Array<Record<string, unknown>>).map(branch => ({ mode: branch.mode, status: branch.status,
+      ms: typeof branch.ms === 'number' ? Math.round(branch.ms) : branch.ms, count: branch.count, ...(branch.error ? { error: branch.error } : {}) }));
+  }
+  return result;
+}
+
 export class Retrieval {
-  constructor(private readonly knowledge: AikidoKnowledgeBase) {}
+  constructor(private readonly knowledge: AikidoKnowledgeBase,
+    private readonly responseMetadata: Record<string, unknown> = {}) {}
+
+  private json(value: object, maxBytes?: number): string {
+    const json = JSON.stringify({ ...value, ...this.responseMetadata });
+    if (maxBytes !== undefined && Buffer.byteLength(json) > maxBytes) {
+      throw new Error('Response exceeds maxBytes; increase the response budget');
+    }
+    return json;
+  }
 
   private async document(id: string) {
     const { entry, content, modified } = await this.knowledge.read(id);
@@ -164,7 +193,7 @@ export class Retrieval {
       output.count = output.entries.length;
       output.nextOffset = offset + output.count < entries.length ? offset + output.count : null;
       output.truncated = output.nextOffset !== null;
-      if (Buffer.byteLength(JSON.stringify(output)) > maxBytes) {
+      if (Buffer.byteLength(this.json(output)) > maxBytes) {
         output.entries.pop();
         output.count--;
         break;
@@ -173,7 +202,7 @@ export class Retrieval {
     output.nextOffset = offset + output.count < entries.length ? offset + output.count : null;
     output.truncated = output.nextOffset !== null;
     if (!output.count && offset < entries.length) throw new Error('Metadata exceeds maxBytes; increase the response budget');
-    return JSON.stringify(output);
+    return this.json(output, maxBytes);
   }
 
   async read(input: Record<string, unknown>, id: string): Promise<string> {
@@ -187,19 +216,19 @@ export class Retrieval {
     const maxBytes = integer(input, 'maxBytes', full ? 16777216 : 16384, 2048, 16777216);
     await this.knowledge.refresh();
     const document = await this.document(id);
-    if (operation === 'metadata') return checkedJson(document.metadata, maxBytes);
+    if (operation === 'metadata') return this.json(document.metadata, maxBytes);
     if (operation === 'outline') {
       const offset = integer(input, 'offset', 0, 0, Number.MAX_SAFE_INTEGER);
       const limit = integer(input, 'limit', 25, 1, 100);
       const entries = document.outline.slice(offset, offset + limit);
       const result = { document: document.metadata, count: entries.length, total: document.outline.length,
         nextOffset: offset + entries.length < document.outline.length ? offset + entries.length : null, headings: entries };
-      while (Buffer.byteLength(JSON.stringify(result)) > maxBytes && result.headings.length) {
+      while (Buffer.byteLength(this.json(result)) > maxBytes && result.headings.length) {
         result.headings.pop(); result.count--;
         result.nextOffset = offset + result.count;
       }
       if (!result.count && offset < result.total) throw new Error('Outline metadata exceeds maxBytes; increase the response budget');
-      return checkedJson(result, maxBytes);
+      return this.json(result, maxBytes);
     }
     let start = integer(input, 'startLine', 1, 1, Number.MAX_SAFE_INTEGER);
     let end = integer(input, 'endLine', full ? Math.max(1, document.lines.length) : start + 199, start, Number.MAX_SAFE_INTEGER);
@@ -219,15 +248,133 @@ export class Retrieval {
       result.truncated = result.endLine < end;
       result.hasMore = result.endLine < document.lines.length;
       result.nextLine = result.hasMore ? Math.max(start, result.endLine + 1) : null;
-      if (Buffer.byteLength(JSON.stringify(result)) <= maxBytes) break;
+      if (Buffer.byteLength(this.json(result)) <= maxBytes) break;
       if (!selected.length) throw new Error('Document metadata exceeds maxBytes; increase the response budget');
       selected.pop();
       if (!selected.length) throw new Error('A document line exceeds maxBytes; increase the response budget');
     }
-    return JSON.stringify(result);
+    return this.json(result, maxBytes);
   }
 
   async search(input: Record<string, unknown>, matches: Array<SearchMatch & { score?: number }>, extra: Record<string, unknown>): Promise<string> {
+    const detail = input.detail ?? (input.contextLines !== undefined ? 'excerpts' : 'locations');
+    if (detail !== 'locations' && detail !== 'excerpts') throw new Error('detail must be locations or excerpts');
+    if (detail === 'locations') {
+      if (input.contextLines !== undefined) throw new Error('contextLines requires detail=excerpts; use aikido_file ranges with contextLines');
+      return this.locations(input, matches, extra);
+    }
+    return this.excerpts(input, matches, extra);
+  }
+
+  // Token-frugal default: where to look, not what is there. Passages are fetched afterwards in one aikido_file ranges batch.
+  private async locations(input: Record<string, unknown>, matches: Array<SearchMatch & { score?: number; matchedTerms?: string[] }>, extra: Record<string, unknown>): Promise<string> {
+    const limit = integer(input, 'limit', 25, 1, 100);
+    const maxBytes = integer(input, 'maxBytes', 16384, 2048, 262144);
+    const head = compactMetadata(extra);
+    type Located = { path: string; lines: number; score?: number; hits: Array<number | [number, number]>; terms?: string[] };
+    const files: Located[] = [];
+    const byPath = new Map<string, Located>();
+    const sizes = new Map<string, number>();
+    let hits = 0, omitted = matches.length > limit;
+    const output = () => ({ ...head, count: hits, files: files.length, truncated: omitted,
+      results: files.map(file => ({ ...file, hits: [...file.hits].sort((a, b) => (Array.isArray(a) ? a[0] : a) - (Array.isArray(b) ? b[0] : b)) })) });
+    for (const hit of matches) {
+      if (hits >= limit) { omitted = true; break; }
+      let total = sizes.get(hit.path);
+      if (total === undefined) {
+        const { content } = await this.knowledge.read(hit.path);
+        total = documentLines(content).length;
+        sizes.set(hit.path, total);
+      }
+      if (hit.line < 1 || hit.line > total) throw new Error('Search engine returned an invalid source line');
+      const end = Math.min(total, hit.line + Math.max(1, documentLines(hit.excerpt).length) - 1);
+      let file = byPath.get(hit.path);
+      const created = !file;
+      if (!file) {
+        file = { path: hit.path, lines: total, ...(typeof hit.score === 'number' ? { score: Number(hit.score.toFixed(4)) } : {}), hits: [] };
+        byPath.set(hit.path, file); files.push(file);
+      }
+      if (file.hits.some(item => Array.isArray(item) ? item[0] <= hit.line && item[1] >= end : item === hit.line && end === hit.line)) continue;
+      const previousTerms = file.terms;
+      file.hits.push(end > hit.line ? [hit.line, end] : hit.line);
+      if (Array.isArray(hit.matchedTerms) && hit.matchedTerms.length) file.terms = [...new Set([...(file.terms ?? []), ...hit.matchedTerms])];
+      hits++;
+      if (Buffer.byteLength(this.json(output())) > maxBytes) {
+        file.hits.pop(); file.terms = previousTerms; hits--; omitted = true;
+        if (created) { files.pop(); byPath.delete(hit.path); }
+        break;
+      }
+    }
+    if (!hits && matches.length) throw new Error('Search metadata exceeds maxBytes; increase the response budget');
+    return this.json(output(), maxBytes);
+  }
+
+  // Batched passage retrieval after a locations search: one call, merged per-file ranges, a single byte budget.
+  async ranges(input: Record<string, unknown>): Promise<string> {
+    const raw = input.ranges;
+    if (!Array.isArray(raw) || raw.length < 1 || raw.length > 50) throw new Error('ranges must contain 1-50 {path,startLine,endLine?} items');
+    const context = integer(input, 'contextLines', 0, 0, 20);
+    const maxBytes = integer(input, 'maxBytes', 16384, 2048, 262144);
+    const requested = new Map<string, Array<[number, number]>>();
+    for (const item of raw) {
+      if (!item || typeof item !== 'object' || Array.isArray(item)) throw new Error('Each range must be an object');
+      const range = item as Record<string, unknown>;
+      const unknown = Object.keys(range).filter(key => !['path', 'startLine', 'endLine'].includes(key));
+      if (unknown.length) throw new Error(`Unknown range field: ${unknown[0]}`);
+      const file = optionalText(range, 'path');
+      if (!file) throw new Error('Each range requires path');
+      const start = integer(range, 'startLine', 1, 1, Number.MAX_SAFE_INTEGER);
+      const end = integer(range, 'endLine', start, start, Number.MAX_SAFE_INTEGER);
+      requested.set(file, [...(requested.get(file) ?? []), [start, end]]);
+    }
+    await this.knowledge.refresh();
+    const passages: Array<{ path: string; startLine: number; endLine: number; content: string }> = [];
+    const errors: Array<{ path: string; error: string }> = [];
+    const pending: Array<{ path: string; startLine: number; endLine: number }> = [];
+    for (const [file, spans] of requested) {
+      let lines: string[];
+      try {
+        const { entry, content } = await this.knowledge.read(file);
+        if (content.includes('\0')) throw new Error(`Binary content is not readable: ${entry.path}`);
+        lines = documentLines(content);
+      } catch (error) {
+        errors.push({ path: file, error: error instanceof Error ? error.message : String(error) });
+        continue;
+      }
+      const merged: Array<[number, number]> = [];
+      for (const [start, end] of spans.map(([start, end]) => [Math.max(1, start - context), Math.min(lines.length, end + context)] as [number, number])
+        .filter(([start, end]) => start <= end).sort((a, b) => a[0] - b[0])) {
+        const last = merged.at(-1);
+        if (last && start <= last[1] + 1) last[1] = Math.max(last[1], end);
+        else merged.push([start, end]);
+      }
+      if (!merged.length) errors.push({ path: file, error: 'startLine exceeds document length' });
+      for (const [start, end] of merged) pending.push({ path: file, startLine: start, endLine: end });
+      for (const range of merged) passages.push({ path: file, startLine: range[0], endLine: range[1], content: lines.slice(range[0] - 1, range[1]).join('\n') });
+    }
+    const output = (returned: typeof passages, remaining: typeof pending) => ({ count: returned.length, truncated: remaining.length > 0,
+      passages: returned, ...(errors.length ? { errors } : {}), ...(remaining.length ? { remaining } : {}) });
+    const returned: typeof passages = [];
+    for (let index = 0; index < passages.length; index++) {
+      const passage = passages[index];
+      returned.push(passage);
+      if (Buffer.byteLength(this.json(output(returned, pending.slice(index + 1)))) <= maxBytes) continue;
+      const lines = passage.content.split('\n');
+      while (lines.length > 1) {
+        lines.pop();
+        passage.content = lines.join('\n');
+        passage.endLine = passage.startLine + lines.length - 1;
+        const rest = [{ path: passage.path, startLine: passage.endLine + 1, endLine: pending[index].endLine }, ...pending.slice(index + 1)];
+        if (Buffer.byteLength(this.json(output(returned, rest))) <= maxBytes) return this.json(output(returned, rest), maxBytes);
+      }
+      returned.pop();
+      if (!returned.length) throw new Error('A requested line exceeds maxBytes; increase the response budget');
+      return this.json(output(returned, pending.slice(index)), maxBytes);
+    }
+    return this.json(output(returned, []), maxBytes);
+  }
+
+  private async excerpts(input: Record<string, unknown>, matches: Array<SearchMatch & { score?: number }>, extra: Record<string, unknown>): Promise<string> {
     const limit = integer(input, 'limit', 25, 1, 100);
     const context = integer(input, 'contextLines', 2, 0, 20);
     const maxBytes = integer(input, 'maxBytes', 16384, 2048, 262144);
@@ -252,19 +399,13 @@ export class Retrieval {
       documents[file_id] = doc.metadata;
       results.push({ ...hit, file_id, startLine: start, endLine: start + documentLines(excerpt).length - 1,
         excerpt, excerptTruncated: excerpt.length < text.length });
-      if (Buffer.byteLength(JSON.stringify({ ...extra, count: results.length, truncated: true, documents, results })) > maxBytes) {
+      if (Buffer.byteLength(this.json({ ...extra, count: results.length, truncated: true, documents, results })) > maxBytes) {
         results.pop();
         if (!results.some(result => result.file_id === file_id)) delete documents[file_id];
         omitted = true; break;
       }
     }
     if (!results.length && matches.length) throw new Error('Search metadata exceeds maxBytes; increase the response budget');
-    return checkedJson({ ...extra, count: results.length, truncated: omitted, documents, results }, maxBytes);
+    return this.json({ ...extra, count: results.length, truncated: omitted, documents, results }, maxBytes);
   }
-}
-
-function checkedJson(value: unknown, maxBytes: number): string {
-  const json = JSON.stringify(value);
-  if (Buffer.byteLength(json) > maxBytes) throw new Error('Response exceeds maxBytes; increase the response budget');
-  return json;
 }

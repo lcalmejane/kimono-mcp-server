@@ -9,6 +9,8 @@ import { AikidoKnowledgeBase } from '../src/knowledge.js';
 import { createAikidoMcpServer } from '../src/server.js';
 import { runtimeFor } from '../src/runtime-tools.js';
 import { runProcess } from '../src/process.js';
+import * as processes from '../src/process.js';
+import { sourceSnapshot } from '../src/index-basis.js';
 
 const directories: string[] = [];
 afterEach(async () => {
@@ -31,6 +33,57 @@ async function fixture() {
   return knowledge;
 }
 
+it('reuses a fresh semantic index at startup instead of rebuilding it', async () => {
+  const knowledge = await fixture();
+  const originalModel = process.env.KIMONO_MODEL_DIR;
+  process.env.KIMONO_MODEL_DIR = 'unused-test-model';
+  const current = await sourceSnapshot(knowledge);
+  await mkdir(knowledge.searchIndex.directory, { recursive: true });
+  await writeFile(path.join(knowledge.searchIndex.directory, 'semantic-basis.json'), JSON.stringify({
+    attempt: 'previous', phase: 'ready', lastSuccessful: { ...current, indexedAt: '2026-10-24T00:00:00.000Z' },
+  }));
+  const run = vi.spyOn(processes, 'runProcess');
+  try {
+    knowledge.semanticIndex.warmup();
+    await knowledge.semanticIndex.idle();
+    expect(knowledge.semanticIndex.status()).toMatchObject({
+      phase: 'ready', operation: 'update', indexedAt: '2026-10-24T00:00:00.000Z',
+    });
+    expect(run.mock.calls.some(([executable]) => executable.includes('kimono-semantic'))).toBe(false);
+  } finally {
+    run.mockRestore();
+    if (originalModel === undefined) delete process.env.KIMONO_MODEL_DIR;
+    else process.env.KIMONO_MODEL_DIR = originalModel;
+  }
+});
+
+it('reports semantic indexing stage and progress during startup preparation', async () => {
+  const knowledge = await fixture();
+  const originalModel = process.env.KIMONO_MODEL_DIR;
+  const realRunProcess = processes.runProcess;
+  process.env.KIMONO_MODEL_DIR = 'unused-test-model';
+  const run = vi.spyOn(processes, 'runProcess').mockImplementation(async (executable, args, cwd, exitCodes, timeout, onStderr, environment) => {
+    if (executable !== (process.env.KIMONO_SEMANTIC_BIN ?? 'kimono-semantic')) {
+      return realRunProcess(executable, args, cwd, exitCodes, timeout, onStderr, environment);
+    }
+    onStderr?.('KIMONO_PROGRESS {"phase":"document_embedding","completed":1,"total":2}\n');
+    return { stdout: JSON.stringify({ engine: 'embsearch-core', version: '0.3.4', model: 'test-model',
+      chunks: 2, embedded: 2, count: 0, results: [], changes: { added: [], modified: [], deleted: [] } }),
+      stderr: '', exitCode: 0 };
+  });
+  try {
+    knowledge.semanticIndex.warmup();
+    await knowledge.semanticIndex.idle();
+    expect(knowledge.semanticIndex.status()).toMatchObject({
+      phase: 'ready', stage: 'document_embedding', progress: { completed: 1, total: 2 },
+    });
+  } finally {
+    run.mockRestore();
+    if (originalModel === undefined) delete process.env.KIMONO_MODEL_DIR;
+    else process.env.KIMONO_MODEL_DIR = originalModel;
+  }
+});
+
 describe.skipIf(!process.env.KIMONO_MODEL_DIR)('real multilingual ONNX semantic search', () => {
   it('searches supplied vectors through MCP with model checks, filters and fresh index contents', async () => {
     const knowledge = await fixture();
@@ -39,8 +92,11 @@ describe.skipIf(!process.env.KIMONO_MODEL_DIR)('real multilingual ONNX semantic 
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     await server.connect(serverTransport);
     await client.connect(clientTransport);
+    const runtime = runtimeFor(knowledge);
+    let snapshotId = JSON.parse(await runtime.call('aikido_snapshot', { operation: 'begin' })).snapshotId;
     const call = async (name: string, args: Record<string, unknown>) => {
-      const response = await client.callTool({ name, arguments: args });
+      const response = await client.callTool({ name, arguments: name === 'aikido_search' || name === 'aikido'
+        ? { ...args, snapshotId } : args });
       expect(response.isError, JSON.stringify(response)).not.toBe(true);
       if (!Array.isArray(response.content) || response.content[0]?.type !== 'text') throw new Error('Expected text result');
       return JSON.parse(response.content[0].text);
@@ -71,8 +127,13 @@ describe.skipIf(!process.env.KIMONO_MODEL_DIR)('real multilingual ONNX semantic 
       const similar = await call('aikido_search', { ...args, vector: document.vector, embeddingModel: document.model, limit: 1 });
       expect(similar.results[0].path).toBe('prompts/secrets.md');
       await writeFile(path.join(knowledge.root, 'prompts/new.md'), 'Protect access tokens with a secrets manager.');
+      expect((await call('aikido_search', args)).chunks).toBe(4);
+      await runtime.call('aikido_snapshot', { operation: 'end', snapshotId });
+      snapshotId = JSON.parse(await runtime.call('aikido_snapshot', { operation: 'begin' })).snapshotId;
       expect((await call('aikido_search', args)).chunks).toBe(5);
       await rm(path.join(knowledge.root, 'prompts/secrets.md'));
+      await runtime.call('aikido_snapshot', { operation: 'end', snapshotId });
+      snapshotId = JSON.parse(await runtime.call('aikido_snapshot', { operation: 'begin' })).snapshotId;
       const afterDeletion = await call('aikido_search', args);
       expect(afterDeletion.chunks).toBe(4);
       expect(afterDeletion.results.some((hit: { path: string }) => hit.path === 'prompts/secrets.md')).toBe(false);
@@ -83,11 +144,12 @@ describe.skipIf(!process.env.KIMONO_MODEL_DIR)('real multilingual ONNX semantic 
         { ...args, vector: [1e100] }, { ...args, vector: ['bad'] },
         { ...args, mode: 'literal' }, { ...args, regex: true },
       ]) {
-        expect((await client.callTool({ name: 'aikido_search', arguments: invalid })).isError).toBe(true);
+        expect((await client.callTool({ name: 'aikido_search', arguments: { ...invalid, snapshotId } })).isError).toBe(true);
       }
-      await expect(runtimeFor(knowledge).call('aikido_search', { ...args, vector: [NaN] })).rejects.toThrow('finite');
-      await expect(runtimeFor(knowledge).call('aikido_search', { ...args, vector: [Infinity] })).rejects.toThrow('finite');
+      await expect(runtime.call('aikido_search', { ...args, snapshotId, vector: [NaN] })).rejects.toThrow('finite');
+      await expect(runtime.call('aikido_search', { ...args, snapshotId, vector: [Infinity] })).rejects.toThrow('finite');
     } finally {
+      await runtime.call('aikido_snapshot', { operation: 'end', snapshotId });
       await client.close();
       await server.close();
     }
@@ -201,29 +263,32 @@ describe.skipIf(!process.env.KIMONO_MODEL_DIR)('real multilingual ONNX semantic 
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     await server.connect(serverTransport);
     await client.connect(clientTransport);
+    const runtime = runtimeFor(knowledge);
+    const { snapshotId } = JSON.parse(await runtime.call('aikido_snapshot', { operation: 'begin' }));
     try {
       const response = await client.callTool({ name: 'aikido_search',
-        arguments: { mode: 'semantic', query: 'Comment proteger les identifiants secrets ?', limit: 1 } });
+        arguments: { snapshotId, mode: 'semantic', query: 'Comment proteger les identifiants secrets ?', limit: 1 } });
       expect(response.isError, JSON.stringify(response)).not.toBe(true);
       expect(response).toMatchObject({ content: [{ type: 'text', text: expect.stringContaining('"engine":"embsearch-core"') }] });
       const alias = await client.callTool({ name: 'aikido',
-        arguments: { operation: 'search', mode: 'semantic', query: 'garder les mots de passe en securite', limit: 2 } });
+        arguments: { snapshotId, operation: 'search', mode: 'semantic', query: 'garder les mots de passe en securite', limit: 2 } });
       expect(alias.isError, JSON.stringify(alias)).not.toBe(true);
-      const stats = await client.callTool({ name: 'aikido_index', arguments: { operation: 'stats', mode: 'semantic' } });
+      const stats = await client.callTool({ name: 'aikido_index', arguments: { operation: 'status', mode: 'semantic' } });
       expect(stats.isError).not.toBe(true);
-      await expect(runtimeFor(knowledge).call('aikido_search', { mode: 'semantic', regex: true, query: 'secrets' })).rejects.toThrow('conflicts');
-      await expect(runtimeFor(knowledge).call('aikido_search', { mode: 'semantic', query: 'secrets', limit: 101 })).rejects.toThrow('1 and 100');
+      await expect(runtime.call('aikido_search', { snapshotId, mode: 'semantic', regex: true, query: 'secrets' })).rejects.toThrow('conflicts');
+      await expect(runtime.call('aikido_search', { snapshotId, mode: 'semantic', query: 'secrets', limit: 101 })).rejects.toThrow('1 and 100');
       const previous = process.env.KIMONO_MODEL_DIR;
       process.env.KIMONO_MODEL_DIR = path.join(knowledge.root, 'missing-model');
       try {
-        const error = await client.callTool({ name: 'aikido_search', arguments: { mode: 'semantic', query: 'secrets' } });
+        const error = await client.callTool({ name: 'aikido_search', arguments: { snapshotId, mode: 'semantic', query: 'secrets' } });
         expect(error.isError).toBe(true);
         const status = await client.callTool({ name: 'aikido_index', arguments: { operation: 'status', mode: 'semantic' } });
         expect(status.isError).not.toBe(true);
         if (!Array.isArray(status.content) || status.content[0]?.type !== 'text') throw new Error('Expected status text');
-        expect(JSON.parse(status.content[0].text)).toMatchObject({ phase: 'error', operation: 'search' });
+        expect(JSON.parse(status.content[0].text)).toMatchObject({ phase: 'unknown' });
       } finally { process.env.KIMONO_MODEL_DIR = previous; }
     } finally {
+      await runtime.call('aikido_snapshot', { operation: 'end', snapshotId });
       await client.close();
       await server.close();
     }

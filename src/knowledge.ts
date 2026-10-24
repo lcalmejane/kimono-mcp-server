@@ -5,6 +5,7 @@ import ignore, { type Ignore } from 'ignore';
 import { FastGrepIndex } from './search.js';
 import { SemanticIndex } from './semantic.js';
 import { within } from './synchronization.js';
+import { ProjectVocabulary } from './query-plan.js';
 
 export type KnowledgeKind = 'command' | 'agent' | 'skill' | 'workflow' | 'knowledge';
 
@@ -23,22 +24,25 @@ export interface SearchMatch extends KnowledgeEntry {
 const TEXT_EXTENSIONS = new Set([
   '.md', '.mdx', '.mdc', '.txt', '.json', '.yaml', '.yml', '.toml', '.js', '.mjs', '.cjs', '.sh', '.py', '.ts', '.xml',
 ]);
-const EXCLUDED_DIRECTORIES = new Set(['.git', 'node_modules', 'dist', 'build', 'coverage', '.venv', '__pycache__', '.next', '.nuxt', '.cache', '.nyc_output', 'temp']);
+const EXCLUDED_DIRECTORIES = new Set(['.git', '.ssh', 'node_modules', 'dist', 'build', 'coverage', '.venv', '__pycache__', '.next', '.nuxt', '.cache', '.nyc_output', 'temp', 'credentials', 'secrets']);
 const MAX_FILE_BYTES = 2 * 1024 * 1024;
+const KNOWLEDGE_EXTENSIONS = TEXT_EXTENSIONS;
 
 export class AikidoKnowledgeBase {
   readonly root: string;
   readonly searchIndex: FastGrepIndex;
   readonly semanticIndex: SemanticIndex;
+  readonly vocabulary: ProjectVocabulary;
   private initialized = false;
   private memoryRoot = false;
   private entries: KnowledgeEntry[] = [];
   private byId = new Map<string, KnowledgeEntry>();
 
-  constructor(root: string) {
+  constructor(root: string, readonly immutable = false) {
     this.root = path.resolve(root);
     this.searchIndex = new FastGrepIndex(this);
     this.semanticIndex = new SemanticIndex(this);
+    this.vocabulary = new ProjectVocabulary(this);
   }
 
   get isInitialized(): boolean { return this.initialized; }
@@ -77,6 +81,7 @@ export class AikidoKnowledgeBase {
   }
 
   async refresh(paths?: string[]): Promise<number> {
+    if (this.immutable && this.initialized) return this.entries.length;
     if (!paths) await this.initialize();
     else {
       this.requireInitialized();
@@ -138,6 +143,7 @@ export class AikidoKnowledgeBase {
       if (scopes && !within(relativePath, scopes)
         && !scopes.some(scope => scope.startsWith(`${relativePath}/`))) continue;
       if (child.name.startsWith('.env') || /(?:\.log|\.tmp|\.sw[po]|~)$/.test(child.name)) continue;
+      if (isSensitiveKnowledgePath(relativePath)) continue;
       let ignored = false;
       for (const layer of rules) {
         const local = relativePath.slice(layer.base ? layer.base.length + 1 : 0) + (child.isDirectory() ? '/' : '');
@@ -174,6 +180,19 @@ export class AikidoKnowledgeBase {
 
 export function fileId(filePath: string): string {
   return createHash('sha256').update(filePath).digest('hex').slice(0, 12);
+}
+
+export function isKnowledgeFile(filePath: string): boolean {
+  return KNOWLEDGE_EXTENSIONS.has(path.extname(filePath).toLowerCase());
+}
+
+export function isSensitiveKnowledgePath(filePath: string): boolean {
+  const segments = filePath.replaceAll('\\', '/').split('/');
+  const basename = segments.at(-1) ?? '';
+  return segments.some(segment => ['.git', '.ssh', 'credentials', 'secrets'].includes(segment.toLowerCase()))
+    || segments.some(segment => segment.startsWith('.env'))
+    || /\.(?:pem|key|p12|pfx)$/i.test(basename)
+    || /^(?:id_(?:rsa|ed25519)(?:\.pub)?|credentials(?:\.[^.]+)?|\.netrc|\.npmrc|\.pypirc)$/i.test(basename);
 }
 
 function classify(filePath: string): KnowledgeKind {

@@ -3,6 +3,7 @@ import { homedir } from 'node:os';
 import path from 'node:path';
 import { runProcess } from './process.js';
 import { withGitProfile } from './git-profile.js';
+import { createHash } from 'node:crypto';
 
 export const AIKIDO_REPOSITORY = 'https://github.com/lcalmejane/aikido.git';
 
@@ -73,8 +74,94 @@ const GIT_OPTIONS = [
   '-c', 'protocol.ext.allow=never', '-c', 'protocol.file.allow=never',
 ];
 
+export function parseGitStatus(status: string): Array<{ path: string; status: string; oldPath?: string }> {
+  const fields = status.split('\0');
+  const result: Array<{ path: string; status: string; oldPath?: string }> = [];
+  for (let index = 0; index < fields.length; index++) {
+    const field = fields[index];
+    if (!field) continue;
+    if (field.length < 4 || field[2] !== ' ') throw new Error('Git returned an invalid NUL-delimited porcelain status');
+    const state = field.slice(0, 2);
+    const entry: { path: string; status: string; oldPath?: string } = { status: state, path: field.slice(3) };
+    if (state.includes('R') || state.includes('C')) {
+      const oldPath = fields[++index];
+      if (!oldPath) throw new Error('Git returned a rename/copy status without its original path');
+      entry.oldPath = oldPath;
+    }
+    result.push(entry);
+  }
+  return result.sort((a, b) => a.path.localeCompare(b.path));
+}
+
 export class RepositoryAccess {
   constructor(readonly root: string, readonly writable = process.env.AIKIDO_WRITABLE === 'true') {}
+
+  async infos() {
+    const read = (args: string[], allowed = [0]) =>
+      runProcess('git', [...GIT_OPTIONS, '--no-optional-locks', ...args], this.root, allowed);
+    const actual = (await read(['rev-parse', '--show-toplevel'])).stdout.trim();
+    if (await realpath(actual) !== await realpath(this.root)) throw new Error('Git repository must be rooted exactly at AIKIDO_ROOT');
+    const head = (await read(['rev-parse', '--verify', 'HEAD'], [0, 128])).stdout.trim() || null;
+    const branch = (await read(['symbolic-ref', '--quiet', '--short', 'HEAD'], [0, 1])).stdout.trim() || null;
+    const status = (await read(['status', '--porcelain=v1', '-z', '--untracked-files=all'])).stdout;
+    const dirtyFiles = parseGitStatus(status);
+    const upstream = (await read(['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}'], [0, 128])).stdout.trim() || null;
+    let ahead: number | null = null;
+    let behind: number | null = null;
+    if (head && upstream) {
+      const counts = (await read(['rev-list', '--left-right', '--count', 'HEAD...@{upstream}'])).stdout.trim().split(/\s+/).map(Number);
+      [ahead, behind] = counts;
+    }
+    return { head, branch, dirty: status.length > 0, dirtyFiles, upstream, ahead, behind,
+      statusFingerprint: createHash('sha256').update(status).digest('hex') };
+  }
+
+  async expect(head: unknown, branch: unknown) {
+    if (typeof head !== 'string' || !/^[a-f0-9]{40,64}$/.test(head)
+      || !(branch === null || (typeof branch === 'string' && branch.length > 0))) {
+      throw new Error('sync requires expectedHead (full SHA) and expectedBranch (name or null)');
+    }
+    const state = await this.infos();
+    if (state.head !== head || state.branch !== branch) throw new Error('Repository changed: expected HEAD/branch no longer match; read infos again');
+    return state;
+  }
+
+  async fetchForSync() {
+    await this.requireWritable();
+    // Ignore configured fetch refspecs: they can target local base/session branches.
+    return this.gitProcess(['fetch', '--no-tags', '--no-recurse-submodules', '--refmap=', 'origin',
+      'refs/heads/*:refs/remotes/origin/*']);
+  }
+
+  async github() {
+    try {
+      const origin = (await this.gitProcess(['remote', 'get-url', 'origin'])).stdout.trim();
+      const parsed = new URL(origin.replace(/^git@([^:]+):/, 'ssh://git@$1/'));
+      const slug = parsed.pathname.replace(/^\//, '').replace(/\.git$/, '');
+      if (parsed.hostname !== 'github.com' || !['https:', 'ssh:'].includes(parsed.protocol)
+        || parsed.password || !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(slug)) {
+        return { status: 'unsupported-host' };
+      }
+      return await withGitProfile(this.root, async context => {
+        try {
+          context.validateUrl(origin);
+          const env = { ...(context.env ?? process.env), GH_PROMPT_DISABLED: '1', GH_PAGER: 'cat',
+            GH_HOST: 'github.com', GH_REPO: `github.com/${slug}`,
+            ...(context.env?.KIMONO_GIT_TOKEN ? { GH_TOKEN: context.env.KIMONO_GIT_TOKEN } : {}) };
+          const check = async (args: string[]) => runProcess('gh', args, this.root, [0, 1, 4], 15_000, undefined, env);
+          const auth = await check(['auth', 'status', '--hostname', 'github.com']);
+          if (auth.exitCode !== 0) return { status: 'unauthenticated' };
+          const repo = await check(['repo', 'view', '--json', 'nameWithOwner,defaultBranchRef,isPrivate']);
+          if (repo.exitCode !== 0) return { status: 'error', check: 'repository' };
+          const state = await this.infos();
+          const prs = state.branch ? await check(['pr', 'list', '--head', state.branch, '--state', 'open', '--limit', '20',
+            '--json', 'number,state,headRefName,baseRefName,isDraft']) : null;
+          if (prs && prs.exitCode !== 0) return { status: 'error', check: 'pull-requests' };
+          return { status: 'ok', repository: JSON.parse(repo.stdout), pullRequests: prs ? JSON.parse(prs.stdout) : [] };
+        } catch (error) { return githubFailure(error); }
+      });
+    } catch (error) { return githubFailure(error); }
+  }
 
   async status(): Promise<{ root: string; writable: boolean; official: boolean }> {
     const origin = await this.gitProcess(['config', '--get', 'remote.origin.url'], [0, 1]);
@@ -165,7 +252,7 @@ export class RepositoryAccess {
       // fetch/push URL, including url.*.insteadOf expansion, before starting Git.
       let localRemote = false;
       if (['fetch', 'pull', 'push'].includes(args[0])) {
-        const remote = args[args[0] === 'pull' ? 2 : 1];
+        const remote = args.slice(1).find(value => !value.startsWith('-')) ?? '';
         if (!/^[A-Za-z0-9_.-]+$/.test(remote)) throw new Error('Network operations require a configured remote name, not a URL');
         for (const push of [false, true]) {
           const result = await run(['remote', 'get-url', '--all', ...(push ? ['--push'] : []), remote]);
@@ -205,4 +292,9 @@ export function validateRelativePath(file: string): void {
 function required(value: string | undefined, name: string): string {
   if (!value?.trim()) throw new Error(`${name} is required`);
   return value;
+}
+
+function githubFailure(error: unknown) {
+  const cause = error instanceof Error ? error.cause : undefined;
+  return { status: cause && typeof cause === 'object' && 'code' in cause && cause.code === 'ENOENT' ? 'unavailable' : 'error' };
 }

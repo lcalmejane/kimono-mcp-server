@@ -154,8 +154,10 @@ it('keeps MCP discovery, bounded read and legacy full read interoperable without
   const [a, b] = InMemoryTransport.createLinkedPair();
   await server.connect(b); await client.connect(a);
   try {
+    const runtime = runtimeFor(knowledge);
+    const { snapshotId } = JSON.parse(await runtime.call('aikido_snapshot', { operation: 'begin' }));
     const call = async (name: string, args: Record<string, unknown>) => {
-      const result = await client.callTool({ name, arguments: args });
+      const result = await client.callTool({ name, arguments: { ...args, snapshotId } });
       expect(result.isError, JSON.stringify(result)).not.toBe(true);
       if (!Array.isArray(result.content) || result.content[0]?.type !== 'text') throw new Error('Expected JSON text');
       return JSON.parse(result.content[0].text);
@@ -164,14 +166,18 @@ it('keeps MCP discovery, bounded read and legacy full read interoperable without
     const block = await call('aikido_file', { operation: 'read', path: metadata.file_id, startLine: 11, endLine: 13 });
     expect(block.content).toContain('needle');
     expect(await call('aikido', { operation: 'read', id: metadata.file_id, startLine: 11, endLine: 13 })).toEqual(block);
-    const full = await client.callTool({ name: 'aikido', arguments: { operation: 'read', id: docPath } });
-    expect(full.content).toEqual([{ type: 'text', text: doc }]);
+    const full = await call('aikido', { operation: 'read', id: docPath });
+    expect(full).toMatchObject({ content: doc, snapshotId });
     const page = await call('aikido', { operation: 'list', scope: 'memory', limit: 1 });
     expect(page).toMatchObject({ count: 1, total: 2, nextOffset: 1 });
     await writeFile(path.join(root, '.gitignore'), `${docPath}\n`);
-    const ignored = await client.callTool({ name: 'aikido', arguments: { operation: 'read', id: docPath } });
+    expect((await call('aikido', { operation: 'read', id: docPath })).content).toBe(doc);
+    const fresh = JSON.parse(await runtime.call('aikido_snapshot', { operation: 'begin' }));
+    const ignored = await client.callTool({ name: 'aikido', arguments: { operation: 'read', id: docPath, snapshotId: fresh.snapshotId } });
     expect(ignored.isError).toBe(true);
     await expect(client.readResource({ uri: `aikido://${encodeURIComponent(docPath)}` })).rejects.toThrow('not found');
+    await runtime.call('aikido_snapshot', { operation: 'end', snapshotId });
+    await runtime.call('aikido_snapshot', { operation: 'end', snapshotId: fresh.snapshotId });
   } finally { await client.close(); await server.close(); }
 });
 
@@ -223,7 +229,8 @@ it('paginates MCP resource/prompt catalogues rather than flooding the harness on
 it('uses real fast-grep with pre-limit filters and compact source-grounded excerpts/headers', async () => {
   const { root, knowledge } = await fixture();
   for (let i = 0; i < 15; i++) await writeFile(path.join(root, `src/match-${i}.ts`), '// needle\n');
-  const input = { query: 'needle', pathPrefix: 'prompts/gen', contextLines: 1, limit: 1, maxBytes: 4096 };
+  const { snapshotId } = JSON.parse(await runtimeFor(knowledge).call('aikido_snapshot', { operation: 'begin' }));
+  const input = { snapshotId, query: 'needle', pathPrefix: 'prompts/gen', contextLines: 1, limit: 1, maxBytes: 4096 };
   const raw = await runtimeFor(knowledge).call('aikido_search', input);
   expect(Buffer.byteLength(raw)).toBeLessThanOrEqual(4096);
   const result = JSON.parse(raw);
@@ -234,9 +241,10 @@ it('uses real fast-grep with pre-limit filters and compact source-grounded excer
   expect(raw).not.toContain('Use Docker.');
   const regex = JSON.parse(await runtimeFor(knowledge).call('aikido_search', { ...input, mode: 'regex', query: 'n[e]{2}dle' }));
   expect(regex.results[0].path).toBe(docPath);
-  const capped = await runtimeFor(knowledge).call('aikido_search', { query: 'needle', limit: 2, maxBytes: 2048 });
+  const capped = await runtimeFor(knowledge).call('aikido_search', { snapshotId, query: 'needle', limit: 2, maxBytes: 2048 });
   expect(Buffer.byteLength(capped)).toBeLessThanOrEqual(2048);
   expect(JSON.parse(capped).truncated).toBe(true);
+  await runtimeFor(knowledge).call('aikido_snapshot', { operation: 'end', snapshotId });
 });
 
 it('deduplicates file headers and returns under 10% of full-file bytes on a 500-line targeted lookup', async () => {
@@ -247,8 +255,9 @@ it('deduplicates file headers and returns under 10% of full-file bytes on a 500-
   lines[349] = 'needle second decision';
   const full = lines.join('\n') + '\n';
   await writeFile(path.join(root, docPath), full);
+  const { snapshotId } = JSON.parse(await runtimeFor(knowledge).call('aikido_snapshot', { operation: 'begin' }));
   const raw = await runtimeFor(knowledge).call('aikido_search', {
-    query: 'needle', pathPrefix: docPath, contextLines: 1, limit: 5,
+    snapshotId, query: 'needle', pathPrefix: docPath, contextLines: 1, limit: 5,
   });
   const parsed = JSON.parse(raw);
   expect(parsed.count).toBe(2);
@@ -257,7 +266,75 @@ it('deduplicates file headers and returns under 10% of full-file bytes on a 500-
   expect(Buffer.byteLength(raw)).toBeLessThan(Buffer.byteLength(full) * 0.10);
   expect(Buffer.byteLength(raw)).toBeLessThanOrEqual(16384);
   const expanded = JSON.parse(await runtimeFor(knowledge).call('aikido_file', {
-    operation: 'read', path: parsed.results[0].file_id, startLine: 249, endLine: 251,
+    snapshotId, operation: 'read', path: parsed.results[0].file_id, startLine: 249, endLine: 251,
   }));
   expect(expanded.content).toBe(lines.slice(248, 251).join('\n'));
+  await runtimeFor(knowledge).call('aikido_snapshot', { operation: 'end', snapshotId });
+});
+
+it('defaults search to token-frugal locations grouped by file, then serves passages in one merged ranges batch', async () => {
+  const { root, knowledge } = await fixture();
+  const lines = Array.from({ length: 500 }, (_, i) => `Source ${i + 1}: ${'unrelated content '.repeat(6)}`);
+  lines[249] = 'needle first decision';
+  lines[251] = 'needle second decision';
+  await writeFile(path.join(root, docPath), lines.join('\n') + '\n');
+  const runtime = runtimeFor(knowledge);
+  const { snapshotId } = JSON.parse(await runtime.call('aikido_snapshot', { operation: 'begin' }));
+  const raw = await runtime.call('aikido_search', { snapshotId, query: 'needle', limit: 10 });
+  const located = JSON.parse(raw);
+  expect(located).toMatchObject({ engine: 'fast-grep', count: 3, files: 2, truncated: false });
+  expect(located.results).toEqual(expect.arrayContaining([
+    { path: docPath, lines: 500, hits: [250, 252] }, { path: 'src/example.ts', lines: 1, hits: [1] }]));
+  expect(raw).not.toMatch(/excerpt|documents|scoreDetails|unrelated content/);
+  const excerpts = await runtime.call('aikido_search', { snapshotId, query: 'needle', limit: 10, detail: 'excerpts' });
+  expect(Buffer.byteLength(raw)).toBeLessThan(Buffer.byteLength(excerpts) / 3);
+  await expect(runtime.call('aikido_search', { snapshotId, query: 'needle', detail: 'locations', contextLines: 1 })).rejects.toThrow('contextLines requires detail=excerpts');
+
+  const batch = JSON.parse(await runtime.call('aikido_file', { snapshotId, operation: 'ranges', contextLines: 1, ranges: [
+    { path: docPath, startLine: 250 }, { path: docPath, startLine: 252 }, { path: 'src/example.ts', startLine: 1 },
+    { path: 'missing.md', startLine: 1 }, { path: docPath, startLine: 9999 }] }));
+  expect(batch).toMatchObject({ count: 2, truncated: false, passages: [
+    { path: docPath, startLine: 249, endLine: 253, content: lines.slice(248, 253).join('\n') },
+    { path: 'src/example.ts', startLine: 1, endLine: 1, content: '// needle from source' }] });
+  expect(batch.errors.map((item: { path: string }) => item.path)).toEqual(['missing.md']);
+
+  const budget = JSON.parse(await runtime.call('aikido_file', { snapshotId, operation: 'ranges', maxBytes: 2048,
+    ranges: [{ path: docPath, startLine: 1, endLine: 200 }, { path: 'src/example.ts', startLine: 1 }] }));
+  expect(budget.truncated).toBe(true);
+  expect(budget.passages[0].endLine).toBeLessThan(200);
+  expect(budget.remaining).toEqual([{ path: docPath, startLine: budget.passages[0].endLine + 1, endLine: 200 },
+    { path: 'src/example.ts', startLine: 1, endLine: 1 }]);
+  await expect(runtime.call('aikido_file', { snapshotId, operation: 'ranges', path: docPath, ranges: [{ path: docPath, startLine: 1 }] })).rejects.toThrow('operation=ranges takes ranges[]');
+  await expect(runtime.call('aikido_file', { snapshotId, operation: 'ranges', ranges: [{ path: '../etc/passwd', startLine: 1 }] }))
+    .resolves.toContain('"errors"');
+  await expect(runtime.call('aikido_file', { snapshotId, operation: 'read', path: docPath, contextLines: 1 })).rejects.toThrow('require operation=ranges');
+  await runtime.call('aikido_snapshot', { operation: 'end', snapshotId });
+});
+
+it('reports semantic chunks as inclusive [start,end] locations without passage text', async () => {
+  const { knowledge, retrieval } = await fixture();
+  const located = JSON.parse(await retrieval.search({}, [
+    { id: docPath, path: docPath, kind: 'knowledge', title: 'Design', line: 11, excerpt: '## Isolation\nKeep each agent scoped.\nneedle', score: 0.91 },
+    { id: docPath, path: docPath, kind: 'knowledge', title: 'Design', line: 12, excerpt: 'Keep each agent scoped.', score: 0.5 },
+  ], { engine: 'embsearch-core', model: 'm', status: 'ok', chunks: 9, queryPlan: { terms: ['needle'], expansions: [
+    { term: 'aiguille', relation: 'alias', concept: 'Needle', path: 'prompts/glossary.md', line: 4 }], warnings: [], semanticQuery: 'x', policy: 'long' },
+  branches: [{ mode: 'semantic', status: 'ok', ms: 12.345, engine: 'embsearch-core', count: 2 }] }));
+  expect(located).toEqual({ engine: 'embsearch-core', model: 'm', status: 'ok', count: 1, files: 1, truncated: false,
+    query: { terms: ['needle'], expansions: [{ term: 'aiguille', concept: 'Needle', relation: 'alias', source: 'prompts/glossary.md:4' }] },
+    results: [{ path: docPath, lines: 20, score: 0.91, hits: [[11, 13]] }] });
+  expect(knowledge).toBeDefined();
+});
+
+it('publishes the token-frugal search protocol to any MCP client at initialization', async () => {
+  const { knowledge } = await fixture();
+  const server = createAikidoMcpServer(knowledge);
+  const client = new Client({ name: 'instructions-test', version: '1' });
+  const [a, b] = InMemoryTransport.createLinkedPair();
+  await server.connect(b); await client.connect(a);
+  try {
+    expect(client.getInstructions()).toMatch(/detail=locations[\s\S]*ONE aikido_file operation=ranges/);
+    const tools = (await client.listTools()).tools;
+    expect(tools.find(tool => tool.name === 'aikido_file')?.inputSchema.properties).toHaveProperty('ranges');
+    expect(tools.find(tool => tool.name === 'aikido_search')?.inputSchema.properties).toHaveProperty('detail');
+  } finally { await client.close(); await server.close(); }
 });

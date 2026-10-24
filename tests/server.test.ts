@@ -1,11 +1,14 @@
+import { createHash } from 'node:crypto';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AikidoKnowledgeBase } from '../src/knowledge.js';
+import { parseGitStatus } from '../src/repository.js';
 import { createAikidoMcpServer } from '../src/server.js';
+import * as processes from '../src/process.js';
 
 const temporaryDirectories: string[] = [];
 
@@ -21,7 +24,18 @@ async function makeKnowledgeBase(): Promise<AikidoKnowledgeBase> {
 }
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   await Promise.all(temporaryDirectories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })));
+});
+
+beforeEach(() => {
+  const realRun = processes.runProcess;
+  vi.spyOn(processes, 'runProcess').mockImplementation(async (...args) => {
+    if (!args[0].includes('fgr')) return realRun(...args);
+    return args[1].includes('--format')
+      ? { stdout: '{"files":[]}', stderr: '', exitCode: 0 }
+      : { stdout: '', stderr: '', exitCode: 0 };
+  });
 });
 
 describe('AI-KIDO MCP surface', () => {
@@ -34,19 +48,21 @@ describe('AI-KIDO MCP surface', () => {
 
     try {
       const tools = await client.listTools();
-      expect(tools.tools.map((tool) => tool.name)).toEqual(['aikido', 'aikido_embed', 'aikido_root', 'aikido_search', 'aikido_index', 'aikido_git', 'aikido_file']);
+      expect(tools.tools.map((tool) => tool.name)).toEqual(['aikido', 'aikido_snapshot', 'aikido_embed', 'aikido_root', 'aikido_search', 'aikido_index', 'aikido_git', 'aikido_collaboration', 'aikido_file']);
+      const begun = await client.callTool({ name: 'aikido_snapshot', arguments: { operation: 'begin' } });
+      const snapshotId = JSON.parse((begun.content as Array<{ text: string }>)[0].text).snapshotId;
 
-      const listed = await client.callTool({ name: 'aikido', arguments: { operation: 'list', kind: 'command' } });
+      const listed = await client.callTool({ name: 'aikido', arguments: { operation: 'list', kind: 'command', snapshotId } });
       expect(JSON.stringify(listed)).toContain('prompts/hard_points/commands/check-truth.md');
-      const activation = await client.callTool({ name: 'aikido', arguments: { operation: 'activate', id: 'prompts/hard_points/commands/check-truth.md', context: 'validate now' } });
+      const activation = await client.callTool({ name: 'aikido', arguments: { operation: 'activate', id: 'prompts/hard_points/commands/check-truth.md', context: 'validate now', snapshotId } });
       expect(JSON.stringify(activation)).toContain('validate now');
       expect(JSON.stringify(activation)).toContain('does not execute model workflows');
-      const execution = await client.callTool({ name: 'aikido', arguments: { operation: 'execute', id: 'prompts/hard_points/commands/check-truth.md', context: 'execute with client tools' } });
+      const execution = await client.callTool({ name: 'aikido', arguments: { operation: 'execute', id: 'prompts/hard_points/commands/check-truth.md', context: 'execute with client tools', snapshotId } });
       expect(JSON.stringify(execution)).toContain('execute with client tools');
-      const search = await client.callTool({ name: 'aikido_search', arguments: { query: 'truth', kind: 'command' } });
-      expect(search.isError).not.toBe(true);
+      const search = await client.callTool({ name: 'aikido_search', arguments: { query: 'truth', kind: 'command', snapshotId } });
+      expect(search.isError, JSON.stringify(search)).not.toBe(true);
       expect(search).toMatchObject({ content: [{ type: 'text', text: expect.stringContaining('"engine":"fast-grep"') }] });
-      const stats = await client.callTool({ name: 'aikido_index', arguments: { operation: 'stats' } });
+      const stats = await client.callTool({ name: 'aikido_index', arguments: { operation: 'status', mode: 'semantic' } });
       expect(stats.isError).not.toBe(true);
       const root = await client.callTool({ name: 'aikido_root', arguments: { operation: 'status' } });
       expect(root).toMatchObject({ content: [{ type: 'text', text: expect.stringContaining('"initialized":true') }] });
@@ -66,9 +82,157 @@ describe('AI-KIDO MCP surface', () => {
       const prompt = await client.getPrompt({ name: commandPrompt!.name, arguments: { context: 'validate current docs' } });
       expect(JSON.stringify(prompt)).toContain('validate current docs');
       expect(JSON.stringify(prompt)).toContain('Check truth tables');
+      await client.callTool({ name: 'aikido_snapshot', arguments: { operation: 'end', snapshotId } });
     } finally {
       await client.close();
       await server.close();
     }
+  });
+
+  it('publishes MCP-only immutable knowledge revisions and detects three-way conflicts', async () => {
+    const knowledge = await makeKnowledgeBase();
+    const server = createAikidoMcpServer(knowledge);
+    const client = new Client({ name: 'collaboration-test-client', version: '1.0.0' });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    const call = async (arguments_: Record<string, unknown>) => client.callTool({
+      name: 'aikido_collaboration', arguments: arguments_,
+    });
+    const value = (result: Awaited<ReturnType<typeof call>>) => JSON.parse(
+      (result.content as Array<{ text: string }>)[0].text,
+    );
+
+    try {
+      const guidanceResult = await call({ operation: 'guidance' });
+      const guidance = value(guidanceResult);
+      expect(guidance.modes.sharedDirectory).toContain('aikido_index update');
+      expect(guidance.modes.personalReplica).toContain('remote endpoint');
+
+      const initial = value(await call({ operation: 'status' }));
+      const file = 'prompts/index.md';
+      const captured = value(await client.callTool({ name: 'aikido_snapshot', arguments: { operation: 'begin' } }));
+      const firstContent = '# First remote edit';
+      const firstHash = createHash('sha256').update(firstContent).digest('hex');
+      const firstManifest = { ...initial.localManifest, [file]: firstHash };
+      const published = value(await call({
+        operation: 'publish',
+        expectedSharedVersion: initial.sharedVersion,
+        baseVersion: initial.sharedVersion,
+        localManifest: firstManifest,
+        changes: [{ path: file, content: firstContent }],
+      }));
+      expect(published).toMatchObject({ published: true, conflicts: [] });
+
+      const pinned = value(await call({
+        operation: 'read', sharedVersion: published.sharedVersion, paths: [file],
+      }));
+      expect(pinned.files[file]).toBe(firstContent);
+      expect((await knowledge.read(file)).content).toBe(firstContent);
+      const researchRead = await client.callTool({
+        name: 'aikido_file',
+        arguments: { operation: 'read', path: file, snapshotId: captured.snapshotId, full: true },
+      });
+      expect(JSON.stringify(researchRead)).toContain('# AI-KIDO');
+      const refreshedSnapshot = value(await client.callTool({
+        name: 'aikido_snapshot', arguments: { operation: 'begin' },
+      }));
+      expect(refreshedSnapshot.version).not.toBe(captured.version);
+      const refreshedRead = await client.callTool({
+        name: 'aikido_file',
+        arguments: { operation: 'read', path: file, snapshotId: refreshedSnapshot.snapshotId, full: true },
+      });
+      expect(JSON.stringify(refreshedRead)).toContain(firstContent);
+      const refreshedSearch = await client.callTool({
+        name: 'aikido_search', arguments: { query: 'First remote edit', snapshotId: refreshedSnapshot.snapshotId },
+      });
+      expect(refreshedSearch.isError).not.toBe(true);
+      await client.callTool({ name: 'aikido_snapshot', arguments: { operation: 'end', snapshotId: refreshedSnapshot.snapshotId } });
+
+      const competingContent = '# Competing remote edit';
+      const competingHash = createHash('sha256').update(competingContent).digest('hex');
+      const competingManifest = { ...initial.localManifest, [file]: competingHash };
+      const comparison = value(await call({
+        operation: 'compare', baseVersion: initial.sharedVersion, localManifest: competingManifest,
+      }));
+      expect(comparison.conflicts).toMatchObject([{
+        path: file, baseHash: initial.localManifest[file], localHash: competingHash, sharedHash: firstHash,
+      }]);
+
+      const unresolved = value(await call({
+        operation: 'publish',
+        expectedSharedVersion: published.sharedVersion,
+        baseVersion: initial.sharedVersion,
+        localManifest: competingManifest,
+        changes: [{ path: file, content: competingContent }],
+      }));
+      expect(unresolved).toMatchObject({ published: false, conflicts: [{ path: file }] });
+
+      const resolved = value(await call({
+        operation: 'publish',
+        expectedSharedVersion: published.sharedVersion,
+        baseVersion: initial.sharedVersion,
+        localManifest: competingManifest,
+        changes: [{ path: file, content: competingContent }],
+        resolutions: { [file]: 'shared' },
+      }));
+      expect(resolved).toMatchObject({ published: true, sharedVersion: published.sharedVersion });
+
+      const stale = await call({
+        operation: 'publish',
+        expectedSharedVersion: initial.sharedVersion,
+        baseVersion: initial.sharedVersion,
+        localManifest: firstManifest,
+        changes: [{ path: file, content: firstContent }],
+      });
+      expect(stale.isError).toBe(true);
+
+      const deletionManifest = { ...initial.localManifest };
+      delete deletionManifest['prompts/hard_points/commands/check-truth.md'];
+      const deletion = value(await call({
+        operation: 'compare', baseVersion: initial.sharedVersion, localManifest: deletionManifest,
+      }));
+      expect(deletion.localChanges).toMatchObject([{ path: 'prompts/hard_points/commands/check-truth.md', kind: 'deletion' }]);
+      expect(deletion.deletions).toEqual([]);
+
+      const pinnedBase = value(await call({ operation: 'status', sharedVersion: initial.sharedVersion }));
+      expect(pinnedBase.requestedRevision).toMatchObject({
+        version: initial.sharedVersion, manifest: initial.sharedManifest,
+      });
+      expect(pinnedBase.sharedVersion).toBe(resolved.sharedVersion);
+
+      await writeFile(path.join(knowledge.root, file), '# Direct shared ROOT edit');
+      const staleAfterRootEdit = await call({
+        operation: 'publish',
+        expectedSharedVersion: resolved.sharedVersion,
+        baseVersion: initial.sharedVersion,
+        localManifest: firstManifest,
+        changes: [{ path: file, content: firstContent }],
+      });
+      expect(staleAfterRootEdit.isError).toBe(true);
+      const rootRefreshed = value(await call({ operation: 'status' }));
+      expect(rootRefreshed.sharedVersion).not.toBe(resolved.sharedVersion);
+      expect(rootRefreshed.sharedManifest[file]).toBe(createHash('sha256').update('# Direct shared ROOT edit').digest('hex'));
+      expect(rootRefreshed.rootConflicts).toEqual([]);
+
+      const invalid = await call({ operation: 'compare', localManifest: { '../secrets.md': firstHash } });
+      expect(invalid.isError).toBe(true);
+      await client.callTool({ name: 'aikido_snapshot', arguments: { operation: 'end', snapshotId: captured.snapshotId } });
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
+});
+
+describe('Git status parsing', () => {
+  it('preserves NUL-delimited names, states, and rename source paths', () => {
+    expect(parseGitStatus(' M prompts/a name.md\0?? new.md\0R  renamed.md\0old name.md\0D  gone.md\0'))
+      .toEqual([
+        { path: 'gone.md', status: 'D ' },
+        { path: 'new.md', status: '??' },
+        { path: 'prompts/a name.md', status: ' M' },
+        { path: 'renamed.md', status: 'R ', oldPath: 'old name.md' },
+      ]);
   });
 });

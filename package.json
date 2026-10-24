@@ -17,9 +17,13 @@
     "clean": "rm -rf dist coverage",
     "dev": "tsx src/index.ts",
     "dev:cli": "tsx src/cli.ts",
+    "dev:check": "git --version && gh --version && jq --version",
+    "infos": "tsx src/cli.ts infos",
+    "sync": "tsx src/cli.ts sync",
     "start": "node dist/index.js",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit -p tsconfig.json"
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "bundle:native": "node scripts/package-native-bundle.mjs"
   },
   "engines": {
     "node": ">=24"

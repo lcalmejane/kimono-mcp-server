@@ -4,6 +4,22 @@
 
 ## Ce que fournit Kimono
 
+### Guidance Git en lecture seule et synchronisation distante
+
+`aikido_git` expose `infos`, `sync` et `retarget`. Le ROOT peut être un dossier
+sans `.git` ; `infos` indique alors `repository.available:false`.
+`retarget` valide et stocke dans le cache externe une URL sans identifiants et
+une branche existante facultative ; il ne contacte pas le dépôt. Après ce
+retarget explicite, `sync` lit la branche demandée (ou HEAD par défaut), publie
+et indexe les connaissances, et préserve les connaissances locales non publiées
+en copies seed/conflit. Aucune création de branche, commit, push ou merge n'est
+effectuée. L'URL du manifeste de politique est informative et ne devient jamais
+une cible implicite. Les dépôts publics anonymes sont pris en charge ; l'accès
+privé utilise un résolveur de credentials injecté par l'hôte ou un profil stdio sécurisé. Les
+credentials ne sont ni des arguments MCP ni des données persistées dans la base
+partagée.
+Voir le [contrat complet](../README.md#repository-guidance-and-read-only-remote-synchronization).
+
 ### Indexation ciblée (v0.3.0)
 
 Appeler `aikido_index` avec `{"operation":"update","mode":"all","paths":["src/fichier.ts","prompts/concepts","supprime.md"]}`.
@@ -13,27 +29,33 @@ les anciennes entrées et chaque moteur expose ses tableaux indépendants
 `indexes.literal/semantic.changes` (`added`, `modified`, `deleted`).
 Les exclusions gitignore/privées et les liens symboliques restent exclus.
 Un cache ciblé froid reste partiel, sans indexation implicite du reste du corpus.
-Sans `paths`, la synchronisation reste globale ; les recherches continuent
-toujours à rafraîchir automatiquement tout le catalogue. Les clients en lecture
+Sans `paths`, la synchronisation reste globale ; les recherches utilisent le
+catalogue immuable du snapshot. En créer un nouveau pour voir les changements.
+Les clients en lecture
 seule peuvent entretenir les caches hors ROOT sans obtenir de droits d’écriture.
 CLI : `kimono index --mode all --paths '["src/fichier.ts"]' --root ./projet`.
 `paths` ne s’utilise qu’avec `update` ; chemins dangereux et erreurs des moteurs
 sont explicites. `all` est séquentiel, non transactionnel entre moteurs.
 
 Kimono expose un ROOT AI-KIDO par MCP : documents, commandes, agents/personas,
-skills et workflows. Des humains utilisant un client MCP et des agents connectés
-peuvent retrouver les mêmes instructions, les rechercher et agir sur un projet
-autorisé. Aucun chat ni LLM n'est embarqué : `activate` / `execute` chargent des
-instructions pour le client, sans exécuter un workflow autonome dans le serveur.
+skills et workflows. Le MCP ne modifie pas arbitrairement les fichiers et ne
+réalise aucune mutation Git (commit, push, merge, création de branche ou
+configuration d'un distant). La synchronisation Git en lecture seule est
+explicite via `aikido_git` ; la publication de révisions de connaissances est
+séparée via `aikido_collaboration` et n'écrit ni le workspace client ni un
+distant Git. Préparer le dossier avant le démarrage ; après des changements locaux, utiliser
+`aikido_index update`. Aucun chat ni LLM n'est embarqué : `activate` / `execute`
+chargent des instructions pour le client, sans exécuter un workflow autonome.
 
 | Besoin | Outil MCP |
 | --- | --- |
 | Découvrir/lire/activer les connaissances | `aikido`, ressources et prompts |
-| Initialiser le ROOT configuré depuis un Git officiel/personnalisé | `aikido_root` |
-| Recherche littérale, regex, sémantique ou par vecteur existant | `aikido_search` |
+| Recherches multi-appels cohérentes | `aikido_snapshot` |
+| Recherche littérale, regex, sémantique ou par vecteur existant | `aikido_search` (`snapshotId` requis) |
 | Embeddings locaux et informations exactes sur le modèle actif | `aikido_embed` |
 | Maintenir les index / suivre l'indexation sémantique | `aikido_index` |
-| Éditer les documents / effectuer des opérations Git structurées | `aikido_file`, `aikido_git` |
+| Collaborer entre copies de connaissances distinctes | `aikido_collaboration` |
+| Lire des documents depuis le même snapshot | `aikido_file` (`snapshotId` requis) |
 
 L'inférence sémantique est locale, avec E5 multilingue et ONNX Runtime.
 `aikido_embed` avec `{"operation":"info"}` retourne l'identifiant du modèle actif,
@@ -42,10 +64,41 @@ exige cet identifiant ; le client reste responsable de la compatibilité réelle
 du vecteur et de son prétraitement. Voir la
 [référence complète](../README.md#local-semantic-search).
 
+Pour une recherche multi-appels, commencer par `aikido_snapshot {"operation":"begin"}`.
+Passer le `snapshotId` retourné à `aikido` list/search/read/activate/execute,
+`aikido_search` et `aikido_file`, puis terminer avec
+`aikido_snapshot {"operation":"end","snapshotId":"…"}`. Les réponses incluent
+l'identifiant, la `version` du corpus et sa `provenance`. Durée maximale :
+15 minutes, 8 snapshots actifs, 256 Mio au total.
+
 Pour un harnais économe en tokens, suivre le [contrat JSON progressif](retrieval.md) :
-métadonnées/en-têtes, extraits bornés, puis lecture des seules lignes ou sections
-retenues avec `aikido_file`. Les fichiers complets restent une demande explicite ;
+métadonnées/en-têtes, localisations de recherche (fichiers et lignes, sans texte,
+par défaut), puis les seuls passages retenus en un lot `aikido_file` `ranges`,
+et une section ou un fichier complet seulement si nécessaire. Le MCP publie aussi
+ce protocole dans ses `instructions` d'initialisation pour tout client MCP. Les fichiers complets restent une demande explicite ;
 suivre les indications de pagination/troncature plutôt que charger toute la base.
+
+## Modes explicites de collaboration
+
+`aikido_collaboration` fonctionne uniquement via MCP, sans API Tatami ni Git.
+Pour un client stdio embarqué qui a vérifié qu'il édite exactement le ROOT
+configuré, utiliser le mode **répertoire partagé** : modifier avec les outils
+de fichiers du client puis appeler `aikido_index update`, sans réconciliation
+ni publication d'une réplique. Ne jamais inférer ce mode depuis HTTP.
+Pour HTTP distant ou un workspace distinct, utiliser le mode **réplique
+personnelle** : appeler `status` avant les éditions et conserver `sharedVersion`
+comme `baseVersion`, comparer les empreintes locales, lire les changements
+partagés puis publier explicitement. Chaque conflit exige un choix explicite
+local/partagé ; une version périmée impose une nouvelle comparaison. La
+publication des connaissances est distincte de la publication Git. `status` et
+`publish` actualisent d'abord la révision partagée depuis le ROOT éligible
+courant ; les éditions directes et syncs Git en lecture rendent donc une
+publication basée sur une ancienne version périmée. Passer une ancienne
+`sharedVersion` à `status` retourne son `requestedRevision.manifest` sans
+déplacer le pointeur courant. Une publication réussie synchronise les documents
+acceptés dans le `AIKIDO_ROOT` configuré : les nouveaux snapshots et recherches
+les voient, mais les snapshots déjà ouverts restent immuables. Aucun commit ni
+push Git n'est effectué.
 
 ## Utilisation autonome
 
@@ -93,38 +146,29 @@ le même arbre de travail et les connaissances, plutôt que des clones divergent
   sessions ; les lectures/ressources indépendantes ne constituent pas des
   transactions globales. Une indexation longue peut retarder les travaux en
   attente. La consultation du `status` sémantique contourne cette file.
-- Les recherches synchronisent l'index avant interrogation : ajouts,
-  modifications et suppressions terminés avant la requête sont pris en compte,
-  y compris les éditions externes. Seuls les chunks modifiés sont ré-embeddés.
-  Ce mécanisme est à la demande, pas un watcher permanent.
-- Une modification/suppression via `aikido_file` exige le contenu précédent
-  exact dans `expected`. En cas de conflit, relire et réconcilier ; ne pas
-  réessayer aveuglément l'écriture.
-- Plusieurs appels **ne forment pas une transaction** : les séquences
-  édition/add/commit de deux clients peuvent s'entrelacer. Index Git, branches
-  et arbre de travail sont communs. Désigner un seul coordinateur Git pour un
-  ROOT partagé en écriture, ou séparer les workspaces des agents indépendants.
-- Éditeurs et processus Git externes contournent la file Kimono. Il n'existe
-  ni verrou distribué, ni fusion collaborative du texte, ni rôles par client,
-  ni attribution automatique des commits à chaque humain. `confirm=true`
-  repose sur l'approbation explicite côté client, pas sur un écran serveur.
+- Commencer un snapshot avant la recherche et réutiliser son identifiant pour
+  toutes les lectures. Une synchronisation ultérieure ne modifie jamais cet
+  instantané ; le terminer explicitement.
+- Éditions, commits, pushes, merges et créations de branches sont hors MCP,
+  même avec l'ancien paramètre `AIKIDO_WRITABLE=true`. Les agents utilisent
+  leurs outils Git puis demandent une synchronisation explicite.
+- Les éditeurs externes contournent la file Kimono. Ne pas éditer le dossier
+  partagé pendant la publication ; la synchronisation refuse d'écraser une
+  source modifiée pendant sa préparation.
 
-Le partage en lecture seule est la forme la plus simple de service centralisé.
-L'écriture est réservée aux projets/forks de confiance et aux clients autorisés :
-activer `AIKIDO_WRITABLE=true` et un montage inscriptible. L'origine officielle
-AI-KIDO reste protégée. Tous les détenteurs du jeton HTTP ont les mêmes droits
-sur l'instance ; les specs privées sont exclues par défaut, mais l'accès Git
-n'est pas filtré par les exclusions de recherche. L'API Git n'est pas une sandbox.
+Tous les membres autorisés voient les mêmes connaissances, y compris celles
+d'un dépôt privé récupérées avec l'autorisation d'un membre. Les identifiants
+Git restent personnels et limités à la requête ; la plateforme contrôle les droits.
 
 **Ne jamais partager un cache entre processus indépendants.** Des caches
 distincts évitent les collisions d'index, pas les écritures concurrentes sur un
-ROOT commun. Pour isoler les écritures, séparer aussi les clones/workspaces.
+ROOT commun.
 
 ## Intégration dans Tatami ou une autre plateforme
 
-Topologie recommandée : **une instance par workspace autorisé** ; dans
-l'organisation actuelle de Tatami, il s'agit du couple `(utilisateur, projet)`.
-Plusieurs clients peuvent partager cette instance s'ils ont les mêmes droits.
+Topologie recommandée : **une instance par projet**, hors des espaces utilisateurs.
+Tatami expose une URL commune aux membres autorisés, avec jetons MCP personnels
+et connexions Git résolues uniquement pour la requête de synchronisation.
 
 ```text
 Clients -> authentification/autorisation plateforme -> Kimono du workspace
@@ -166,7 +210,7 @@ de projets arbitraires dans un même processus.
 
 Configurer `KIMONO_GIT_PROFILE_FILE` avec le chemin d'un fichier JSON privé hors
 ROOT (0600/0400, lisible par le runner). Il contient `transport` (`ssh` ou
-`https`), `host`, `username`, `secret`, `authorName`, `authorEmail` et, pour SSH,
+`https`), `host`, `username`, `secret` et, pour SSH,
 `knownHosts` avec les clés serveur vérifiées. Voir le
 [schéma et l'exemple Compose](../README.md#dynamic-per-instance-git-profile).
 La plateforme récupère les identifiants du compte autorisé et fournit ce fichier ;
@@ -179,11 +223,11 @@ utiliser un tmpfs `/tmp` privé en cas d'arrêt brutal du conteneur.
 SSH utilise la clé choisie (sans passphrase/agent), vérifie strictement le
 serveur et utilise le port 22 ; HTTPS utilise un jeton sur le port 443, sans
 redirection. Autres serveurs, transports, ports et dépôts distants par chemin
-local sont refusés dans ce mode. Tous les clients d'une instance partagent son
-identité Git ; séparer les instances pour des identités différentes. Un profil
-absent/invalide provoque une erreur, sans repli sur les identifiants ambiants.
-Sans cette configuration, les identifiants natifs du runner restent utilisables.
-La protection de la base officielle et la confirmation du push restent actives.
+local sont refusés dans ce mode. Le fichier concerne le stdio autonome.
+En HTTP partagé, chaque requête reçoit son propre profil après authentification,
+sans fichier global ni réutilisation du profil d'un autre membre. Sans profil,
+l'accès est anonyme ; un profil configuré invalide provoque une erreur explicite.
+Commit et push ne sont jamais des opérations MCP.
 
 Configuration, protections et limites : voir le
 [contrat d'intégration du README](../README.md#integration-with-per-workspace-instance-managers).

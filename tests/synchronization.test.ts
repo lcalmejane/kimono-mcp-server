@@ -119,8 +119,11 @@ describe.skipIf(!process.env.KIMONO_MODEL_DIR)('real engines: targeted synchroni
     const removed = await call(['prompts/selected']);
     expect(removed.indexes.literal.changes.deleted).toHaveLength(3);
     expect(removed.indexes.semantic.changes.deleted).toHaveLength(3);
-    for (const operation of ['stats', 'compact', 'rebuild', 'status']) {
+    for (const operation of ['status']) {
       await expect(runtime.call('aikido_index', { operation, mode: 'semantic', paths: ['prompts'] })).rejects.toThrow('paths');
+    }
+    for (const operation of ['stats', 'compact', 'rebuild']) {
+      await expect(runtime.call('aikido_index', { operation, mode: 'semantic', paths: ['prompts'] })).rejects.toThrow('Only operation=update');
     }
   }, 120_000);
 });

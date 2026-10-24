@@ -110,18 +110,21 @@ describe('scoped repository runtime', () => {
     await expect(repository.requireWritable()).rejects.toThrow('read-only');
   });
 
-  it('initializes the configured ROOT through MCP runtime without an arbitrary target path', async () => {
+  it('keeps ROOT initialization outside the MCP and accepts metadata-only retargeting', async () => {
     const { root } = await fixture();
-    await git(root, 'add', '.');
-    await git(root, 'commit', '-m', 'template');
-    const parent = await mkdtemp(path.join(tmpdir(), 'kimono-root-'));
-    temporary.push(parent);
-    const knowledge = new AikidoKnowledgeBase(path.join(parent, 'new'));
+    const knowledge = new AikidoKnowledgeBase(root);
     caches.push(knowledge.searchIndex.directory);
-    expect(knowledge.isInitialized).toBe(false);
-    const result = await runtimeFor(knowledge).call('aikido_root', { operation: 'init', repository: root });
-    expect(JSON.parse(result)).toMatchObject({ initialized: true, documents: 1 });
-    await expect(runtimeFor(knowledge).call('aikido_root', { operation: 'init', repository: root })).rejects.toThrow('refusing to overwrite');
+    await knowledge.initialize();
+    const runtime = runtimeFor(knowledge);
+    await expect(runtime.call('aikido_root', { operation: 'init', repository: root })).rejects.toThrow('Only operation=status');
+    const retarget = JSON.parse(await runtime.call('aikido_git', {
+      operation: 'retarget', gitUrl: 'https://github.com/example/project.git', branch: 'feature/docs',
+    }));
+    expect(retarget).toMatchObject({ operation: 'retarget', retarget: { gitUrl: 'https://github.com/example/project.git', branch: 'feature/docs' } });
+    expect((await git(root, 'remote')).stdout).toBe('');
+    await expect(runtime.call('aikido_git', {
+      operation: 'retarget', gitUrl: 'https://user:token@example.com/org/repo.git',
+    })).rejects.toThrow('credentials');
   });
 });
 
@@ -151,23 +154,16 @@ describe('real fast-grep index', () => {
     await expect(knowledge.searchIndex.search('[invalid', undefined, 10, true)).rejects.toThrow('fgr failed');
   });
 
-  it('applies file edits with optimistic checks, symlink/traversal protection and immediate reindexing', async () => {
+  it('rejects all file mutations through MCP, regardless of AIKIDO_WRITABLE', async () => {
     const { root, knowledge } = await fixture();
-    const before = process.env.AIKIDO_WRITABLE;
     process.env.AIKIDO_WRITABLE = 'true';
     const runtime = runtimeFor(knowledge);
-    try {
-      await runtime.call('aikido_file', { operation: 'write', path: 'prompts/new.md', content: '# unique motorized' });
-      expect(await knowledge.search('motorized')).toHaveLength(1);
-      await expect(runtime.call('aikido_file', { operation: 'write', path: 'prompts/new.md', content: 'overwrite' })).rejects.toThrow('expected content');
-      await expect(runtime.call('aikido_file', { operation: 'write', path: '../outside.md', content: 'no' })).rejects.toThrow('inside AIKIDO_ROOT');
-      await symlink(tmpdir(), path.join(root, 'linked'));
-      await expect(runtime.call('aikido_file', { operation: 'write', path: 'linked/outside.md', content: 'no' })).rejects.toThrow('Symlinks');
-      await runtime.call('aikido_file', { operation: 'delete', path: 'prompts/new.md', expected: '# unique motorized' });
-      expect(await knowledge.search('motorized')).toEqual([]);
-    } finally {
-      if (before === undefined) delete process.env.AIKIDO_WRITABLE;
-      else process.env.AIKIDO_WRITABLE = before;
-    }
+    const begun = JSON.parse(await runtime.call('aikido_snapshot', { operation: 'begin' }));
+    await expect(runtime.call('aikido_file', {
+      operation: 'write', path: 'prompts/index.md', snapshotId: begun.snapshotId, content: '# changed',
+    })).rejects.toThrow('Only aikido_file ranges, metadata, outline and read');
+    expect(await readFile(path.join(root, 'prompts/index.md'), 'utf8')).toContain('initial searchable');
+    await runtime.call('aikido_snapshot', { operation: 'end', snapshotId: begun.snapshotId });
+    delete process.env.AIKIDO_WRITABLE;
   });
 });

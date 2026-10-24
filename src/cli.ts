@@ -21,13 +21,28 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
     console.error(`AI-KIDO installed at ${target}. Set AIKIDO_ROOT=${target}.`);
     return;
   }
-  if (command !== 'serve' && command !== 'index') {
-    throw new Error(`Unknown command "${command}". Use serve, index, or init --root <path> [--repository <url>] [--ref <git-ref>].`);
+  if (!['serve', 'index', 'infos', 'sync'].includes(command)) {
+    throw new Error(`Unknown command "${command}". Use serve, index, infos, sync, or init --root <path> [--repository <url>] [--ref <git-ref>].`);
   }
 
   const root = options.get('root') ?? process.env.AIKIDO_ROOT;
   if (!root) throw new Error('Set AIKIDO_ROOT or provide --root <path> to an AI-KIDO checkout.');
   const knowledge = new AikidoKnowledgeBase(root);
+  if (command === 'infos' || command === 'sync') {
+    await knowledge.initialize();
+    const boolean = (name: string) => {
+      const value = options.get(name);
+      if (value !== undefined && value !== 'true' && value !== 'false') throw new Error(`--${name} must be true or false`);
+      return value === 'true';
+    };
+    const result = await runtimeFor(knowledge).call('aikido_git', command === 'infos'
+      ? { operation: 'infos', github: boolean('github') }
+      : { operation: 'sync', expectedHead: requiredOption(options, 'expected-head'),
+        expectedBranch: requiredOption(options, 'expected-branch') === 'null' ? null : options.get('expected-branch'),
+        mode: options.get('mode') ?? 'all', fetch: boolean('fetch'), confirm: boolean('confirm') });
+    console.log(result);
+    return;
+  }
   if (command === 'index') {
     await knowledge.initialize();
     console.error(await runtimeFor(knowledge).call('aikido_index', {
@@ -45,7 +60,9 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
   if (transport === 'http') {
     const port = parsePort(process.env.MCP_PORT ?? '3000');
     const host = process.env.MCP_HOST ?? '127.0.0.1';
-    await startHttpServer(knowledge, { host, port, authToken: process.env.MCP_AUTH_TOKEN ?? '' });
+    await startHttpServer(knowledge, { host, port, authToken: process.env.MCP_AUTH_TOKEN ?? '',
+      trustedGitProfileHeader: process.env.KIMONO_TRUST_GIT_PROFILE_HEADER === 'true',
+      allowLocalGitProfile: false });
     return;
   }
   throw new Error(`Unsupported MCP_TRANSPORT "${transport}". Expected stdio or http.`);
@@ -62,7 +79,7 @@ function parseArgs(argv: string[]): ParsedArgs {
     const inlineValue = separator < 0 ? undefined : token.slice(separator + 1);
     const value = inlineValue ?? tokens[++index];
     if (!value || value.startsWith('--')) throw new Error(`Option --${name} requires a value`);
-    if (!['root', 'ref', 'repository', 'mode', 'paths'].includes(name)) throw new Error(`Unknown option: --${name}`);
+    if (!['root', 'ref', 'repository', 'mode', 'paths', 'github', 'expected-head', 'expected-branch', 'fetch', 'confirm'].includes(name)) throw new Error(`Unknown option: --${name}`);
     if (options.has(name)) throw new Error(`Option --${name} was provided more than once`);
     options.set(name, value);
   }

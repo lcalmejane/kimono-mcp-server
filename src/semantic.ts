@@ -1,9 +1,10 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { tmpdir } from 'node:os';
 import type { AikidoKnowledgeBase, KnowledgeKind, SearchMatch } from './knowledge.js';
 import { runProcess } from './process.js';
 import { within, type ChangeReport } from './synchronization.js';
+import { corpusFingerprint, indexInfos, trackIndex } from './index-basis.js';
 
 export interface SemanticResult {
   engine: 'embsearch-core';
@@ -41,8 +42,8 @@ interface SemanticOptions {
 export class SemanticIndex {
   private pending: Promise<unknown> = Promise.resolve();
   private state: {
-    phase: 'unknown' | 'running' | 'ready' | 'error';
-    operation?: string; startedAt?: string; completedAt?: string;
+    phase: 'unknown' | 'running' | 'ready' | 'error' | 'disabled';
+    operation?: string; stage?: string; startedAt?: string; completedAt?: string; indexedAt?: string;
     progress?: { completed: number; total: number }; error?: string;
     chunks?: number; model?: string;
   } = { phase: 'unknown' };
@@ -50,6 +51,61 @@ export class SemanticIndex {
 
   status() { return structuredClone(this.state); }
   async idle(): Promise<void> { await this.pending; }
+
+  warmup(): void {
+    if (this.state.phase === 'running') return;
+    if (!process.env.KIMONO_MODEL_DIR) {
+      this.state = { phase: 'disabled', error: 'KIMONO_MODEL_DIR is not configured; semantic search is unavailable.' };
+      return;
+    }
+    const startedAt = new Date().toISOString();
+    this.state = { phase: 'running', operation: 'update', stage: 'checking_index', startedAt };
+    const result = this.pending.then(async () => {
+      try {
+        const info = await indexInfos(this.knowledge);
+        const semantic = info.indexes.semantic;
+        if (record(semantic) && semantic.freshness === 'fresh') {
+          const basis = record(semantic.basis) ? semantic.basis : undefined;
+          this.state = {
+            phase: 'ready', operation: 'update', startedAt, completedAt: new Date().toISOString(),
+            ...(typeof basis?.indexedAt === 'string' ? { indexedAt: basis.indexedAt } : {}),
+          };
+          return;
+        }
+        await this.perform('update');
+      } catch (error) {
+        this.state = { phase: 'error', operation: 'update', startedAt, completedAt: new Date().toISOString(),
+          error: error instanceof Error ? error.message : String(error) };
+        throw error;
+      }
+    });
+    this.pending = result.then(() => undefined, () => undefined);
+    void result.catch(error => {
+      console.error('Semantic index preparation failed:', error instanceof Error ? error.message : String(error));
+    });
+  }
+
+  async seedFrom(source: SemanticIndex, fingerprint: string): Promise<boolean> {
+    if (source.state.phase !== 'ready') return false;
+    const copy = source.pending.then(async () => {
+      const basis: unknown = JSON.parse(await readFile(path.join(source.knowledge.searchIndex.directory, 'semantic-basis.json'), 'utf8'));
+      if (!record(basis) || basis.phase !== 'ready' || !record(basis.lastSuccessful)
+        || basis.lastSuccessful.corpusFingerprint !== fingerprint) return false;
+      const from = path.join(source.knowledge.searchIndex.directory, 'semantic');
+      const to = path.join(this.knowledge.searchIndex.directory, 'semantic');
+      const state: unknown = JSON.parse(await readFile(path.join(from, 'state.json'), 'utf8'));
+      if (!record(state) || typeof state.generation !== 'string' || !/^store-[a-f0-9]{24}$/.test(state.generation)) {
+        throw new Error('Invalid semantic cache generation');
+      }
+      await mkdir(to, { recursive: true, mode: 0o700 });
+      await cp(path.join(from, state.generation), path.join(to, state.generation), { recursive: true });
+      await writeFile(path.join(to, 'state.json'), JSON.stringify(state), { mode: 0o600 });
+      this.state = { ...source.state };
+      return true;
+    });
+    source.pending = copy.then(() => undefined, () => undefined);
+    return copy;
+  }
 
   async info(): Promise<Record<string, unknown>> {
     const model = process.env.KIMONO_MODEL_DIR;
@@ -103,26 +159,33 @@ export class SemanticIndex {
     operation: 'search' | 'update' | 'rebuild' | 'compact' | 'stats',
     options: SemanticOptions = {},
   ): Promise<SemanticResult> {
-    const result = this.pending.then(async () => {
-      this.state = { phase: 'running', operation, startedAt: new Date().toISOString() };
-      try {
-        const output = await this.execute(operation, options);
-        this.state = { ...this.state, phase: 'ready', completedAt: new Date().toISOString(),
-          chunks: output.chunks, model: output.model };
-        return output;
-      } catch (error) {
-        this.state = { ...this.state, phase: 'error', completedAt: new Date().toISOString(),
-          error: error instanceof Error ? error.message : String(error) };
-        throw error;
-      }
-    });
+    const result = this.pending.then(() => this.perform(operation, options));
     this.pending = result.then(() => undefined, () => undefined);
     return result;
+  }
+
+  private async perform(operation: 'search' | 'update' | 'rebuild' | 'compact' | 'stats',
+    options: SemanticOptions = {}): Promise<SemanticResult> {
+    const startedAt = new Date().toISOString();
+    this.state = { phase: 'running', operation, stage: operation, startedAt };
+    try {
+      const output = this.knowledge.immutable && operation === 'search'
+        ? await this.execute(operation, options)
+        : await trackIndex(this.knowledge, 'semantic', options.syncPaths, observed => this.execute(operation, options, observed));
+      this.state = { ...this.state, phase: 'ready', completedAt: new Date().toISOString(),
+        chunks: output.chunks, model: output.model };
+      return output;
+    } catch (error) {
+      this.state = { ...this.state, phase: 'error', completedAt: new Date().toISOString(),
+        error: error instanceof Error ? error.message : String(error) };
+      throw error;
+    }
   }
 
   private async execute(
     operation: string,
     options: SemanticOptions,
+    observed?: (fingerprint: string) => void,
   ): Promise<SemanticResult> {
     const model = process.env.KIMONO_MODEL_DIR;
     if (!model) throw new Error('Semantic search requires KIMONO_MODEL_DIR with model.onnx, tokenizer.json and model.json. Use the Kimono Docker image or install a local model.');
@@ -138,9 +201,13 @@ export class SemanticIndex {
       if (bytes > 64 * 1024 * 1024) throw new Error('Semantic corpus exceeds the supported 64 MiB text budget; use a narrower ROOT.');
       documents.push({ path: entry.path, kind: entry.kind, content });
     }
+    observed?.(corpusFingerprint(documents));
     const raw = await invokeSemantic({
       operation, model, cache: path.join(parent, 'semantic'), documents, ...options,
-    }, parent, this.knowledge.root, (progress) => { this.state.progress = progress; });
+    }, parent, this.knowledge.root, (progress) => {
+      this.state.progress = { completed: progress.completed, total: progress.total };
+      if (progress.stage) this.state.stage = progress.stage;
+    }, operation === 'search' ? 60_000 : 3_600_000);
     if (!record(raw) || raw.engine !== 'embsearch-core' || typeof raw.model !== 'string'
       || typeof raw.version !== 'string' || typeof raw.chunks !== 'number'
       || !Number.isSafeInteger(raw.chunks) || raw.chunks < 0 || typeof raw.embedded !== 'number'
@@ -166,7 +233,8 @@ export class SemanticIndex {
 
 async function invokeSemantic(
   payload: Record<string, unknown>, parent: string, cwd: string,
-  progress?: (value: { completed: number; total: number }) => void,
+  progress?: (value: { completed: number; total: number; stage?: string }) => void,
+  timeout = 60_000,
 ): Promise<unknown> {
   const temporary = await mkdtemp(path.join(parent, 'semantic-request-'));
   try {
@@ -174,7 +242,7 @@ async function invokeSemantic(
     await writeFile(request, JSON.stringify(payload), { mode: 0o600 });
     let buffered = '';
     const response = await runProcess(process.env.KIMONO_SEMANTIC_BIN ?? 'kimono-semantic',
-      [request], cwd, [0], 600_000, (chunk) => {
+      [request], cwd, [0], timeout, (chunk) => {
         buffered += chunk;
         let newline;
         while ((newline = buffered.indexOf('\n')) >= 0) {
@@ -186,7 +254,8 @@ async function invokeSemantic(
             if (record(value) && typeof value.completed === 'number' && typeof value.total === 'number'
               && Number.isSafeInteger(value.completed) && Number.isSafeInteger(value.total)
               && value.completed >= 0 && value.total >= value.completed) {
-              progress?.({ completed: value.completed, total: value.total });
+              progress?.({ completed: value.completed, total: value.total,
+                ...(typeof value.phase === 'string' ? { stage: value.phase.slice(0, 64) } : {}) });
             } else console.error('Invalid semantic progress event');
           } catch (error) {
             console.error('Invalid semantic progress JSON:', error instanceof Error ? error.message : String(error));

@@ -1,13 +1,18 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { lstat, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { runProcess } from './process.js';
 
-interface Profile {
+export interface GitReadProfile {
   host: string;
   transport: 'ssh' | 'https';
   username: string;
   secret: string;
+  knownHosts?: string;
+}
+
+interface Profile extends GitReadProfile {
   knownHosts: string;
   authorName: string;
   authorEmail: string;
@@ -19,13 +24,68 @@ export interface GitContext {
   validateUrl(url: string): void;
 }
 
+export interface GitCredentialRequest {
+  gitUrl: string;
+  branch?: string | null;
+  connectionId?: string;
+}
+
+export type GitCredentialResolver = (request: GitCredentialRequest) => Promise<GitReadProfile | null>;
+
+const requestProfiles = new AsyncLocalStorage<GitReadProfile | null>();
+
+export function withGitProfileContext<T>(profile: GitReadProfile | null, action: () => T): T {
+  return requestProfiles.run(profile, action);
+}
+
+export function currentGitProfileContext(): GitReadProfile | null | undefined {
+  return requestProfiles.getStore();
+}
+
+export function parseGitProfileHeader(encoded: string): GitReadProfile {
+  try {
+    if (!encoded || encoded.length > 90_000 || !/^[A-Za-z0-9+/]+={0,2}$/.test(encoded)) throw new Error();
+    const bytes = Buffer.from(encoded, 'base64');
+    if (bytes.length > 64 * 1024 || bytes.toString('base64').replace(/=+$/, '') !== encoded.replace(/=+$/, '')) throw new Error();
+    return parseGitReadProfile(JSON.parse(bytes.toString('utf8')));
+  } catch {
+    throw new Error('Invalid trusted Git profile header');
+  }
+}
+
+export async function readGitProfileFile(root: string): Promise<GitReadProfile | null> {
+  const configured = process.env.KIMONO_GIT_PROFILE_FILE;
+  if (!configured) return null;
+  try {
+    if (!path.isAbsolute(configured)) throw new Error();
+    const configuredPath = path.resolve(configured);
+    const info = await lstat(configuredPath);
+    if (info.isSymbolicLink() || !info.isFile() || info.size > 65536
+      || ![0o600, 0o400].includes(info.mode & 0o777)) throw new Error();
+    const file = await realpath(configuredPath);
+    const rootPath = path.resolve(root);
+    let actualRoot = rootPath;
+    try { actualRoot = await realpath(rootPath); }
+    catch (error) {
+      if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
+    }
+    if ([rootPath, actualRoot].some(base => file === base || file.startsWith(`${base}${path.sep}`))) throw new Error();
+    return parseGitReadProfile(JSON.parse(await readFile(file, 'utf8')));
+  } catch {
+    throw new Error('Invalid or unavailable KIMONO_GIT_PROFILE_FILE');
+  }
+}
+
 export async function withGitProfile<T>(root: string, action: (context: GitContext) => Promise<T>): Promise<T> {
   const configured = process.env.KIMONO_GIT_PROFILE_FILE;
   if (!configured) return action({ args: [], validateUrl: () => undefined });
   let profile: Profile;
   try {
     if (!path.isAbsolute(configured)) throw new Error('Git profile path must be absolute');
-    const file = await realpath(configured);
+    const configuredPath = path.resolve(configured);
+    const info = await lstat(configuredPath);
+    if (info.isSymbolicLink()) throw new Error('Git profile must not be a symbolic link');
+    const file = await realpath(configuredPath);
     const rootPath = path.resolve(root);
     let actualRoot = rootPath;
     try { actualRoot = await realpath(rootPath); }
@@ -35,8 +95,7 @@ export async function withGitProfile<T>(root: string, action: (context: GitConte
     if ([rootPath, actualRoot].some((base) => file === base || file.startsWith(`${base}${path.sep}`))) {
       throw new Error('Git profile must be outside AIKIDO_ROOT');
     }
-    const info = await lstat(file);
-    if (!info.isFile() || info.size > 65536 || (info.mode & 0o077) !== 0) {
+    if (!info.isFile() || info.size > 65536 || ![0o600, 0o400].includes(info.mode & 0o777)) {
       throw new Error('Git profile must be a regular file <=64 KiB with owner-only permissions (0600/0400)');
     }
     profile = parseProfile(JSON.parse(await readFile(file, 'utf8')));
@@ -45,6 +104,39 @@ export async function withGitProfile<T>(root: string, action: (context: GitConte
     console.error('Unable to load the configured Git profile; check its location, permissions and schema');
     throw new Error('Invalid or unavailable KIMONO_GIT_PROFILE_FILE');
   }
+  return withProfile(profile, action);
+}
+
+export async function withRemoteGitProfile<T>(
+  profileInput: GitReadProfile | null,
+  privateHome: string,
+  action: (context: GitContext) => Promise<T>,
+): Promise<T> {
+  if (!profileInput) {
+    const env: NodeJS.ProcessEnv = { ...process.env };
+    for (const key of Object.keys(env)) {
+      if (key.startsWith('GIT_') || key.startsWith('SSH_')) delete env[key];
+    }
+    Object.assign(env, {
+      GIT_CONFIG_NOSYSTEM: '1',
+      GIT_CONFIG_GLOBAL: '/dev/null',
+      GIT_TERMINAL_PROMPT: '0',
+      HOME: privateHome,
+      XDG_CONFIG_HOME: privateHome,
+      GIT_CONFIG_COUNT: '1',
+      GIT_CONFIG_KEY_0: 'credential.helper',
+      GIT_CONFIG_VALUE_0: '',
+    });
+    return action({
+      args: ['-c', 'http.followRedirects=false', '-c', 'http.extraHeader=',
+        '-c', 'protocol.allow=never', '-c', 'protocol.https.allow=always', '-c', 'protocol.ssh.allow=always'],
+      env, validateUrl: () => undefined,
+    });
+  }
+  return withProfile(toProfile(parseGitReadProfile(profileInput)), action);
+}
+
+async function withProfile<T>(profile: Profile, action: (context: GitContext) => Promise<T>): Promise<T> {
   const directory = await mkdtemp(path.join(tmpdir(), 'kimono-git-'));
   const env: NodeJS.ProcessEnv = { ...process.env };
   for (const key of Object.keys(env)) {
@@ -112,29 +204,47 @@ export async function withGitProfile<T>(root: string, action: (context: GitConte
 function quote(value: string): string { return `'${value.replaceAll("'", "'\\''")}'`; }
 
 function parseProfile(raw: unknown): Profile {
+  const readProfile = parseGitReadProfile(raw);
+  const data = raw as Record<string, unknown>;
+  const authorName = data.authorName;
+  const authorEmail = data.authorEmail;
+  if (typeof authorName !== 'string' || !authorName.trim() || /[\r\n]/.test(authorName)
+    || typeof authorEmail !== 'string' || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(authorEmail)) {
+    throw new Error('Invalid profile identity');
+  }
+  return { ...readProfile, knownHosts: readProfile.knownHosts ?? '', authorName, authorEmail };
+}
+
+function parseGitReadProfile(raw: unknown): GitReadProfile {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('Expected profile object');
   const data = raw as Record<string, unknown>;
-  const string = (key: string) => {
+  const string = (key: string, maximum = 32768) => {
     const value = data[key];
-    if (typeof value !== 'string' || !value.trim() || value.includes('\0')) throw new Error('Invalid profile field');
+    if (typeof value !== 'string' || !value.trim() || value.length > maximum || value.includes('\0')) throw new Error('Invalid profile field');
     return value;
   };
-  const host = string('host').toLowerCase();
-  const username = string('username');
-  const authorName = string('authorName');
-  const authorEmail = string('authorEmail');
-  const secret = string('secret');
+  const host = string('host', 253).toLowerCase();
+  const username = string('username', 128);
+  const secret = string('secret', 32768);
   if (!/^(?=.{1,253}$)[a-z0-9]+(?:[.-][a-z0-9]+)*$/.test(host)
-    || !/^[a-zA-Z0-9_.@+-]+$/.test(username) || /[\r\n]/.test(authorName)
-    || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(authorEmail)
+    || !/^[a-zA-Z0-9_.@+-]+$/.test(username)
     || !['ssh', 'https'].includes(String(data.transport))) throw new Error('Invalid profile schema');
   const transport = data.transport === 'ssh' ? 'ssh' : 'https';
-  const knownHosts = transport === 'ssh' ? string('knownHosts') : '';
+  const knownHosts = transport === 'ssh' ? string('knownHosts', 16384) : undefined;
   if (transport === 'https' && /[\r\n]/.test(secret)) throw new Error('Invalid token');
-  if (transport === 'ssh' && !knownHosts.trim().split('\n').every((line) => {
+  if (transport === 'ssh' && !knownHosts!.trim().split('\n').every((line) => {
     const [server, algorithm, key] = line.trim().split(/\s+/);
     return server === host && /^(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp(256|384|521))$/.test(algorithm ?? '')
       && /^[A-Za-z0-9+/]+={0,3}$/.test(key ?? '');
   })) throw new Error('known_hosts must contain verified keys for the exact profile host');
-  return { host, transport, username, authorName, authorEmail, secret, knownHosts };
+  return { host, transport, username, secret, ...(knownHosts !== undefined ? { knownHosts } : {}) };
+}
+
+function toProfile(profile: GitReadProfile): Profile {
+  return {
+    ...profile,
+    knownHosts: profile.knownHosts ?? '',
+    authorName: '',
+    authorEmail: '',
+  };
 }

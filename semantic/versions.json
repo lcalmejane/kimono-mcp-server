@@ -6,6 +6,36 @@
     "arm64": "c5b8b3cca31f3d643a3b313b8f42e2d0f16a4fcefd02cda343d97bd5306afaab",
     "x64": "cc5c72baf5ae5c8238a6841f0897227be2d02826b9cf98eaf02fdefaeeb03a57"
   },
+  "nativeTargets": {
+    "darwin-arm64": {
+      "archive": "onnxruntime-osx-arm64-1.31.0.tgz",
+      "sha256": "1031b36dd3bdaa8d976a6130d9cf2a05e9be320b93ae804f8427b91dc3432afc",
+      "format": "tgz",
+      "library": "libonnxruntime.dylib",
+      "libraryPattern": "^libonnxruntime.*\\.dylib$"
+    },
+    "linux-arm64": {
+      "archive": "onnxruntime-linux-aarch64-1.31.0.tgz",
+      "sha256": "c5b8b3cca31f3d643a3b313b8f42e2d0f16a4fcefd02cda343d97bd5306afaab",
+      "format": "tgz",
+      "library": "libonnxruntime.so",
+      "libraryPattern": "^libonnxruntime.*\\.so(?:\\..*)?$"
+    },
+    "linux-x64": {
+      "archive": "onnxruntime-linux-x64-1.31.0.tgz",
+      "sha256": "cc5c72baf5ae5c8238a6841f0897227be2d02826b9cf98eaf02fdefaeeb03a57",
+      "format": "tgz",
+      "library": "libonnxruntime.so",
+      "libraryPattern": "^libonnxruntime.*\\.so(?:\\..*)?$"
+    },
+    "win32-x64": {
+      "archive": "onnxruntime-win-x64-1.31.0.zip",
+      "sha256": "3958d8a44984160692c1b4ffd0de3cb48f8c39f9d34bb31e433db06e30b82195",
+      "format": "zip",
+      "library": "onnxruntime.dll",
+      "libraryPattern": "^onnxruntime.*\\.dll$"
+    }
+  },
   "model": {
     "repository": "Xenova/multilingual-e5-small",
     "revision": "761b726dd34fb83930e26aab4e9ac3899aa1fa78",

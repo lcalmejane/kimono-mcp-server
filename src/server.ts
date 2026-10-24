@@ -12,37 +12,63 @@ import {
   ListResourcesRequestSchema,
   ListToolsRequestSchema,
   ReadResourceRequestSchema,
+  type CallToolResult,
   type Tool,
 } from '@modelcontextprotocol/sdk/types.js';
 import { AikidoKnowledgeBase, type KnowledgeEntry, type KnowledgeKind } from './knowledge.js';
 import { access, lstat, readdir, stat } from 'node:fs/promises';
 import { constants } from 'node:fs';
-import { RUNTIME_TOOLS, runtimeFor } from './runtime-tools.js';
+import { decorateSnapshotResult, RUNTIME_TOOLS, runtimeFor, snapshotMetadata } from './runtime-tools.js';
 import { Lifecycle, shutdownSignals } from './lifecycle.js';
 import { Retrieval, RETRIEVAL_PROPERTIES, READ_PROPERTIES } from './retrieval.js';
+import { snapshotsFor, type KnowledgeSnapshot } from './snapshots.js';
+import {
+  currentGitProfileContext, parseGitProfileHeader, withGitProfileContext,
+  type GitCredentialResolver,
+} from './git-profile.js';
 
 const SERVER_NAME = 'kimono-mcp-server';
 const SERVER_VERSION = '0.3.0';
+export interface AikidoServerOptions {
+  resolveGitProfile?: GitCredentialResolver;
+  trustedGitProfileHeader?: boolean;
+  allowLocalGitProfile?: boolean;
+}
+export const SEARCH_INSTRUCTIONS = [
+  'Kimono is a read-only shared knowledge MCP. Token-frugal research protocol:',
+  '1. aikido_snapshot begin once; reuse its snapshotId for every search and read of the same research, then end it.',
+  '2. aikido_search (default detail=locations) returns only where to look: files ranked by best score with hit line numbers ([start,end] for semantic chunks) and matched terms. Do not request detail=excerpts except for diagnostics.',
+  '3. Select the useful locations, then fetch them in ONE aikido_file operation=ranges call (up to 50 ranges, optional contextLines, merged per file). Follow remaining[] only if needed.',
+  '4. Use outline/section/read on a file, and full=true last, only when the passages are insufficient.',
+  'Commits, pushes and merges happen outside this MCP; after local edits call aikido_index update, or aikido_git sync for a Git source.',
+].join('\n');
+
 const MCP_TOOL: Tool = {
   name: 'aikido',
-  description: 'Discover AI-KIDO progressively: list returns paginated metadata and headers (25 entries, 16 KiB by default); search delegates to aikido_search. Prefer aikido_file metadata/outline/read for bounded JSON passages. Legacy read without selectors and activate/execute return complete instructions, explicitly requested only. Activation does not execute an LLM.',
+  description: 'Discover AI-KIDO progressively: list returns paginated metadata and headers (25 entries, 16 KiB by default); search delegates to aikido_search. Search returns locations by default; prefer one aikido_file ranges batch, then metadata/outline/read, for bounded JSON passages. Legacy read without selectors and activate/execute return complete instructions, explicitly requested only. Activation does not execute an LLM.',
   inputSchema: {
     type: 'object',
     allOf: [{
       if: { properties: { operation: { enum: ['list', 'search'] } }, required: ['operation'] },
       then: { properties: { maxBytes: RETRIEVAL_PROPERTIES.maxBytes } },
-    }],
+    }, {
+        if: { properties: { operation: { enum: ['list', 'search', 'read', 'activate', 'execute'] } }, required: ['operation'] },
+        then: { required: ['snapshotId'] },
+      }],
     properties: {
       ...RETRIEVAL_PROPERTIES,
       ...READ_PROPERTIES,
+      snapshotId: { type: 'string', description: 'Required snapshot from aikido_snapshot begin.' },
       offset: { type: 'integer', minimum: 0, default: 0 },
-      contextLines: { type: 'integer', minimum: 0, maximum: 20, default: 2 },
-      operation: { type: 'string', enum: ['list', 'search', 'read', 'activate', 'execute', 'refresh'] },
+      detail: { type: 'string', enum: ['locations', 'excerpts'], default: 'locations', description: 'Search only: locations (default) returns file paths and hit lines without text; fetch passages with one aikido_file operation=ranges batch.' },
+      contextLines: { type: 'integer', minimum: 0, maximum: 20, default: 2, description: 'Search with detail=excerpts only.' },
+      operation: { type: 'string', enum: ['list', 'search', 'read', 'activate', 'execute'] },
       kind: { type: 'string', enum: ['command', 'agent', 'skill', 'workflow', 'knowledge'] },
       query: { type: 'string', description: 'Filter or full-text search query.' },
       vector: { type: 'array', minItems: 1, maxItems: 16384, items: { type: 'number' }, description: 'Search only: alternative to query, requires mode=semantic and embeddingModel.' },
       embeddingModel: { type: 'string', description: 'Exact model identifier from aikido_embed; vectors must use matching weights and preprocessing.' },
-      mode: { type: 'string', enum: ['literal', 'regex', 'semantic'], default: 'literal' },
+      mode: { type: 'string', enum: ['literal', 'regex', 'text', 'semantic', 'hybrid'], default: 'literal' },
+      enrich: { type: 'boolean', default: true },
       id: { type: 'string', description: 'Knowledge-base relative path or V3.1 SHA-256(path)[:12] file_id.' },
       context: { type: 'string', description: 'Optional user request to include when activating a command, agent, or skill.' },
       limit: { type: 'number', description: 'Maximum search results (1-100).', minimum: 1, maximum: 100 },
@@ -51,10 +77,15 @@ const MCP_TOOL: Tool = {
   },
 };
 
-export function createAikidoMcpServer(knowledge: AikidoKnowledgeBase, lifecycle = new Lifecycle()): Server {
+export function createAikidoMcpServer(
+  knowledge: AikidoKnowledgeBase,
+  lifecycle = new Lifecycle(),
+  options: AikidoServerOptions = {},
+): Server {
   const server = new Server(
     { name: SERVER_NAME, version: SERVER_VERSION },
-    { capabilities: { tools: {}, resources: { subscribe: false, listChanged: false }, prompts: {}, completions: {} } },
+    { capabilities: { tools: {}, resources: { subscribe: false, listChanged: false }, prompts: {}, completions: {} },
+      instructions: SEARCH_INSTRUCTIONS },
   );
 
   server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: [MCP_TOOL, ...RUNTIME_TOOLS] }));
@@ -62,7 +93,11 @@ export function createAikidoMcpServer(knowledge: AikidoKnowledgeBase, lifecycle 
     try {
       return await lifecycle.run(async () => {
         if (request.params.name !== 'aikido') {
-          return toolResult(await runtimeFor(knowledge).call(request.params.name, request.params.arguments ?? {}));
+          return toolResult(await runtimeFor(knowledge).call(request.params.name, request.params.arguments ?? {}, {
+            gitProfile: currentGitProfileContext(),
+            resolveGitProfile: options.resolveGitProfile,
+            allowLocalGitProfile: options.allowLocalGitProfile,
+          }));
         }
         return callAikidoTool(knowledge, request.params.arguments ?? {});
       });
@@ -135,16 +170,26 @@ export function createAikidoMcpServer(knowledge: AikidoKnowledgeBase, lifecycle 
   return server;
 }
 
-async function callAikidoTool(knowledge: AikidoKnowledgeBase, raw: Record<string, unknown>) {
+async function callAikidoTool(
+  knowledge: AikidoKnowledgeBase,
+  raw: Record<string, unknown>,
+  captured?: KnowledgeSnapshot,
+): Promise<CallToolResult> {
   const operation = raw.operation;
   const kind = parseKind(raw.kind);
-  if (operation === 'refresh') {
-    const count = await knowledge.refresh();
-    await knowledge.searchIndex.synchronize();
-    return toolResult(`AI-KIDO index refreshed: ${count} text files discovered.`);
+  if (!captured && operation === 'search') {
+    return toolResult(await runtimeFor(knowledge).call('aikido_search', raw));
+  }
+  if (!captured && ['list', 'read', 'activate', 'execute'].includes(String(operation))) {
+    const snapshotId = stringArg(raw.snapshotId, 'snapshotId', true)!;
+    return snapshotsFor(knowledge).withSnapshot(snapshotId, async snapshot => {
+      const result = await callAikidoTool(snapshot.knowledge, raw, snapshot);
+      const text = result.content[0]?.type === 'text' ? result.content[0].text : '';
+      return toolResult(decorateSnapshotResult(text, snapshot));
+    });
   }
   if (operation === 'list') {
-    return toolResult(await new Retrieval(knowledge).list(raw, kind));
+    return toolResult(await new Retrieval(knowledge, captured ? snapshotMetadata(captured) : undefined).list(raw, kind));
   }
   if (operation === 'search') {
     return toolResult(await runtimeFor(knowledge).call('aikido_search', raw));
@@ -152,7 +197,7 @@ async function callAikidoTool(knowledge: AikidoKnowledgeBase, raw: Record<string
   if (operation === 'read' || operation === 'activate' || operation === 'execute') {
     const id = stringArg(raw.id, 'id', true)!;
     if (operation === 'read' && ['startLine', 'endLine', 'section', 'full', 'maxBytes'].some(key => raw[key] !== undefined)) {
-      return toolResult(await new Retrieval(knowledge).read(raw, id));
+      return toolResult(await new Retrieval(knowledge, captured ? snapshotMetadata(captured) : undefined).read(raw, id));
     }
     await knowledge.refresh();
     const { entry, content } = await knowledge.read(id);
@@ -163,12 +208,12 @@ async function callAikidoTool(knowledge: AikidoKnowledgeBase, raw: Record<string
     const context = stringArg(raw.context, 'context', false);
     return toolResult([
       `AI-KIDO ${entry.kind} instructions loaded from ${entry.path}.`,
-      'Follow these instructions as the connected AI assistant; the MCP server does not execute model workflows. Use aikido_file and aikido_git for approved project actions; the standard base is protected.',
+      'Follow these instructions as the connected AI assistant; the MCP server does not execute model workflows. Read with this snapshot; perform file edits, commits, pushes and merges outside MCP.',
       context ? `\nUser context:\n${context}` : '',
       `\n---\n${content}`,
     ].filter(Boolean).join('\n'));
   }
-  throw new Error(`Unknown operation: ${String(operation)}. Use list, search, read, activate, execute, or refresh.`);
+  throw new Error(`Unknown operation: ${String(operation)}. Use aikido_snapshot before list, search, read, activate or execute.`);
 }
 
 function toolResult(text: string) {
@@ -230,10 +275,10 @@ function mimeType(filePath: string): string {
   return 'text/plain';
 }
 
-export async function startStdioServer(knowledge: AikidoKnowledgeBase): Promise<void> {
+export async function startStdioServer(knowledge: AikidoKnowledgeBase, options: AikidoServerOptions = {}): Promise<void> {
   await prepareKnowledge(knowledge);
   const lifecycle = new Lifecycle();
-  const server = createAikidoMcpServer(knowledge, lifecycle);
+  const server = createAikidoMcpServer(knowledge, lifecycle, options);
   await server.connect(new StdioServerTransport());
   const removeSignals = shutdownSignals(() => lifecycle.close(async () => {
     // Let the SDK emit the response for the last completed tool call.
@@ -244,14 +289,19 @@ export async function startStdioServer(knowledge: AikidoKnowledgeBase): Promise<
   console.error(`${SERVER_NAME} ready on stdio (${knowledge.isInitialized ? knowledge.list().length : 0} documents)`);
 }
 
-export async function startHttpServer(knowledge: AikidoKnowledgeBase, options: { host: string; port: number; authToken: string }) {
+export async function startHttpServer(
+  knowledge: AikidoKnowledgeBase,
+  options: { host: string; port: number; authToken: string } & AikidoServerOptions,
+) {
   if (!options.authToken.trim()) throw new Error('MCP_AUTH_TOKEN is required for the HTTP transport');
   await prepareKnowledge(knowledge);
   const transports = new Map<string, StreamableHTTPServerTransport>();
   const lifecycle = new Lifecycle();
 
-  const httpServer = createHttpServer((request, response) => {
-    const handle = () => handleHttpRequest(request, response, knowledge, options.authToken, transports, lifecycle);
+  const httpServer = createHttpServer(
+    options.trustedGitProfileHeader ? { maxHeaderSize: 96 * 1024 } : {},
+    (request, response) => {
+    const handle = () => handleHttpRequest(request, response, knowledge, options, transports, lifecycle);
     const handling = request.method === 'POST' && !lifecycle.stopping ? lifecycle.run(async () => {
       const sent = new Promise<void>((resolve) => {
         response.once('finish', resolve);
@@ -293,13 +343,15 @@ async function prepareKnowledge(knowledge: AikidoKnowledgeBase): Promise<void> {
   }
   await knowledge.initialize();
   await knowledge.searchIndex.synchronize();
+  await knowledge.vocabulary.refresh();
+  knowledge.semanticIndex.warmup();
 }
 
 async function handleHttpRequest(
   request: IncomingMessage,
   response: ServerResponse<IncomingMessage>,
   knowledge: AikidoKnowledgeBase,
-  authToken: string,
+  options: { authToken: string } & AikidoServerOptions,
   transports: Map<string, StreamableHTTPServerTransport>,
   lifecycle: Lifecycle,
 ): Promise<void> {
@@ -312,7 +364,7 @@ async function handleHttpRequest(
     response.writeHead(404).end('Not found');
     return;
   }
-  if (!authorized(request, authToken)) {
+  if (!authorized(request, options.authToken)) {
     response.writeHead(401, { 'www-authenticate': 'Bearer', 'content-type': 'application/json' }).end('{"error":"Unauthorized"}');
     return;
   }
@@ -345,6 +397,7 @@ async function handleHttpRequest(
       ready, stopping: lifecycle.stopping,
       root: { initialized: knowledge.isInitialized, available: rootAvailable, error: rootError },
       semantic: knowledge.semanticIndex.status(),
+      vocabulary: knowledge.vocabulary.status(),
     }));
     return;
   }
@@ -373,7 +426,7 @@ async function handleHttpRequest(
         transports.delete(id);
       },
     });
-    const mcpServer = createAikidoMcpServer(knowledge, lifecycle);
+    const mcpServer = createAikidoMcpServer(knowledge, lifecycle, options);
     await mcpServer.connect(transport);
     transport.onclose = () => {
       if (initializedSessionId) transports.delete(initializedSessionId);
@@ -387,7 +440,21 @@ async function handleHttpRequest(
   }
 
   try {
-    await transport.handleRequest(request, response);
+    let profile: ReturnType<typeof parseGitProfileHeader> | null = null;
+    if (options.trustedGitProfileHeader && request.method === 'POST') {
+      const rawProfile = request.headers['x-kimono-git-profile'];
+      if (typeof rawProfile === 'string') {
+        try { profile = parseGitProfileHeader(rawProfile); }
+        catch {
+          response.writeHead(400, { 'cache-control': 'no-store' }).end('Invalid trusted Git profile');
+          return;
+        }
+      } else if (rawProfile !== undefined) {
+        response.writeHead(400, { 'cache-control': 'no-store' }).end('Invalid trusted Git profile');
+        return;
+      }
+    }
+    await withGitProfileContext(profile, () => transport!.handleRequest(request, response));
   } catch (error) {
     console.error('MCP HTTP request failed:', error instanceof Error ? error.message : String(error));
     if (!response.headersSent) response.writeHead(500).end('MCP request failed');

@@ -1,0 +1,15 @@
+[
+  { "query": "how to create a new search plan", "expected": ["prompts/hard_points/commands/create-search-plan.md"] },
+  { "query": "validate search plan structure", "expected": ["prompts/hard_points/commands/validate-search-plan.md"] },
+  { "query": "truth evaluator sources of truth", "expected": ["prompts/hard_points/agents/agent-aikido-truth-evaluator.md"] },
+  { "query": "RACI matrix initialization", "expected": ["prompts/hard_points/commands/init-raci-aikido.md"] },
+  { "query": "log traceability", "expected": ["prompts/hard_points/gestion-logs-aikido.md"] },
+  { "query": "balance the memory bank tree", "expected": ["prompts/hard_points/agents/agent-aikido-balancer.md"] },
+  { "query": "document header versioning", "expected": ["prompts/hard_points/agents/agent-aikido-doc-header.md"] },
+  { "query": "hash id architecture", "expected": ["prompts/hard_points/system/structure/ARCHITECTURE-V3.1-HASH-ID.md"] },
+  { "query": "intelligent file merge fusion", "expected": ["prompts/hard_points/agents/agent-aikido-fusion.md"] },
+  { "query": "download a website to markdown", "expected": ["prompts/hard_points/system/web/commands/download-site.md"] },
+  { "query": "business glossary", "expected": ["prompts/hard_points/commands/init-glossaire.md"] },
+  { "query": "skill installation update uninstall", "expected": ["prompts/hard_points/commands/skill-manage.md"] },
+  { "query": "regles", "expected": [] }
+]
