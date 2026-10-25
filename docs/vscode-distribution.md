@@ -56,11 +56,13 @@ dispatching it:
 The workflow checks the tag against both package versions, requires an existing
 published non-prerelease GitHub release, downloads and verifies its
 `SHA256SUMS.txt`, and confirms all four VSIX targets before invoking `vsce`.
-It passes all four same-version packages to `vsce publish` in one invocation;
-`--skip-duplicate` makes a retry continue past targets already accepted by the
-Marketplace. VSCE validates `VSCE_PAT` and publisher rights when executing the
-publish command; `vsce ls-publishers` is intentionally not used because it
-lists locally stored logins, not GitHub Actions credentials.
+It publishes targets sequentially and confirms each one appears in Marketplace
+version metadata before moving on. `--skip-duplicate` makes retries continue
+past targets already accepted by the Marketplace; if a target is not indexed
+within five minutes, the workflow fails rather than reporting a false success.
+VSCE validates `VSCE_PAT` and publisher rights when executing the publish
+command; `vsce ls-publishers` is intentionally not used because it lists locally
+stored logins, not GitHub Actions credentials.
 The required confirmation checkbox is the final human approval; once the
 workflow starts publishing, there is no later Marketplace confirmation step.
 Do not dispatch until the listing is approved.
