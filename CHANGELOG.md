@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.6.4 - 2026-10-25
+
+- Set the VS Code Marketplace display name to `Kimono RAG MCP by AI-KIDO`
+  after the Marketplace reported `Kimono MCP` was already taken. The extension
+  slug remains `kimono-rag-mcp`.
+
 ## 0.6.3 - 2026-10-25
 
 - Rename the VS Code extension slug to `kimono-rag-mcp` after Marketplace

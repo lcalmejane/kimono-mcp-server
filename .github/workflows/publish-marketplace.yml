@@ -7,7 +7,7 @@ on:
         description: Existing GitHub release tag to publish
         required: true
         type: string
-        default: v0.6.3
+        default: v0.6.4
       publish_confirmed:
         description: I reviewed the publisher/listing and authorize publishing this release
         required: true

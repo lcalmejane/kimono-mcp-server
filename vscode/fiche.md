@@ -1,6 +1,6 @@
 # Kimono MCP — Visual Studio Marketplace publication brief
 
-English editorial and publication preparation for version 0.6.3+.
+English editorial and publication preparation for version 0.6.4+.
 This is not a live Marketplace listing or Microsoft approval.
 Public copy is separated from the publisher-only checklist below.
 
@@ -25,11 +25,11 @@ required for default RAG. The wider method and ecosystem are optional next steps
 | Field | Proposal |
 |---|---|
 | Current technical name | `kimono-rag-mcp` |
-| Proposed display name | **Kimono MCP — Shared Knowledge & Local RAG** |
+| Display name | **Kimono RAG MCP by AI-KIDO** |
 | Current manifest publisher | `ai-kido` — selected by the owner; verify availability and Marketplace account access before submission |
 | Intended full ID | `ai-kido.kimono-rag-mcp` |
 | Short description | Local code and docs RAG for MCP assistants. Give your team and agents a common knowledge layer, with targeted reads and local embeddings. |
-| Categories (manifest 0.6.3) | `AI`, `Machine Learning`, `Other`; validate against the current Marketplace schema before publication |
+| Categories (manifest 0.6.4) | `AI`, `Machine Learning`, `Other`; validate against the current Marketplace schema before publication |
 | Proposed keywords | `MCP`, `RAG`, `local search`, `semantic search`, `Copilot`, `AI-KIDO` |
 | License | MIT; retain bundled component and model notices |
 | Discovery website | <https://ai-kido.fr> |
@@ -38,8 +38,8 @@ required for default RAG. The wider method and ecosystem are optional next steps
 | Local RAG guide | <https://github.com/lcalmejane/kimono-mcp-server/blob/main/docs/local-rag.md> |
 | Existing distributions | <https://github.com/lcalmejane/kimono-mcp-server/releases> |
 
-Publisher/name/icon above match the 0.6.3 manifest; display name, description and
-categories remain editorial proposals. GitHub distributions are separate from
+Publisher/name/icon above match the 0.6.4 manifest; description and categories
+remain editorial proposals. GitHub distributions are separate from
 Marketplace publication: do not claim that a Marketplace listing exists.
 
 ## 3. Public copy — adapt for the Marketplace README

@@ -111,9 +111,11 @@ automatic (French or English, following VS Code or the browser).
 
 Versions 0.6.1–0.6.2 use **`ai-kido.kimono-mcp`**; version 0.6.3 changes the
 extension identity to **`ai-kido.kimono-rag-mcp`** after the Marketplace
-reported the previous slug as already existing. VS Code treats these as
+reported the previous slug as already existing. Version 0.6.4 sets the
+Marketplace display name to **Kimono RAG MCP by AI-KIDO** after the previous
+display name was reported as taken. VS Code treats publisher/name changes as
 separate extensions. Uninstall the old `ai-kido.kimono-mcp` extension before
-installing 0.6.3 to avoid duplicate MCP providers. Review settings and
+installing 0.6.4 to avoid duplicate MCP providers. Review settings and
 re-enter any remote bearer token: secrets and global cache storage are not
 migrated between extension identities.
 For old AI-KIDO workspaces, explicitly select `kimono.corpusMode: "aikido"`;
@@ -140,12 +142,14 @@ installant le nouveau VSIX. Le mode restreint bloque le démarrage. Une politiqu
 d'organisation peut également interdire MCP ou les extensions hors Marketplace.
 
 Les versions 0.6.1–0.6.2 utilisent l'identifiant **`ai-kido.kimono-mcp`** ;
-la 0.6.3 passe à **`ai-kido.kimono-rag-mcp`** après le conflit de nom signalé
-par le Marketplace. VS Code considère ces deux identifiants comme des
-extensions distinctes. Désinstaller l'ancienne extension avant d'installer
-la 0.6.3 pour éviter deux fournisseurs MCP. Les secrets et caches ne sont
-pas migrés entre ces identités ; ressaisir le jeton distant et sélectionner explicitement
-`kimono.corpusMode: "aikido"` pour les anciens workspaces AI-KIDO.
+la 0.6.3 passe à **`ai-kido.kimono-rag-mcp`** après le conflit de slug signalé
+par le Marketplace. La 0.6.4 définit le nom affiché Marketplace
+**Kimono RAG MCP by AI-KIDO**, l'ancien étant déjà pris. VS Code considère
+ces identifiants comme des extensions distinctes. Désinstaller l'ancienne
+extension avant d'installer la 0.6.4 pour éviter deux fournisseurs MCP. Les
+secrets et caches ne sont pas migrés entre ces identités ; ressaisir le jeton
+distant et sélectionner explicitement `kimono.corpusMode: "aikido"` pour les
+anciens workspaces AI-KIDO.
 
 ### Panneau Kimono et indexation en temps réel (français)
 

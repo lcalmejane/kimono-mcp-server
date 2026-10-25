@@ -52,7 +52,7 @@ function fixture(options = {}) {
   };
   const context = {
     extensionPath: path.join(process.cwd(), "vscode"), extension: {
-      id: "ai-kido.kimono-rag-mcp", packageJSON: { version: "0.6.3" },
+      id: "ai-kido.kimono-rag-mcp", packageJSON: { version: "0.6.4" },
     },
     globalStorageUri: uri(path.join(process.cwd(), ".local-runtime-vscode-test")),
     secrets: {

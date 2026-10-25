@@ -50,7 +50,7 @@ dispatching it:
    `VSCE_PAT`. Never put the token in the repository, workflow inputs or chat.
 3. Review the publisher profile and Marketplace listing/package content.
 4. In **Actions → Publish VS Code Marketplace → Run workflow**, select the
-   intended immutable release tag (default `v0.6.3`) and explicitly check the
+   intended immutable release tag (default `v0.6.4`) and explicitly check the
    confirmation that the publisher/listing has been reviewed.
 
 The workflow checks the tag against both package versions, requires an existing
@@ -64,7 +64,7 @@ used because it lists locally stored logins, not GitHub Actions credentials.
 The required confirmation checkbox is the final human approval; once the
 workflow starts publishing, there is no later Marketplace confirmation step.
 Do not dispatch until the listing is approved.
-The new `v0.6.3` release will contain targets `darwin-arm64`, `linux-arm64`,
+The new `v0.6.4` release will contain targets `darwin-arm64`, `linux-arm64`,
 `linux-x64` and `win32-x64` under the extension ID `ai-kido.kimono-rag-mcp`.
 Marketplace credentials and listing approval remain separate prerequisites.
 

@@ -1,6 +1,6 @@
 {
   "name": "kimono-mcp-server",
-  "version": "0.6.3",
+  "version": "0.6.4",
   "description": "Local project RAG and AI-KIDO knowledge retrieval over MCP",
   "license": "MIT",
   "repository": {
