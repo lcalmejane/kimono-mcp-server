@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="{{lang}}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src {{csp}}; style-src {{csp}} 'nonce-{{nonce}}'; script-src 'nonce-{{nonce}}';">
+<title>Kimono MCP</title>
+<link rel="stylesheet" href="{{base}}/kimono-view.css">
+<style nonce="{{nonce}}">
+body{font-family:var(--vscode-font-family);color:var(--vscode-foreground);background:var(--vscode-editor-background);margin:0;padding:24px}
+main{max-width:900px;margin:auto}
+button,select{font:inherit;min-height:32px;border:1px solid var(--vscode-button-border,transparent);border-radius:4px;padding:5px 10px}
+button{color:var(--vscode-button-foreground);background:var(--vscode-button-background);cursor:pointer}
+button.secondary{background:var(--vscode-button-secondaryBackground);color:var(--vscode-button-secondaryForeground)}
+button:hover{filter:brightness(1.12)}button:disabled,input:disabled,select:disabled{opacity:.5;cursor:not-allowed}
+select{background:var(--vscode-dropdown-background);color:var(--vscode-dropdown-foreground);border-color:var(--vscode-dropdown-border)}
+input[type=search],input[type=text]{font:inherit;min-height:32px;padding:5px 8px;color:var(--vscode-input-foreground);background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,var(--vscode-panel-border));border-radius:4px}
+input[type=checkbox]{width:18px;height:18px}
+:focus-visible{outline:2px solid var(--vscode-focusBorder);outline-offset:3px}
+@media(max-width:520px){body{padding:12px}}
+</style>
+</head>
+<body><main id="kimono"></main>
+<script nonce="{{nonce}}" src="{{base}}/status-format.js"></script>
+<script nonce="{{nonce}}" src="{{base}}/kimono-view.js"></script>
+<script nonce="{{nonce}}" src="{{base}}/kimono.js" data-icon="{{icon}}"></script>
+</body></html>

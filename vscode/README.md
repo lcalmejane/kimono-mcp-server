@@ -66,6 +66,47 @@ Intel macOS, native Windows ARM64 and standalone browser-only `vscode.dev` are
 not currently built/supported. There is no Marketplace or Open VSX publication;
 download and install a newer VSIX to update.
 
+### Kimono panel, live indexing and search test
+
+After installation the **Kimono** icon (the same kimono glyph as Tatami) appears
+in the Activity Bar. Clicking it opens the central management panel directly,
+without an intermediate sidebar. The panel shows the mode (RAG or AI-KIDO)
+and for each workspace ROOT the live semantic index status:
+
+- phase and overall progress (`Indexing · 42% · embedding chunks · ETA 1m 10s`);
+- **files** read / total, **tokens (est., bytes÷4)** read / total, **chunks**
+  embedded / to embed, rate (chunks/s), ETA and last indexing time.
+
+A text-only status-bar entry (`Kimono: Indexed`, `Kimono: Indexing · 42% …`)
+stays visible while the view is closed; click it to open the panel.
+**Kimono: Open Management Panel** (title-bar button of the view) gathers:
+settings (mode, corpus mode, per-folder ROOT, remote URL/token, config files),
+live index status with **Start indexing now**, MCP server shortcuts, and
+**Test a search**: one snapshot queried in several modes (exact, regex,
+semantic, hybrid…) with latency, hits, response size, overlap/RRF comparison,
+and optional expected paths for recall/precision.
+
+Search tests request `detail=compact`, exactly like the default agent search:
+`{"results":[{"path":"src/app.ts","ranges":[[12,18]]}]}`. Ranges are inclusive;
+warnings or truncation are included only when needed. The same minimal contract
+applies in RAG and AI-KIDO mode. No source text is fetched automatically.
+**Raw MCP response** shows that exact minified payload and its UTF-8 byte size;
+**Full test report** contains the panel's timings/comparison metadata, not the
+payload sent to agents. Reading selected source ranges remains an explicit
+`aikido_file` action for agents that need the content.
+
+The status is shared: every Kimono process on the same ROOT (Copilot agent host,
+VS Code MCP, panel) writes the same `semantic-status.json` in the extension's
+global storage. A second process waits for the active indexer instead of
+failing; a lock left by a crashed process on the same host is reclaimed.
+Search tests and manual indexing use the embedded server only.
+
+The same panel layout (header → status → settings → sharing → MCP server →
+search test → governance) is shared with Tatami Agent (Tatami IDE) and the
+Tatami Core web UI. Only integration sections differ: collaboration and Git
+governance in Tatami, the kind filter in AI-KIDO mode. Panel language is
+automatic (French or English, following VS Code or the browser).
+
 ### Updating the development VSIX
 
 Version 0.6.1 uses **`ai-kido.kimono-mcp`**, the selected future Marketplace
@@ -102,6 +143,26 @@ l'ancienne extension `tatami.kimono-mcp` avant de l'installer pour éviter
 deux fournisseurs MCP. Les secrets et caches ne sont pas migrés entre ces
 identités ; ressaisir le jeton distant et sélectionner explicitement
 `kimono.corpusMode: "aikido"` pour les anciens workspaces AI-KIDO.
+
+### Panneau Kimono et indexation en temps réel (français)
+
+L'icône **Kimono** (la même que dans Tatami) apparaît dans la barre d'activité.
+Un clic ouvre directement le panneau central, sans navigation intermédiaire.
+Le panneau affiche le mode et, par ROOT, l'état d'indexation en direct : fichiers,
+tokens (estimés) et chunks indexés / total, débit, temps restant (ETA) et date
+de la dernière indexation. La barre d'état affiche `Kimono: …` en permanence.
+**Kimono: Open Management Panel** regroupe réglages, démarrage d'indexation et
+test de recherche multi-modes. Tous les processus Kimono d'un même ROOT
+partagent cet état ; un second indexeur attend le premier au lieu d'échouer.
+Le même panneau (en-tête, état, réglages, partage, serveur MCP, test de
+recherche, gouvernance) est commun à l'extension autonome, à Tatami Agent et à
+l'interface Web Tatami Core ; seules les sections d'intégration ou AI-KIDO
+diffèrent. La langue (français/anglais) suit automatiquement VS Code ou le
+navigateur.
+Le test demande le même `detail=compact` qu'un agent : chemins et plages de
+lignes uniquement, en RAG comme en AI-KIDO. Aucun extrait n'est lu
+automatiquement. « Réponse MCP brute » affiche le JSON minimal exact ;
+« Rapport de test complet » contient les métriques et comparaisons du panneau.
 
 ## Integration / intégration
 
@@ -213,6 +274,9 @@ Remote MCP uses its own authentication integration.
 
 ## Troubleshooting / dépannage
 
+- Index never ready: open the Kimono view; `Interrupted` means the indexer
+  stopped, `Waiting for another indexer` means another process holds the lock.
+  Use **Start indexing now** to resume incrementally.
 - No tools: verify the workspace is trusted, mode is not disabled, MCP is enabled
   in your VS Code/client, then check **MCP: List Servers → Show Output**.
 - Wrong platform/checksum error: reinstall the matching release VSIX; do not

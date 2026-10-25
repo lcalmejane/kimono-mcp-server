@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, open, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { hostname } from 'node:os';
 import path from 'node:path';
 import { AikidoKnowledgeBase } from './knowledge.js';
 import { RepositoryAccess } from './repository.js';
@@ -69,15 +70,41 @@ async function save(knowledge: AikidoKnowledgeBase, engine: Engine, state: Basis
   } finally { await rm(pending, { force: true }); }
 }
 
+export class IndexLockedError extends Error {
+  constructor(engine: Engine) {
+    super(`${engine} index is locked by another writer; if it crashed, stop all writers before removing the cache lock`);
+  }
+}
+
+export function processAlive(pid: unknown): boolean {
+  if (typeof pid !== 'number' || !Number.isSafeInteger(pid) || pid < 1) return false;
+  try { process.kill(pid, 0); return true; } catch (error) {
+    return error instanceof Error && 'code' in error && error.code === 'EPERM';
+  }
+}
+
+async function acquire(lockPath: string, engine: Engine) {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const lock = await open(lockPath, 'wx', 0o600);
+      await lock.writeFile(JSON.stringify({ pid: process.pid, host: hostname(), startedAt: new Date().toISOString() }));
+      return lock;
+    } catch (error) {
+      if (!(error instanceof Error && 'code' in error && error.code === 'EEXIST')) throw error;
+      // Reclaim only provably dead writers of this host (VS Code may kill servers without cleanup).
+      const owner: unknown = await readFile(lockPath, 'utf8').then(JSON.parse, () => undefined);
+      if (attempt > 0 || !owner || typeof owner !== 'object' || (owner as { host?: unknown }).host !== hostname()
+        || processAlive((owner as { pid?: unknown }).pid)) throw new IndexLockedError(engine);
+      await rm(lockPath, { force: true });
+    }
+  }
+  throw new IndexLockedError(engine);
+}
+
 export async function trackIndex<T>(knowledge: AikidoKnowledgeBase, engine: Engine, paths: string[] | undefined, action: (observed: (fingerprint: string) => void) => Promise<T>): Promise<T> {
   const lockPath = path.join(knowledge.searchIndex.directory, `${engine}-basis.lock`);
   await mkdir(knowledge.searchIndex.directory, { recursive: true, mode: 0o700 });
-  const lock = await open(lockPath, 'wx', 0o600).catch(error => {
-    if (error instanceof Error && 'code' in error && error.code === 'EEXIST') {
-      throw new Error(`${engine} index is locked by another writer; if it crashed, stop all writers before removing the cache lock`);
-    }
-    throw error;
-  });
+  const lock = await acquire(lockPath, engine);
   try {
     const previous = await load(knowledge, engine);
     const state: BasisState = { attempt: randomUUID(), phase: 'running', lastSuccessful: previous?.lastSuccessful ?? null };

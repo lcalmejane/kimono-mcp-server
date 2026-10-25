@@ -26,7 +26,7 @@ it('separates public liveness from authenticated readiness/status and rechecks m
     await knowledge.initialize();
     const ready = await fetch(`${url}/readyz`, { headers });
     expect(ready.status).toBe(200);
-    expect(await ready.json()).toMatchObject({ ready: true, stopping: false,
+    expect(await ready.json()).toMatchObject({ ready: true, stopping: false, mode: 'aikido',
       root: { initialized: true, available: true }, semantic: { phase: 'unknown' } });
     expect((await fetch(`${url}/statusz`, { headers, method: 'POST' })).status).toBe(405);
     await rm(path.join(knowledge.root, 'index.md'));
@@ -35,6 +35,24 @@ it('separates public liveness from authenticated readiness/status and rechecks m
     expect((await fetch(`${url}/healthz`)).status).toBe(200);
   } finally {
     await instance.close();
+    await rm(parent, { recursive: true, force: true });
+  }
+});
+
+it('standard RAG mode is ready on any readable ROOT without an AI-KIDO entry point', async () => {
+  const parent = await mkdtemp(path.join(tmpdir(), 'kimono-rag-ready-'));
+  await writeFile(path.join(parent, 'main.ts'), 'export const value = 1;\n');
+  await writeFile(path.join(parent, 'prompts'), 'Not an AI-KIDO directory');
+  const knowledge = new AikidoKnowledgeBase(parent, false, corpusConfig({ mode: 'rag' }));
+  await knowledge.initialize();
+  const instance = await startHttpServer(knowledge, { host: '127.0.0.1', port: 0, authToken: 'rag-secret' });
+  try {
+    const ready = await fetch(`http://127.0.0.1:${instance.port}/readyz`, { headers: { authorization: 'Bearer rag-secret' } });
+    expect(ready.status).toBe(200);
+    expect(await ready.json()).toMatchObject({ ready: true, mode: 'rag', root: { available: true } });
+  } finally {
+    await instance.close();
+    await rm(knowledge.searchIndex.directory, { recursive: true, force: true });
     await rm(parent, { recursive: true, force: true });
   }
 });

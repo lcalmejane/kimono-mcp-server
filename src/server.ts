@@ -365,7 +365,7 @@ async function handleHttpRequest(
     try {
       const root = await stat(knowledge.root);
       if (!root.isDirectory()) throw new Error('ROOT is not a directory');
-      const candidates = await Promise.all(['prompts/index.md', 'index.md'].map(async (file) => {
+      const candidates = knowledge.config.mode === 'aikido' ? await Promise.all(['prompts/index.md', 'index.md'].map(async (file) => {
         try {
           const target = `${knowledge.root}/${file}`;
           if (!(await stat(target)).isFile()) return false;
@@ -376,15 +376,16 @@ async function handleHttpRequest(
           if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return false;
           throw error;
         }
-      }));
-      rootAvailable = candidates.some(Boolean);
+      })) : [];
+      // Standard RAG indexes any readable directory; only AI-KIDO requires an entry point.
+      rootAvailable = knowledge.config.mode === 'rag' ? await access(knowledge.root, constants.R_OK).then(() => true) : candidates.some(Boolean);
     } catch (error) {
       rootError = error instanceof Error ? error.message : String(error);
     }
     const ready = !lifecycle.stopping && knowledge.isInitialized && rootAvailable;
     response.writeHead(pathname === '/readyz' && !ready ? 503 : 200,
       { 'content-type': 'application/json', 'cache-control': 'no-store' }).end(JSON.stringify({
-      ready, stopping: lifecycle.stopping,
+      ready, stopping: lifecycle.stopping, mode: knowledge.config.mode,
       root: { initialized: knowledge.isInitialized, available: rootAvailable, error: rootError },
       semantic: knowledge.semanticIndex.status(),
       vocabulary: knowledge.vocabulary.status(),

@@ -2,7 +2,7 @@
   "name": "kimono-mcp",
   "displayName": "Kimono MCP",
   "description": "Local project RAG and AI-KIDO MCP with embedded lexical and semantic search.",
-  "version": "0.6.1",
+  "version": "0.6.2",
   "publisher": "ai-kido",
   "license": "MIT",
   "repository": {
@@ -10,9 +10,12 @@
     "url": "https://github.com/lcalmejane/kimono-mcp-server.git"
   },
   "engines": { "vscode": "^1.106.0" },
-  "categories": ["Other"],
+  "categories": ["AI", "Machine Learning", "Other"],
+  "keywords": ["mcp", "rag", "copilot", "semantic search", "ai-kido"],
+  "icon": "media/icon.png",
+  "galleryBanner": { "color": "#0f1220", "theme": "dark" },
   "main": "./extension.cjs",
-  "files": ["extension.cjs", "native.cjs", "stdio.cjs", "native/**", "runtime/**", "server/**", "README.md", "LICENSE", "THIRD_PARTY_NOTICES.md"],
+  "files": ["extension.cjs", "native.cjs", "stdio.cjs", "panel.cjs", "mcp-client.cjs", "search.cjs", "status.cjs", "management/**", "media/**", "native/**", "runtime/**", "server/**", "README.md", "LICENSE", "THIRD_PARTY_NOTICES.md"],
   "extensionKind": ["workspace"],
   "activationEvents": ["onStartupFinished"],
   "capabilities": {
@@ -26,7 +29,25 @@
     "mcpServerDefinitionProviders": [
       { "id": "kimono.mcp", "label": "Kimono MCP" }
     ],
+    "viewsContainers": {
+      "activitybar": [
+        { "id": "kimono", "title": "Kimono MCP", "icon": "media/kimono.svg" }
+      ]
+    },
+    "views": {
+      "kimono": [
+        { "id": "kimono.status", "name": "Kimono MCP", "icon": "media/kimono.svg" }
+      ]
+    },
+    "menus": {
+      "view/title": [
+        { "command": "kimono.openPanel", "when": "view == kimono.status", "group": "navigation" }
+      ]
+    },
     "commands": [
+      { "command": "kimono.openPanel", "title": "Kimono: Open Management Panel", "icon": "media/kimono.svg" },
+      { "command": "kimono.testSearch", "title": "Kimono: Test a Search" },
+      { "command": "kimono.startIndex", "title": "Kimono: Start Indexing Now" },
       { "command": "kimono.configure", "title": "Kimono: Open Settings" },
       { "command": "kimono.setToken", "title": "Kimono: Set Remote Bearer Token" },
       { "command": "kimono.clearToken", "title": "Kimono: Clear Remote Bearer Token" }

@@ -5,6 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { createRequire } from 'node:module';
 import { register } from '../vscode/extension.cjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -57,7 +58,8 @@ try {
     secrets: { onDidChange: noop, get: async () => undefined },
   });
   const [definition] = await provider.provideMcpServerDefinitions();
-  await provider.resolveMcpServerDefinition(definition, { isCancellationRequested: false });
+  assert.ok(path.isAbsolute(definition.env.FGR_BIN));
+  assert.equal(definition.env.MCP_TRANSPORT, 'stdio');
   transport = createTransport({
     command: definition.command, args: definition.args, cwd: definition.cwd.fsPath,
     env: Object.fromEntries(Object.entries(definition.env).filter(([, value]) => value !== null)),
@@ -92,7 +94,7 @@ try {
   await writeFile(path.join(knowledge, 'src/main.rs'), '// Local RAG source retrieval\nfn authenticate() {}\n');
   delete settings.corpusMode;
   const [ragDefinition] = await provider.provideMcpServerDefinitions();
-  await provider.resolveMcpServerDefinition(ragDefinition, { isCancellationRequested: false });
+  assert.equal(ragDefinition.env.KIMONO_CORPUS_MODE, 'rag');
   transport = createTransport({
     command: ragDefinition.command, args: ragDefinition.args, cwd: ragDefinition.cwd.fsPath,
     env: Object.fromEntries(Object.entries(ragDefinition.env).filter(([, value]) => value !== null)),
@@ -113,6 +115,34 @@ try {
   }
   await ragClient.callTool({ name: 'aikido_snapshot', arguments: { operation: 'end', snapshotId: ragId } });
   await ragClient.close();
+  // The management panel's private MCP client and live status file, as packaged.
+  const statusFile = ragDefinition.env.KIMONO_STATUS_FILE;
+  assert.ok(statusFile, 'embedded definitions publish a live index status file');
+  const { startMcpClient } = createRequire(import.meta.url)(path.join(stage, 'mcp-client.cjs'));
+  const { readIndexStatus } = createRequire(import.meta.url)(path.join(stage, 'status.cjs'));
+  const panelClient = startMcpClient({ command: ragDefinition.command, args: ragDefinition.args, cwd: ragDefinition.cwd.fsPath,
+    env: Object.fromEntries(Object.entries(ragDefinition.env).filter(([, value]) => value !== null)) }, { version: pkg.version });
+  try {
+    await panelClient.call('aikido_index', { operation: 'update', mode: 'semantic' });
+    const live = await readIndexStatus(statusFile);
+    assert.equal(live.phase, 'ready', JSON.stringify(live));
+    assert.ok(live.files.total > 0 && live.files.completed === live.files.total, JSON.stringify(live));
+    assert.ok(live.estimatedTokens.total > 0 && live.chunks > 0, JSON.stringify(live));
+    // The panel's "Test a search" must find real hits in every mode.
+    const { runSearchBench } = createRequire(import.meta.url)(path.join(stage, 'search.cjs'));
+    const bench = await runSearchBench((name, args) => {
+      assert.notEqual(name, 'aikido_file', 'search tests must not fetch code automatically');
+      if (name === 'aikido_search') assert.equal(args.detail, 'compact');
+      return panelClient.call(name, args);
+    },
+      { query: 'authenticate', modes: ['literal', 'text', 'semantic', 'hybrid'], limit: 5 });
+    for (const run of bench.runs) {
+      assert.ok(run.ok && run.count > 0 && run.documents.includes('src/main.rs'), JSON.stringify(run));
+      assert.doesNotMatch(JSON.stringify(run), /"excerpt"|"content"|"passages"/);
+      assert.ok(run.payload.results.every(file => Object.keys(file).sort().join(',') === 'path,ranges'));
+      assert.equal(run.bytes, Buffer.byteLength(JSON.stringify(run.payload)));
+    }
+  } finally { panelClient.close(); }
   // The same bundle is usable outside VS Code, with the generic stdio launcher.
   transport = createTransport({
     command: ragDefinition.command,

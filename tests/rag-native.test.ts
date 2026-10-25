@@ -42,6 +42,9 @@ it('searches native lexical and semantic generic code, including scoped snapshot
       expect(JSON.stringify(search)).toContain('src/server.rs');
       expect(JSON.stringify(search)).not.toContain('other/app.tsx');
       expect(JSON.stringify(search)).not.toMatch(/secret\.rs|generated\.rs|node_modules/);
+      expect(search.results.every((file: Record<string, unknown>) =>
+        JSON.stringify(Object.keys(file).sort()) === '["path","ranges"]')).toBe(true);
+      expect(JSON.stringify(search)).not.toMatch(/"content"|"excerpt"|"score"|Secure authentication checks tokens/);
     }
     for (const mode of ['literal', 'text', 'semantic', 'hybrid']) {
       const hidden = JSON.parse(await runtime.call('aikido_search', { snapshotId, mode, query: 'excluded_sentinel' }));

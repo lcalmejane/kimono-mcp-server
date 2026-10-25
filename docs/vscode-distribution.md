@@ -16,6 +16,10 @@ push/PR. On **Actions → CI → Run workflow** or a `v*` tag it additionally:
    tool listing, ROOT status, lexical search and a 384-dimensional ONNX embedding.
    It also verifies generic RAG without an entry point, scoped code retrieval and
    the client-independent `stdio.cjs` launcher included in the bundle.
+   Embedded launch tests intentionally skip `resolveMcpServerDefinition`:
+   discovered definitions must already contain verified native paths, isolated
+   environment/cache and corpus settings for agent hosts that launch them directly.
+   Remote bearer tokens remain late-bound and are not exposed during discovery.
 4. Uploads `kimono-vscode-<target>` artifacts (VSIX + build provenance) and the
    existing native bundle artifacts, retained thirty days.
 

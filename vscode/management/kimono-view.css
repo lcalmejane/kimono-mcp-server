@@ -1,0 +1,27 @@
+/* Kimono management panel styles, shared verbatim by the standalone VS Code extension,
+   Tatami Agent and the Tatami Core web UI. Canonical source:
+   kimono-mcp-server/vscode/management/kimono-view.css — keep copies identical.
+   Colours follow the VS Code theme in webviews and the Tatami theme on the web. */
+.kv{--kv-fg:var(--vscode-foreground,var(--text,inherit));--kv-muted:var(--vscode-descriptionForeground,var(--muted,#888));--kv-border:var(--vscode-panel-border,var(--border,#445));--kv-accent:var(--vscode-progressBar-background,var(--accent,#6c8cff));--kv-badge-bg:var(--vscode-badge-background,var(--accent,#6c8cff));--kv-badge-fg:var(--vscode-badge-foreground,#fff);--kv-code:var(--vscode-textCodeBlock-background,rgba(127,127,127,.12));--kv-error:var(--vscode-errorForeground,#f48771);--kv-link:var(--vscode-textLink-foreground,var(--accent-2,#46e0c3));color:var(--kv-fg);line-height:1.5;max-width:900px}
+.kv-header{display:flex;align-items:center;gap:14px}.kv-header img{width:40px;height:40px;flex:none}.kv-header h1,.kv-header h2{font-size:24px;margin:0}
+.kv-muted,.kv small{color:var(--kv-muted)}.kv p{margin:8px 0 14px}.kv a{color:var(--kv-link)}
+.kv-notice{min-height:24px}.kv-error{color:var(--kv-error)}.kv-error:empty,.kv-slot:empty{display:none}
+.kv-card{border:1px solid var(--kv-border);border-radius:8px;margin:16px 0;padding:16px}.kv-card>h2{font-size:17px;margin:0 0 6px}.kv-card>summary{cursor:pointer;font-weight:600;font-size:17px;min-height:28px}
+.kv h3{font-size:15px;margin:12px 0 6px}
+.kv-card details{border-top:1px solid var(--kv-border);margin-top:12px;padding-top:8px}.kv-card details>summary{cursor:pointer;font-weight:600}
+.kv-folder{border-top:1px solid var(--kv-border);padding-top:10px;margin-top:10px}.kv-folder:first-child{border:0;margin:0;padding:0}
+.kv-path{font-family:var(--vscode-editor-font-family,monospace);font-size:.9em;overflow-wrap:anywhere}
+.kv-badge{display:inline-block;border-radius:10px;padding:0 8px;font-size:12px;font-weight:400;background:var(--kv-badge-bg);color:var(--kv-badge-fg)}
+.kv progress{width:100%;height:10px;accent-color:var(--kv-accent)}
+.kv dl{display:grid;grid-template-columns:max-content 1fr;gap:2px 16px;margin:8px 0}.kv dt{color:var(--kv-muted)}.kv dd{margin:0;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+.kv-actions{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:8px}
+.kv-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px 16px;margin-bottom:10px}
+.kv-card label{display:flex;flex-direction:column;gap:4px;margin:4px 0 10px}.kv-card label[hidden]{display:none}.kv-grid label{margin:0}
+.kv-card label.kv-inline{flex-direction:row;align-items:center;justify-content:space-between;gap:16px}
+.kv-card input[type=search],.kv-card input[type=text],.kv-card input[type=url]{width:100%;box-sizing:border-box}
+.kv table{border-collapse:collapse;width:100%;display:block;overflow-x:auto;margin:12px 0}.kv caption{text-align:left;font-weight:600;padding-bottom:6px}
+.kv th,.kv td{padding:4px 8px;border-bottom:1px solid var(--kv-border);text-align:left;vertical-align:top}
+.kv-output pre,.kv-card pre{white-space:pre-wrap;font-family:var(--vscode-editor-font-family,monospace);font-size:.9em;max-height:12rem;overflow:auto;background:var(--kv-code);padding:6px;margin:4px 0 10px}
+.kv-output details{border:1px solid var(--kv-border);border-radius:8px;margin:10px 0;padding:10px}.kv-output summary{cursor:pointer;font-weight:600}
+.kv-footer{margin-top:24px}
+@media(max-width:520px){.kv-header h1,.kv-header h2{font-size:20px}.kv dl{grid-template-columns:1fr}.kv-card label.kv-inline{flex-wrap:wrap}}

@@ -127,7 +127,8 @@ export class FastGrepIndex {
         args.push('--max-output-bytes', '2097152', '--no-auto-update');
         if (perFile !== undefined) args.push('--max-results-per-file', String(perFile));
         if (!regex) args.push('--fixed-strings');
-        for (const entry of selected) args.push('--include', entry.path.replace(/([*?[\]{}])/g, '\\$1'));
+        // A bare basename glob matches every nested README.md too, leaking across query batches/scopes.
+        for (const entry of selected) args.push('--include', `/${entry.path.replace(/([*?[\]{}])/g, '\\$1')}`);
         args.push('--', query, directory);
         const result = await runProcess(this.binary, args, directory, [0, 1]);
         if (result.exitCode === 1) continue;

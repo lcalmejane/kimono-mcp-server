@@ -782,6 +782,7 @@ MIT. See [LICENSE](LICENSE). Third-party dependencies retain their own licenses.
 | `AIKIDO_INCLUDE_SPEC` | `false` | AI-KIDO-only opt-in to private personal specs; ordinary RAG `spec/` directories are eligible. |
 | `KIMONO_GIT_PROFILE_FILE` | unset | Private server-managed SSH/HTTPS profile outside ROOT; reread for Git commands, supports rotation without restart. |
 | `KIMONO_CACHE_DIR` | `~/.cache/kimono` | Cache parent outside ROOT; contains sensitive document copies. |
+| `KIMONO_STATUS_FILE` | `<cache>/semantic-status.json` | Live, atomically replaced semantic index status shared by every process on this ROOT: `phase` (`running`/`waiting`/`ready`/`error`…), `stage`, `files`, `estimatedTokens`, `embedded` (`{completed,total}`), `chunks`, `chunksPerSecond`, `etaSeconds`, `indexedAt`, `pid`, `host`. Not written for immutable snapshots. |
 | `FGR_BIN` | `fgr` | Path to the fast-grep executable. |
 | `KIMONO_SEMANTIC_BIN` | `kimono-semantic` | Local embsearch-core helper executable. |
 | `KIMONO_SEMANTIC_WORKERS` | `auto` = min(CPUs, 4) | Parallel ONNX sessions for indexing (1-32, ~600 MiB peak each). CPUs follow cgroup quotas. |

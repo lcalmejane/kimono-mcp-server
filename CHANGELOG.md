@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.6.2 - 2026-10-25
+
+- VS Code: Kimono Activity Bar view (same kimono icon as Tatami), a management
+  panel (settings, per-folder ROOT, remote token, MCP shortcuts, search test
+  across modes with recall/precision) and a text status-bar entry. Marketplace
+  icon follows the Tatami/AI-KIDO style (dark ensō, blue→teal gradient).
+- Live semantic indexing status: files, estimated tokens and chunks
+  indexed/total, rate and ETA, published atomically to `KIMONO_STATUS_FILE`
+  (default `<cache>/semantic-status.json`) and shared by every process on the
+  same ROOT. The panel search test requests `detail=compact`, parses `ranges`
+  and displays the exact MCP payload separately from its comparison report.
+  No automatic file/excerpt reads, in either RAG or AI-KIDO mode.
+  The Activity Bar icon opens the central panel directly, without an intermediate
+  navigation tree. Index locks record their owner; another live indexer is awaited
+  (`waiting`) instead of failing, and a dead same-host owner is reclaimed.
+- One bilingual (automatic FR/EN) management panel shared by the standalone
+  extension, Tatami Agent and the Tatami Core web UI: common view
+  (`kimono-view.js`), status formatter (`status-format.js`) and stylesheet,
+  in a fixed canonical layout. Products fill only their integration sections.
+- Anchor native lexical include filters to ROOT so basename matches cannot
+  escape a query batch (for example root and nested `README.md` files).
+- HTTP readiness accepts standard RAG folders without AI-KIDO entry points;
+  authenticated status exposes the active corpus mode.
+- Prepare embedded MCP definitions during discovery, not only in the optional
+  resolver. Agent hosts that launch the discovered command directly now receive
+  the verified bundled engine paths, isolated cache/environment and configured
+  corpus mode. Keep remote tokens late-bound in the resolver. Packaged integration
+  tests launch both AI-KIDO and RAG without calling the resolver first.
+
 ## 0.6.1 - 2026-10-25
 
 - Use `ai-kido.kimono-mcp` as the VSIX identity and future Marketplace namespace,

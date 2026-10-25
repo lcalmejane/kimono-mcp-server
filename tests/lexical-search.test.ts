@@ -80,6 +80,22 @@ it('breaks equal textual evidence in favour of the file whose name carries a que
   expect(result.results.find(hit => hit.path === 'prompts/README.md')?.scoreDetails?.path).toBe(0);
 });
 
+it.each(['rag', 'aikido'] as const)('anchors basename includes to ROOT in %s mode, including immutable snapshots', async mode => {
+  const { root } = await fixture();
+  await mkdir(path.join(root, 'prompts/nested'), { recursive: true });
+  await writeFile(path.join(root, 'README.md'), '# Root agent');
+  await writeFile(path.join(root, 'prompts/nested/README.md'), '# Nested agent');
+  for (const immutable of [false, true]) {
+    const knowledge = new AikidoKnowledgeBase(root, immutable, corpusConfig({ mode }), false);
+    cleanup.push(knowledge.searchIndex.directory);
+    await knowledge.initialize();
+    const result = await knowledge.searchIndex.searchCandidates('agent', undefined, 10, false,
+      entry => entry.path === 'README.md');
+    expect(result.matches.map(hit => hit.path)).toEqual(['README.md']);
+    expect(result.truncated).toBe(false);
+  }
+});
+
 it('skips the full rescan for unchanged files yet still sees in-place edits without reindexing', async () => {
   const { root, knowledge } = await fixture();
   await writeFile(path.join(root, 'prompts/rules.md'), '# Rules\nAlpha content.');

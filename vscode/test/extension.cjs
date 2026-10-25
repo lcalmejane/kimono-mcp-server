@@ -1,10 +1,14 @@
 "use strict";
 
-const { test } = require("node:test");
+const { test, afterEach } = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs/promises");
 const path = require("node:path");
 const { register, remoteUrl, providerId, tokenKey } = require("../extension.cjs");
+
+afterEach(async () => {
+  await fs.rm(path.join(process.cwd(), ".local-runtime-vscode-test"), { recursive: true, force: true });
+});
 
 function fixture(options = {}) {
   const state = {
@@ -73,6 +77,11 @@ test("provider uses per-folder roots, bundled Node, and extension-owned registra
   assert.ok(servers[0].command.includes("runtime"));
   assert.equal(servers[1].args.at(-1), path.join(process.cwd(), "tests"));
   assert.notEqual(servers[0].label, servers[1].label);
+  assert.equal(servers[0].env.FGR_BIN, "/native/fgr");
+  assert.equal(servers[0].env.KIMONO_CORPUS_MODE, "rag");
+  assert.equal(servers[0].env.MCP_TRANSPORT, "stdio");
+  assert.equal(servers[0].cwd.fsPath, process.cwd());
+  assert.equal(servers[1].env.AIKIDO_ROOT, path.join(process.cwd(), "tests"));
   for (const disposable of disposables) disposable.dispose();
   assert.ok(state.disposed >= 8);
 });
@@ -166,9 +175,13 @@ test("embedded provider can explicitly select AI-KIDO instead of default RAG", a
     assert.equal(server.env.KIMONO_CORPUS_MODE, "aikido");
     assert.equal(server.env.KIMONO_CONFIG_FILE, state.settings.configFile);
     state.settings.configFile = "relative.json";
-    const [invalid] = await state.provider.provideMcpServerDefinitions();
-    await assert.rejects(() => state.provider.resolveMcpServerDefinition(invalid, { isCancellationRequested: false }), /config path must be absolute/);
+    await assert.rejects(() => state.provider.provideMcpServerDefinitions(), /config path must be absolute/);
   } finally {
     await fs.rm(context.globalStorageUri.fsPath, { recursive: true, force: true });
   }
+});
+
+test("cancelled discovery does not expose an unresolved embedded launch", async () => {
+  const { state } = fixture();
+  assert.deepEqual(await state.provider.provideMcpServerDefinitions({ isCancellationRequested: true }), []);
 });

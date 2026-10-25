@@ -1,11 +1,12 @@
+import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { cp, mkdir, mkdtemp, open, readFile, rm, writeFile } from 'node:fs/promises';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import path from 'node:path';
-import { tmpdir } from 'node:os';
+import { hostname, tmpdir } from 'node:os';
 import type { AikidoKnowledgeBase, KnowledgeKind, SearchMatch } from './knowledge.js';
 import { runProcess } from './process.js';
 import { within, type ChangeReport } from './synchronization.js';
-import { indexInfos, trackIndex } from './index-basis.js';
+import { IndexLockedError, indexInfos, processAlive, trackIndex } from './index-basis.js';
 
 export interface SemanticResult {
   engine: 'embsearch-core';
@@ -40,43 +41,114 @@ interface SemanticOptions {
   refreshed?: boolean;
 }
 
+interface Count { completed: number; total: number }
+export interface SemanticStatus {
+  phase: 'unknown' | 'running' | 'waiting' | 'ready' | 'error' | 'disabled';
+  operation?: string; stage?: string; startedAt?: string; completedAt?: string; indexedAt?: string;
+  progress?: Count; error?: string;
+  chunks?: number; model?: string;
+  /** Live counters: corpus files read, estimated tokens (UTF-8 bytes / 4) and embedded chunks (nodes). */
+  files?: Count; estimatedTokens?: Count; embedded?: Count;
+  chunksPerSecond?: number; etaSeconds?: number; updatedAt?: string;
+  source?: 'this-process' | 'another-process';
+}
+
+const estimateTokens = (bytes: number) => Math.ceil(bytes / 4);
+
 export class SemanticIndex {
   private pending: Promise<unknown> = Promise.resolve();
-  private state: {
-    phase: 'unknown' | 'running' | 'ready' | 'error' | 'disabled';
-    operation?: string; stage?: string; startedAt?: string; completedAt?: string; indexedAt?: string;
-    progress?: { completed: number; total: number }; error?: string;
-    chunks?: number; model?: string;
-  } = { phase: 'unknown' };
+  private state: SemanticStatus = { phase: 'unknown' };
+  private persistedAt = 0;
+  private embeddingStarted = 0;
+  private retry: NodeJS.Timeout | undefined;
   constructor(private readonly knowledge: AikidoKnowledgeBase) {}
 
-  status() { return structuredClone(this.state); }
+  /** Shared with other Kimono processes on the same ROOT and with the VS Code panel. */
+  get statusFile(): string {
+    return process.env.KIMONO_STATUS_FILE ?? path.join(this.knowledge.searchIndex.directory, 'semantic-status.json');
+  }
+
+  status(): SemanticStatus {
+    const own = structuredClone(this.state);
+    if (own.phase === 'running' || this.knowledge.immutable) return own;
+    const shared = this.readShared();
+    if (shared?.phase === 'running' || shared?.phase === 'waiting') return shared;
+    return own.phase === 'unknown' && shared ? shared : own;
+  }
+
+  private readShared(): SemanticStatus | undefined {
+    try {
+      const value: unknown = JSON.parse(readFileSync(this.statusFile, 'utf8'));
+      if (!record(value) || typeof value.phase !== 'string' || value.pid === process.pid) return undefined;
+      const { pid, host, ...status } = value;
+      if ((status.phase === 'running' || status.phase === 'waiting') && (host !== hostname() || !processAlive(pid))) {
+        return { ...status, phase: 'unknown', stage: 'interrupted', source: 'another-process' } as SemanticStatus;
+      }
+      return { ...status, source: 'another-process' } as SemanticStatus;
+    } catch { return undefined; }
+  }
+
+  private update(next: SemanticStatus, force = true): void {
+    this.state = next;
+    this.persist(force);
+  }
+
+  private persist(force = true): void {
+    if (this.knowledge.immutable) return;
+    const now = Date.now();
+    if (!force && now - this.persistedAt < 500) return;
+    this.persistedAt = now;
+    this.state.updatedAt = new Date(now).toISOString();
+    const file = this.statusFile;
+    const pending = `${file}.${randomUUID()}.pending`;
+    try {
+      mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+      writeFileSync(pending, JSON.stringify({ ...this.state, source: undefined, pid: process.pid, host: hostname() }), { mode: 0o600 });
+      renameSync(pending, file);
+    } catch {
+      rmSync(pending, { force: true });
+    }
+  }
+
   async idle(): Promise<void> { await this.pending; }
 
   warmup(): void {
     if (this.state.phase === 'running') return;
+    if (this.retry) { clearTimeout(this.retry); this.retry = undefined; }
     if (!process.env.KIMONO_MODEL_DIR) {
-      this.state = { phase: 'disabled', error: 'KIMONO_MODEL_DIR is not configured; semantic search is unavailable.' };
+      this.update({ phase: 'disabled', error: 'KIMONO_MODEL_DIR is not configured; semantic search is unavailable.' });
       return;
     }
     const startedAt = new Date().toISOString();
-    this.state = { phase: 'running', operation: 'update', stage: 'checking_index', startedAt };
+    this.update({ phase: 'running', operation: 'update', stage: 'checking_index', startedAt });
     const result = this.pending.then(async () => {
       try {
         const info = await indexInfos(this.knowledge);
         const semantic = info.indexes.semantic;
         if (record(semantic) && semantic.freshness === 'fresh') {
           const basis = record(semantic.basis) ? semantic.basis : undefined;
-          this.state = {
+          const previous = this.readShared();
+          const corpus = this.knowledge.corpusStatus;
+          this.update({
+            ...(previous?.phase === 'ready' ? previous : {}), source: undefined,
             phase: 'ready', operation: 'update', startedAt, completedAt: new Date().toISOString(),
+            files: { completed: corpus.files, total: corpus.files },
+            estimatedTokens: { completed: estimateTokens(corpus.bytes), total: estimateTokens(corpus.bytes) },
             ...(typeof basis?.indexedAt === 'string' ? { indexedAt: basis.indexedAt } : {}),
-          };
+          });
           return;
         }
         await this.perform('update');
       } catch (error) {
-        this.state = { phase: 'error', operation: 'update', startedAt, completedAt: new Date().toISOString(),
-          error: error instanceof Error ? error.message : String(error) };
+        if (error instanceof IndexLockedError) {
+          // Another Kimono process on this ROOT is writing: wait and re-check freshness instead of failing.
+          this.update({ phase: 'waiting', operation: 'update', stage: 'waiting_for_other_indexer', startedAt, error: error.message });
+          this.retry = setTimeout(() => { this.retry = undefined; this.warmup(); }, 2000);
+          this.retry.unref();
+          return;
+        }
+        this.update({ phase: 'error', operation: 'update', startedAt, completedAt: new Date().toISOString(),
+          error: error instanceof Error ? error.message : String(error) });
         throw error;
       }
     });
@@ -168,17 +240,30 @@ export class SemanticIndex {
   private async perform(operation: 'search' | 'update' | 'rebuild' | 'compact' | 'stats',
     options: SemanticOptions = {}): Promise<SemanticResult> {
     const startedAt = new Date().toISOString();
+    const tracked = operation !== 'search' && operation !== 'stats';
+    const previous = this.state;
     this.state = { phase: 'running', operation, stage: operation, startedAt };
+    if (tracked) this.persist();
     try {
       const output = this.knowledge.immutable && operation === 'search'
         ? await this.execute(operation, options)
         : await trackIndex(this.knowledge, 'semantic', options.syncPaths, observed => this.execute(operation, options, observed));
-      this.state = { ...this.state, phase: 'ready', completedAt: new Date().toISOString(),
-        chunks: output.chunks, model: output.model };
+      if (tracked) {
+        const corpus = this.knowledge.corpusStatus;
+        this.update({ ...this.state, phase: 'ready', completedAt: new Date().toISOString(),
+          indexedAt: new Date().toISOString(), chunks: output.chunks, model: output.model, etaSeconds: 0,
+          files: { completed: corpus.files, total: corpus.files },
+          estimatedTokens: { completed: estimateTokens(corpus.bytes), total: estimateTokens(corpus.bytes) },
+          embedded: { completed: output.chunks, total: output.chunks } });
+      } else {
+        this.state = { ...(previous.phase === 'ready' ? previous : {}), ...this.state, phase: 'ready',
+          completedAt: new Date().toISOString(), chunks: output.chunks, model: output.model };
+      }
       return output;
     } catch (error) {
-      this.state = { ...this.state, phase: 'error', completedAt: new Date().toISOString(),
+      const next: SemanticStatus = { ...this.state, phase: 'error', completedAt: new Date().toISOString(),
         error: error instanceof Error ? error.message : String(error) };
+      if (tracked) this.update(next); else this.state = next;
       throw error;
     }
   }
@@ -194,13 +279,31 @@ export class SemanticIndex {
     const parent = this.knowledge.searchIndex.directory;
     await mkdir(parent, { recursive: true, mode: 0o700 });
     const knowledge = this.knowledge;
+    const tracked = operation !== 'search' && operation !== 'stats';
+    const selected = knowledge.list().filter(entry => within(entry.path, options.syncPaths))
+      .sort((a, b) => a.path.localeCompare(b.path));
+    if (tracked) {
+      const corpusBytes = options.syncPaths ? 0 : knowledge.corpusStatus.bytes;
+      this.state.stage = 'reading_documents';
+      this.state.files = { completed: 0, total: selected.length };
+      this.state.estimatedTokens = { completed: 0, total: estimateTokens(corpusBytes) };
+      this.persist();
+    }
+    const counted = (bytes: number) => {
+      if (!tracked || !this.state.files || !this.state.estimatedTokens) return;
+      this.state.files.completed++;
+      this.state.estimatedTokens.completed += estimateTokens(bytes);
+      this.state.estimatedTokens.total = Math.max(this.state.estimatedTokens.total, this.state.estimatedTokens.completed);
+      this.persist(false);
+    };
     async function* documents() {
       const fingerprint = createHash('sha256');
       let bytes = 0;
-      for (const entry of knowledge.list().sort((a, b) => a.path.localeCompare(b.path))) {
-        if (!within(entry.path, options.syncPaths)) continue;
+      for (const entry of selected) {
         const { content } = await knowledge.read(entry.id);
-        bytes += Buffer.byteLength(content);
+        const size = Buffer.byteLength(content);
+        bytes += size;
+        counted(size);
         if (bytes > knowledge.config.maxCorpusBytes) throw new Error('Semantic corpus exceeds maxCorpusBytes; narrow include/exclude in the host config.');
         fingerprint.update(JSON.stringify([entry.path, entry.kind, content]));
         yield { path: entry.path, kind: entry.kind, content };
@@ -212,6 +315,16 @@ export class SemanticIndex {
     }, parent, this.knowledge.root, (progress) => {
       this.state.progress = { completed: progress.completed, total: progress.total };
       if (progress.stage) this.state.stage = progress.stage;
+      if (!tracked || progress.stage !== 'document_embedding') return;
+      if (progress.completed === 0 || !this.embeddingStarted) this.embeddingStarted = Date.now();
+      this.state.embedded = { completed: progress.completed, total: progress.total };
+      const seconds = (Date.now() - this.embeddingStarted) / 1000;
+      if (progress.completed > 0 && seconds > 0) {
+        const rate = progress.completed / seconds;
+        this.state.chunksPerSecond = Math.round(rate * 10) / 10;
+        this.state.etaSeconds = Math.ceil((progress.total - progress.completed) / rate);
+      }
+      this.persist(progress.completed === progress.total);
     }, operation === 'search' ? 60_000 : 3_600_000, documents());
     if (!record(raw) || raw.engine !== 'embsearch-core' || typeof raw.model !== 'string'
       || typeof raw.version !== 'string' || typeof raw.chunks !== 'number'

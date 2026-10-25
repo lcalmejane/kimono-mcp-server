@@ -85,6 +85,87 @@ it('reports semantic indexing stage and progress during startup preparation', as
   }
 });
 
+it('publishes live file, token and chunk counters with ETA to a status file shared across processes', async () => {
+  const knowledge = await fixture();
+  const originalModel = process.env.KIMONO_MODEL_DIR;
+  const realRunProcess = processes.runProcess;
+  process.env.KIMONO_MODEL_DIR = 'unused-test-model';
+  const observed: unknown[] = [];
+  const run = vi.spyOn(processes, 'runProcess').mockImplementation(async (executable, args, cwd, exitCodes, timeout, onStderr, environment) => {
+    if (executable !== (process.env.KIMONO_SEMANTIC_BIN ?? 'kimono-semantic')) {
+      return realRunProcess(executable, args, cwd, exitCodes, timeout, onStderr, environment);
+    }
+    onStderr?.('KIMONO_PROGRESS {"phase":"document_embedding","completed":0,"total":4}\n');
+    await new Promise(resolve => setTimeout(resolve, 20));
+    onStderr?.('KIMONO_PROGRESS {"phase":"document_embedding","completed":2,"total":4}\n');
+    observed.push(knowledge.semanticIndex.status());
+    onStderr?.('KIMONO_PROGRESS {"phase":"document_embedding","completed":4,"total":4}\n');
+    observed.push(JSON.parse(await readFile(knowledge.semanticIndex.statusFile, 'utf8')));
+    return { stdout: JSON.stringify({ engine: 'embsearch-core', version: '0.3.4', model: 'test-model',
+      chunks: 4, embedded: 4, count: 0, results: [], changes: { added: [], modified: [], deleted: [] } }),
+      stderr: '', exitCode: 0 };
+  });
+  try {
+    knowledge.semanticIndex.warmup();
+    await knowledge.semanticIndex.idle();
+    const files = knowledge.corpusStatus.files;
+    expect(files).toBeGreaterThan(0);
+    expect(observed[0]).toMatchObject({ phase: 'running', stage: 'document_embedding',
+      files: { completed: files, total: files }, embedded: { completed: 2, total: 4 } });
+    expect((observed[0] as { etaSeconds: number }).etaSeconds).toBeGreaterThan(0);
+    expect((observed[0] as { estimatedTokens: { completed: number } }).estimatedTokens.completed).toBeGreaterThan(0);
+    expect(observed[1]).toMatchObject({ phase: 'running', pid: process.pid, embedded: { completed: 4, total: 4 } });
+    expect(knowledge.semanticIndex.status()).toMatchObject({ phase: 'ready', chunks: 4, etaSeconds: 0,
+      files: { completed: files, total: files }, embedded: { completed: 4, total: 4 } });
+    const shared = JSON.parse(await readFile(knowledge.semanticIndex.statusFile, 'utf8'));
+    expect(shared).toMatchObject({ phase: 'ready', chunks: 4, pid: process.pid });
+
+    // Another process on the same ROOT sees the live state of the writer.
+    const observer = new AikidoKnowledgeBase(knowledge.root, false, corpusConfig({ mode: 'aikido' }));
+    await writeFile(observer.semanticIndex.statusFile, JSON.stringify({ ...shared, phase: 'running', pid: process.ppid }));
+    expect(observer.semanticIndex.status()).toMatchObject({ phase: 'running', source: 'another-process' });
+    await writeFile(observer.semanticIndex.statusFile, JSON.stringify({ ...shared, phase: 'running', pid: 2 ** 31 - 2 }));
+    expect(observer.semanticIndex.status()).toMatchObject({ phase: 'unknown', stage: 'interrupted' });
+  } finally {
+    run.mockRestore();
+    if (originalModel === undefined) delete process.env.KIMONO_MODEL_DIR;
+    else process.env.KIMONO_MODEL_DIR = originalModel;
+  }
+});
+
+it('waits for another live indexer and reclaims a lock left by a dead process', async () => {
+  const knowledge = await fixture();
+  const originalModel = process.env.KIMONO_MODEL_DIR;
+  const realRunProcess = processes.runProcess;
+  process.env.KIMONO_MODEL_DIR = 'unused-test-model';
+  const run = vi.spyOn(processes, 'runProcess').mockImplementation(async (executable, args, cwd, exitCodes, timeout, onStderr, environment) => {
+    if (executable !== (process.env.KIMONO_SEMANTIC_BIN ?? 'kimono-semantic')) {
+      return realRunProcess(executable, args, cwd, exitCodes, timeout, onStderr, environment);
+    }
+    return { stdout: JSON.stringify({ engine: 'embsearch-core', version: '0.3.4', model: 'test-model',
+      chunks: 1, embedded: 1, count: 0, results: [], changes: { added: [], modified: [], deleted: [] } }),
+      stderr: '', exitCode: 0 };
+  });
+  const lock = path.join(knowledge.searchIndex.directory, 'semantic-basis.lock');
+  try {
+    await mkdir(knowledge.searchIndex.directory, { recursive: true });
+    await writeFile(lock, JSON.stringify({ pid: process.ppid, host: (await import('node:os')).hostname() }));
+    knowledge.semanticIndex.warmup();
+    await knowledge.semanticIndex.idle();
+    expect(knowledge.semanticIndex.status()).toMatchObject({ phase: 'waiting', stage: 'waiting_for_other_indexer' });
+
+    await writeFile(lock, JSON.stringify({ pid: 2 ** 31 - 2, host: (await import('node:os')).hostname() }));
+    knowledge.semanticIndex.warmup();
+    await knowledge.semanticIndex.idle();
+    expect(knowledge.semanticIndex.status()).toMatchObject({ phase: 'ready', chunks: 1 });
+    await expect(access(lock)).rejects.toThrow();
+  } finally {
+    run.mockRestore();
+    if (originalModel === undefined) delete process.env.KIMONO_MODEL_DIR;
+    else process.env.KIMONO_MODEL_DIR = originalModel;
+  }
+});
+
 describe.skipIf(!process.env.KIMONO_MODEL_DIR)('real multilingual ONNX semantic search', () => {
   it('searches supplied vectors through MCP with model checks, filters and fresh index contents', async () => {
     const knowledge = await fixture();

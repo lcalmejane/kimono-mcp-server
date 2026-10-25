@@ -4,6 +4,7 @@ const path = require("node:path");
 const fs = require("node:fs/promises");
 const { createHash } = require("node:crypto");
 const { nativeEnvironment } = require("./native.cjs");
+const { registerManagement } = require("./panel.cjs");
 
 const providerId = "kimono.mcp";
 const tokenKey = "kimono.remoteBearer";
@@ -27,9 +28,49 @@ function register(vscode, context, native = nativeEnvironment) {
   let definitions = new Map();
   let nativeAssets;
   const config = () => vscode.workspace.getConfiguration("kimono");
+  const nodeExecutable = () => path.join(context.extensionPath, "runtime", process.platform === "win32" ? "node.exe" : "node");
+  const serverEntry = () => path.join(context.extensionPath, "server", "index.mjs");
+  const storageFor = identity => path.join(context.globalStorageUri.fsPath, identity);
+  const embeddedFolders = () => (vscode.workspace.workspaceFolders || []).filter(folder => folder.uri.scheme === "file").map(folder => {
+    const configured = vscode.workspace.getConfiguration("kimono", folder.uri).get("root", "");
+    const root = path.resolve(folder.uri.fsPath, configured);
+    const identity = createHash("sha256").update(root).digest("hex").slice(0, 16);
+    return { mode: "embedded", name: folder.name, uri: folder.uri, root, identity,
+      statusFile: path.join(storageFor(identity), "semantic-status.json") };
+  });
+  // Full, null-free launch spec shared by MCP definitions and the management panel's own client.
+  async function embeddedLaunch(selected) {
+    // Validate assets once per activation, before any bundled code is launched.
+    nativeAssets ??= native(path.join(context.extensionPath, "native"));
+    const environment = await nativeAssets;
+    const root = await fs.realpath(selected.root);
+    if (!(await fs.stat(root)).isDirectory()) throw new Error("Kimono ROOT must be an existing directory.");
+    const storage = storageFor(selected.identity);
+    await fs.mkdir(storage, { recursive: true, mode: 0o700 });
+    const profile = config().get("gitProfileFile", "");
+    if (profile && !path.isAbsolute(profile)) throw new Error("Kimono Git profile path must be absolute.");
+    const configFile = config().get("configFile", "");
+    if (configFile && !path.isAbsolute(configFile)) throw new Error("Kimono config path must be absolute.");
+    const corpusMode = config().get("corpusMode", "rag");
+    if (!["aikido", "rag"].includes(corpusMode)) throw new Error("Kimono corpusMode must be aikido or rag.");
+    return {
+      command: nodeExecutable(), args: [serverEntry(), "serve", "--root", selected.root], cwd: root,
+      env: {
+        ...environment,
+        ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}),
+        HOME: storage, USERPROFILE: storage, TMPDIR: storage, TMP: storage, TEMP: storage,
+        MCP_TRANSPORT: "stdio", AIKIDO_ROOT: root,
+        KIMONO_CACHE_DIR: path.join(storage, "cache"),
+        KIMONO_STATUS_FILE: selected.statusFile,
+        KIMONO_CORPUS_MODE: corpusMode,
+        ...(configFile ? { KIMONO_CONFIG_FILE: configFile } : {}),
+        ...(profile ? { KIMONO_GIT_PROFILE_FILE: profile } : {}),
+      },
+    };
+  }
   const provider = {
     onDidChangeMcpServerDefinitions: changed.event,
-    provideMcpServerDefinitions() {
+    async provideMcpServerDefinitions(cancellation = { isCancellationRequested: false }) {
       definitions = new Map();
       if (!vscode.workspace.isTrusted || config().get("mode", "embedded") === "disabled") return [];
       if (config().get("mode", "embedded") === "remote") {
@@ -38,16 +79,15 @@ function register(vscode, context, native = nativeEnvironment) {
         definitions.set(server, { mode: "remote", url });
         return [server];
       }
-      return (vscode.workspace.workspaceFolders || []).filter(folder => folder.uri.scheme === "file").map(folder => {
-        const configured = vscode.workspace.getConfiguration("kimono", folder.uri).get("root", "");
-        const root = path.resolve(folder.uri.fsPath, configured);
-        const identity = createHash("sha256").update(root).digest("hex").slice(0, 16);
-        const server = new vscode.McpStdioServerDefinition(`Kimono: ${folder.name} [${identity.slice(0, 6)}]`,
-          path.join(context.extensionPath, "runtime", process.platform === "win32" ? "node.exe" : "node"),
-          [path.join(context.extensionPath, "server", "index.mjs"), "serve", "--root", root], {}, version);
-        definitions.set(server, { mode: "embedded", root, identity });
+      const servers = embeddedFolders().map(selected => {
+        const server = new vscode.McpStdioServerDefinition(`Kimono: ${selected.name} [${selected.identity.slice(0, 6)}]`,
+          nodeExecutable(), [serverEntry(), "serve", "--root", selected.root], {}, version);
+        definitions.set(server, selected);
         return server;
       });
+      // Some agent hosts launch discovered definitions without invoking the resolver.
+      return (await Promise.all(servers.map(server => provider.resolveMcpServerDefinition(server, cancellation))))
+        .filter(server => server !== undefined);
     },
     async resolveMcpServerDefinition(server, cancellation) {
       const selected = definitions.get(server);
@@ -62,38 +102,17 @@ function register(vscode, context, native = nativeEnvironment) {
         }
         server.headers = secret ? { Authorization: `Bearer ${secret.token}` } : {};
       } else {
-        // Validate assets once per activation, before any bundled code is launched.
-        nativeAssets ??= native(path.join(context.extensionPath, "native"));
-        const environment = await nativeAssets;
-        const root = await fs.realpath(selected.root);
-        if (!(await fs.stat(root)).isDirectory()) throw new Error("Kimono ROOT must be an existing directory.");
-        const storage = path.join(context.globalStorageUri.fsPath, selected.identity);
-        await fs.mkdir(storage, { recursive: true, mode: 0o700 });
-        const profile = config().get("gitProfileFile", "");
-        if (profile && !path.isAbsolute(profile)) throw new Error("Kimono Git profile path must be absolute.");
-        const configFile = config().get("configFile", "");
-        if (configFile && !path.isAbsolute(configFile)) throw new Error("Kimono config path must be absolute.");
-        const corpusMode = config().get("corpusMode", "rag");
-        if (!["aikido", "rag"].includes(corpusMode)) throw new Error("Kimono corpusMode must be aikido or rag.");
-        const env = {
-          ...environment,
-          ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}),
-          HOME: storage, USERPROFILE: storage, TMPDIR: storage, TMP: storage, TEMP: storage,
-          MCP_TRANSPORT: "stdio", AIKIDO_ROOT: root,
-          KIMONO_CACHE_DIR: path.join(storage, "cache"),
-          KIMONO_CORPUS_MODE: corpusMode,
-          ...(configFile ? { KIMONO_CONFIG_FILE: configFile } : {}),
-          ...(profile ? { KIMONO_GIT_PROFILE_FILE: profile } : {}),
-        };
+        const launch = await embeddedLaunch(selected);
         // VS Code merges env: explicitly remove inherited transport, profile and Node options.
-        const allowed = new Set(Object.keys(env).map(key => key.toUpperCase()));
+        const allowed = new Set(Object.keys(launch.env).map(key => key.toUpperCase()));
         server.env = {
           ...Object.fromEntries(Object.keys(process.env).filter(key => !allowed.has(key.toUpperCase())).map(key => [key, null])),
-          ...env,
+          ...launch.env,
         };
-        server.cwd = vscode.Uri.file(root);
+        server.cwd = vscode.Uri.file(launch.cwd);
       }
-      return cancellation.isCancellationRequested || !vscode.workspace.isTrusted ? undefined : server;
+      return cancellation.isCancellationRequested || !vscode.workspace.isTrusted ||
+        definitions.get(server) !== selected ? undefined : server;
     },
   };
   const refresh = () => { definitions = new Map(); changed.fire(); };
@@ -123,6 +142,9 @@ function register(vscode, context, native = nativeEnvironment) {
       await context.secrets.store(tokenKey, JSON.stringify({ url, token }));
     })),
     vscode.commands.registerCommand("kimono.clearToken", guarded(() => context.secrets.delete(tokenKey))),
+    ...(vscode.window?.createTreeView
+      ? registerManagement(vscode, context, { config, embeddedFolders, embeddedLaunch, remoteUrl, tokenKey, version })
+      : []),
   ];
 }
 

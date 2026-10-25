@@ -29,7 +29,7 @@ required for default RAG. The wider method and ecosystem are optional next steps
 | Current manifest publisher | `ai-kido` — selected by the owner; verify availability and Marketplace account access before submission |
 | Intended full ID | `ai-kido.kimono-mcp` |
 | Short description | Local code and docs RAG for MCP assistants. Give your team and agents a common knowledge layer, with targeted reads and local embeddings. |
-| Proposed categories | `AI`, `Other`; validate against the current Marketplace schema before publication |
+| Categories (manifest 0.6.2) | `AI`, `Machine Learning`, `Other`; validate against the current Marketplace schema before publication |
 | Proposed keywords | `MCP`, `RAG`, `local search`, `semantic search`, `Copilot`, `AI-KIDO` |
 | License | MIT; retain bundled component and model notices |
 | Discovery website | <https://ai-kido.fr> |
@@ -38,7 +38,7 @@ required for default RAG. The wider method and ecosystem are optional next steps
 | Local RAG guide | <https://github.com/lcalmejane/kimono-mcp-server/blob/main/docs/local-rag.md> |
 | Existing distributions | <https://github.com/lcalmejane/kimono-mcp-server/releases> |
 
-Publisher/name above match the 0.6.1 manifest; display name, description and
+Publisher/name/icon above match the 0.6.2 manifest; display name, description and
 categories remain editorial proposals. GitHub distributions are separate from
 Marketplace publication: do not claim that a Marketplace listing exists.
 
@@ -135,6 +135,10 @@ does not modify Copilot's inline completion engine or contain its own LLM.
 4. Enable its tools in an MCP-capable chat client, such as GitHub Copilot.
 5. Ask for a focused project search before reading the useful passages.
 
+The **Kimono** view in the Activity Bar shows live indexing — files, estimated
+tokens and chunks indexed out of the total, with an ETA — and opens a
+management panel to adjust settings and test searches across modes.
+
 Generic RAG is the default. For an existing AI-KIDO Memory Bank, explicitly set:
 
 ```json
@@ -229,8 +233,8 @@ separate embedded installs do not automatically share a corpus.
   not proof of reservation, ownership or verified identity.
 - [ ] Approve the display name; keep a stable technical ID for updates.
 - [ ] Declare support contact, repository and issue links.
-- [ ] Prepare an original readable PNG icon and declare it in the manifest.
-- [ ] Capture real MCP activation, focused search and selected-read screenshots.
+- [x] Original 256×256 PNG icon in the Tatami/AI-KIDO style (`media/icon.png`, source `media/icon.svg`) declared in the manifest.
+- [ ] Capture real MCP activation, live indexing view, search test and selected-read screenshots.
   Add an AI-KIDO workflow preview; redact private data and secrets.
 - [ ] Use authorized media/public HTTPS links; check current Marketplace rules
   for SVG and README resources.
