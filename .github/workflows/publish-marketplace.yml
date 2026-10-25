@@ -112,17 +112,6 @@ jobs:
           name: marketplace-vsix
           path: ${{ runner.temp }}/marketplace-assets
 
-      - name: Verify publisher access
-        env:
-          VSCE_PAT: ${{ secrets.VSCE_PAT }}
-        run: |
-          set -euo pipefail
-          publishers="$(npx --no-install vsce ls-publishers)"
-          if ! grep -Fxq "ai-kido" <<<"$publishers"; then
-            echo "VSCE_PAT does not authorize the ai-kido publisher. No publication was attempted." >&2
-            exit 1
-          fi
-
       - name: Publish platform VSIX
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}

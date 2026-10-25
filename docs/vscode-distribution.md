@@ -58,7 +58,9 @@ published non-prerelease GitHub release, downloads and verifies its
 `SHA256SUMS.txt`, and confirms all four VSIX targets before invoking `vsce`.
 Each platform is a separate sequential matrix job because `vsce` publishes one
 prebuilt platform VSIX per invocation; if a target fails, rerun only that failed
-job after resolving the cause.
+job after resolving the cause. VSCE validates `VSCE_PAT` and publisher rights
+when executing the publish command; `vsce ls-publishers` is intentionally not
+used because it lists locally stored logins, not GitHub Actions credentials.
 The required confirmation checkbox is the final human approval; once the
 workflow starts publishing, there is no later Marketplace confirmation step.
 Do not dispatch until the listing is approved.
