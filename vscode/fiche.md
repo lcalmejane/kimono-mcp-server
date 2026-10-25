@@ -264,6 +264,14 @@ separate embedded installs do not automatically share a corpus.
   never in documentation, versioned commands or logs.
 - [ ] Publish native VSIX files as platform variants of one extension/version,
   not as an allegedly universal VSIX.
+- [x] Prepare a separate manual
+  [Marketplace workflow](../.github/workflows/publish-marketplace.yml) that
+  downloads the selected published release, verifies all four VSIX checksums,
+  and publishes all platform targets with `vsce`.
+- [ ] The owner must create/verify publisher `ai-kido`, configure repository
+  secret `VSCE_PAT`, and review the listing before manually dispatching the
+  workflow. Dispatch immediately performs publication; there is no second
+  confirmation screen.
 - [ ] For an already built and validated VSIX, the submission command has
   this form:
 

@@ -34,14 +34,40 @@ Manual runs **do not publish releases**. For a release:
    and `SHA256SUMS.txt`, then publishes it. Published immutable releases are not
    overwritten; fix failures before publishing, or use a new version/tag.
 
-No Marketplace account, PAT or manual upload is required. The release job alone
-has `contents: write` via `GITHUB_TOKEN`; other jobs have read-only permissions.
-This workflow does not publish to Marketplace/Open VSX. The owner selected
-`ai-kido` as the future Marketplace publisher; 0.6.1 VSIX files already
-use the ID `ai-kido.kimono-mcp`. Follow the
-[Marketplace publication brief](../vscode/fiche.md) to submit the verified
-GitHub release VSIX files later, without rebuilding under another identity.
+The GitHub release job needs no Marketplace account or PAT and has
+`contents: write` via `GITHUB_TOKEN`; the other CI jobs have read-only
+permissions. The tag-triggered CI publishes GitHub Releases only, never to
+Marketplace or Open VSX.
+
+Marketplace publication is a separate, explicitly manual operation using the
+[Publish VS Code Marketplace workflow](../.github/workflows/publish-marketplace.yml).
+It can only be dispatched from `main`, is never triggered by a tag, and
+publishes the four platform VSIX files from an existing GitHub release. Before
+dispatching it:
+
+1. Create or verify the Marketplace publisher ID `ai-kido`.
+2. Add a publisher-authorized VSCE Personal Access Token as repository secret
+   `VSCE_PAT`. Never put the token in the repository, workflow inputs or chat.
+3. Review the publisher profile and Marketplace listing/package content.
+4. In **Actions → Publish VS Code Marketplace → Run workflow**, select the
+   intended immutable release tag (default `v0.6.2`) and explicitly check the
+   confirmation that the publisher/listing has been reviewed.
+
+The workflow checks the tag against both package versions, requires an existing
+published non-prerelease GitHub release, downloads and verifies its
+`SHA256SUMS.txt`, and confirms all four VSIX targets before invoking `vsce`.
+Each platform is a separate sequential matrix job because `vsce` publishes one
+prebuilt platform VSIX per invocation; if a target fails, rerun only that failed
+job after resolving the cause.
+The required confirmation checkbox is the final human approval; once the
+workflow starts publishing, there is no later Marketplace confirmation step.
+Do not dispatch until the listing is approved.
+The `v0.6.2` release contains targets `darwin-arm64`, `linux-arm64`,
+`linux-x64` and `win32-x64` under the extension ID `ai-kido.kimono-mcp`.
 Marketplace credentials and listing approval remain separate prerequisites.
+
+See the [Marketplace publication brief](../vscode/fiche.md) for proposed public
+metadata, copy and the remaining owner review checklist.
 
 Each `.build.json` records the source commit, whether the checkout has uncommitted
 changes (`sourceDirty`), version, host target, actual Node
