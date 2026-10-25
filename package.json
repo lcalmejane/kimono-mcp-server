@@ -1,6 +1,6 @@
 {
   "name": "kimono-mcp-server",
-  "version": "0.6.5",
+  "version": "0.6.6",
   "description": "Local RAG for source code and documentation with lexical and semantic retrieval over MCP",
   "license": "MIT",
   "repository": {
@@ -35,12 +35,15 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.1",
+    "fast-xml-parser": "^5.3.0",
+    "yauzl": "^3.2.0",
     "ignore": "^7.0.5"
   },
   "devDependencies": {
     "@vscode/vsce": "^3.6.0",
     "esbuild": "^0.28.2",
     "@types/node": "^24.0.0",
+    "@types/yauzl": "^2.10.3",
     "tsx": "^4.19.0",
     "typescript": "^5.7.0",
     "vitest": "^5.0.5"

@@ -210,6 +210,34 @@ Search uses lexical and semantic retrieval. Results identify files and lines
 before any source content is read. `.gitignore` rules apply; common dependency,
 build and cache folders are excluded. Kimono does not modify project files.
 
+### Office documents, PDF and file metadata
+
+RAG also extracts text from **Excel `.xlsx`**, **Word `.docx`**, **PowerPoint `.pptx`** and **PDF**
+documents. Excel results retain worksheet names and cell addresses, for example
+`Costs!A5=Budget | B5=42`. Word results follow paragraph order, including table
+cells. PowerPoint text follows presentation slide order, including table cells,
+with slide numbers (`Slide 1: …`). Speaker notes and text inside images are not extracted.
+Search line numbers refer to the extracted text, not the document's page
+layout. Formulas use their saved result when available; Kimono does not run
+formulas or macros.
+
+PDF extraction uses `pdftotext` from Poppler. Docker includes it; for native or
+embedded extension use, install Poppler separately (`brew install poppler` on
+macOS, `sudo apt-get install poppler-utils` on Debian/Ubuntu) and make
+`pdftotext` available on the server's PATH. Scanned PDFs are not OCR-processed.
+
+**Files remain discoverable even when their contents cannot be read.** For
+unsupported formats, binary, oversized, unreadable or failed-extraction files,
+Kimono indexes the filename, ROOT-relative path, extension, size and last
+modification date when available. Results explicitly identify
+`contentStatus: "metadata-only"` and explain the missing content. This also
+applies when PDF extraction is unavailable. Original files are never replaced
+with extracted text or metadata.
+
+`.gitignore`, include/exclude rules and built-in safety exclusions still apply
+to file metadata. Use path exclusions to remove a file entirely; an extension
+allowlist controls content extraction, not the RAG file catalog.
+
 ## Configure the corpus
 
 In VS Code, use **Kimono: Open Management Panel** or set:

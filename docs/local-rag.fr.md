@@ -9,7 +9,7 @@ d'un client MCP.
 
 | Mode | À choisir pour | Corpus |
 | --- | --- | --- |
-| `rag` (défaut) | Rechercher dans le code et la documentation d'un projet courant | Fichiers source et documentation UTF-8 éligibles ; aucune structure AI-KIDO requise |
+| `rag` (défaut) | Rechercher dans le code et la documentation d'un projet courant | Code, documentation, texte Office/PDF et métadonnées des fichiers ; aucune structure AI-KIDO requise |
 | `aikido` | Exploiter une base de connaissances AI-KIDO existante | Nécessite `prompts/index.md` ou `index.md` dans le ROOT configuré |
 
 RAG effectue une recherche locale en lecture seule. Kimono découvre les fichiers
@@ -36,7 +36,7 @@ mode.
 
 ## Fichiers indexés
 
-Kimono indexe les fichiers texte correspondant à la liste d'extensions du mode.
+Kimono indexe les contenus texte correspondant à la liste d'extensions du mode.
 RAG prend en charge des formats courants de code, documentation, build et
 configuration, notamment TypeScript/JavaScript, Python, Java, Go, Rust, PHP,
 C/C++, C#, Swift, SQL, HTML/CSS et shell. La liste AI-KIDO est plus limitée et
@@ -44,10 +44,55 @@ orientée documentation. Les valeurs exactes se trouvent dans
 [`src/corpus-config.ts`](../src/corpus-config.ts).
 
 Les deux modes respectent les `.gitignore` racine et imbriqués. Dépendances,
-sorties de build, caches, répertoires de secrets, liens symboliques et fichiers
-binaires sont exclus. Les exclusions intégrées ne peuvent pas être annulées par
+sorties de build, caches, répertoires de secrets et liens symboliques sont
+exclus. Les exclusions intégrées ne peuvent pas être annulées par
 un motif d'inclusion. Kimono ne recherche pas les secrets dans les contenus :
 vérifier les fichiers du corpus avant l'indexation.
+
+### Documents Office et PDF
+
+| Format | Représentation recherchable |
+| --- | --- |
+| `.xlsx` | Une ligne de feuille remplie par ligne de texte, avec le nom de feuille et les adresses A1, par exemple `Coûts!A5=Budget \| B5=42`. Extraction des chaînes partagées, chaînes inline et valeurs enregistrées ; les formules sans résultat restent du texte de formule. |
+| `.docx` | Paragraphes dans l'ordre du document, y compris le texte des cellules des tableaux. |
+| `.pptx` | Paragraphes et cellules des tableaux dans l'ordre des diapositives, préfixés par `Slide N:`. Les notes du présentateur et le texte dans les images ne sont pas extraits. |
+| `.pdf` | Texte extrait dans l'ordre de lecture par `pdftotext` de Poppler. |
+
+Ces formats sont activés par défaut en RAG. En mode AI-KIDO, leur extraction
+est activée explicitement dans la configuration `extensions` de l'hôte.
+L'extraction Office s'exécute localement dans Node.js, sans exécuter de formule
+ni de macro. Le PDF nécessite `pdftotext` dans le PATH du serveur. Docker inclut
+Poppler ; pour un serveur natif ou un hôte d'extension, utiliser
+`brew install poppler` sur macOS ou `sudo apt-get install poppler-utils` sur
+Debian/Ubuntu. Les PDF numérisés nécessitent un OCR hors Kimono pour rechercher
+leur contenu.
+
+Les archives et le texte extrait sont bornés. `maxFileBytes` limite le document
+source et son texte extrait ; les archives Office sont aussi limitées à 32 Mio
+décompressés et 4 096 entrées. Les numéros de lignes désignent la représentation
+extraite. Les snapshots figent ce texte sans modifier les originaux. Les
+originaux Office/PDF sont exclus de la publication textuelle et de la
+synchronisation distante AI-KIDO.
+
+### Métadonnées lorsque le contenu est indisponible
+
+En RAG, un fichier reste trouvable si son extension n'est pas prise en charge
+ou si son contenu est binaire, trop volumineux, illisible ou impossible à
+extraire. Kimono indexe le nom, le chemin relatif au ROOT, l'extension, la taille
+et la date de dernière modification disponibles. Les résultats portent
+`contentStatus: "metadata-only"` ; les lectures renvoient explicitement les
+métadonnées et la raison, pas un faux contenu documentaire. Ces métadonnées sont
+conservées dans les snapshots et indexées en recherche lexicale et sémantique.
+Les valeurs système indisponibles sont signalées comme telles.
+
+Les échecs de lecture du contenu sont tracés sur stderr et dans l'état du corpus
+(`metadataOnly`, `skipped`, `skippedFiles`). Les chemins exclus, fichiers ignorés,
+secrets et liens symboliques ne sont pas catalogués. `extensions` sélectionne
+les contenus à lire ; `include`/`exclude` contrôle les chemins qui peuvent
+apparaître. AI-KIDO conserve sa liste de fichiers plus restreinte.
+Si un passage ne peut pas être vectorisé, `skippedChunks` le signale et la base
+de l'index sémantique est marquée partielle ; la recherche lexicale et les
+métadonnées restent disponibles.
 
 L'indexation et la création des embeddings s'exécutent localement avec le moteur
 lexical intégré et le modèle d'embeddings multilingue. Aucune API d'embeddings

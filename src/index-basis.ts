@@ -32,13 +32,14 @@ export function corpusFingerprint(documents: Array<{ path: string; kind: string;
 export async function sourceSnapshot(knowledge: AikidoKnowledgeBase, paths?: string[]): Promise<Snapshot> {
   // An independent scan detects additions/deletions as well as edits during indexing.
   const scan = new AikidoKnowledgeBase(knowledge.root, knowledge.immutable, knowledge.config,
-    knowledge.immutable ? knowledge.isMemoryRoot : undefined);
+    knowledge.immutable ? knowledge.isMemoryRoot : undefined, knowledge.materializedText, knowledge.snapshotMetadata);
   await scan.initialize();
   const fingerprint = createHash('sha256');
   for (const entry of scan.list().sort((a, b) => a.path.localeCompare(b.path))) {
     if (!within(entry.path, paths)) continue;
-    const { content } = await scan.read(entry.path);
-    fingerprint.update(JSON.stringify([entry.path, entry.kind, content]));
+    const document = await scan.tryRead(entry.path);
+    if (!document) continue;
+    fingerprint.update(JSON.stringify([entry.path, entry.kind, document.content]));
   }
   const state = await new RepositoryAccess(knowledge.root).infos().catch(() => null);
   return { head: state?.head ?? null, branch: state?.branch ?? null, dirty: state?.dirty ?? null,
@@ -101,7 +102,7 @@ async function acquire(lockPath: string, engine: Engine) {
   throw new IndexLockedError(engine);
 }
 
-export async function trackIndex<T>(knowledge: AikidoKnowledgeBase, engine: Engine, paths: string[] | undefined, action: (observed: (fingerprint: string) => void) => Promise<T>): Promise<T> {
+export async function trackIndex<T>(knowledge: AikidoKnowledgeBase, engine: Engine, paths: string[] | undefined, action: (observed: (fingerprint: string, partial?: boolean) => void) => Promise<T>): Promise<T> {
   const lockPath = path.join(knowledge.searchIndex.directory, `${engine}-basis.lock`);
   await mkdir(knowledge.searchIndex.directory, { recursive: true, mode: 0o700 });
   const lock = await acquire(lockPath, engine);
@@ -112,11 +113,12 @@ export async function trackIndex<T>(knowledge: AikidoKnowledgeBase, engine: Engi
     try {
       const before = paths ? null : await sourceSnapshot(knowledge);
       let indexedFingerprint: string | undefined;
-      const result = await action(value => { indexedFingerprint = value; });
+      let partial = false;
+      const result = await action((value, incomplete = false) => { indexedFingerprint = value; partial = incomplete; });
       const after = paths ? null : await sourceSnapshot(knowledge);
       const latest = await load(knowledge, engine);
       const stable = before && JSON.stringify(before) === JSON.stringify(after) && indexedFingerprint === after?.corpusFingerprint;
-      state.phase = latest?.attempt !== state.attempt ? 'concurrent-change' : paths ? 'partial' : stable ? 'ready' : 'concurrent-change';
+      state.phase = latest?.attempt !== state.attempt ? 'concurrent-change' : paths || partial ? 'partial' : stable ? 'ready' : 'concurrent-change';
       if (state.phase === 'ready' && after) state.lastSuccessful = { ...after, indexedAt: new Date().toISOString() };
       await save(knowledge, engine, state);
       return result;

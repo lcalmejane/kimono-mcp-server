@@ -43,6 +43,10 @@ export async function synchronizeKnowledgeRoot(
   expectedManifest: Record<string, string>,
 ): Promise<RootPublication> {
   await knowledge.refresh();
+  const metadataOnly = new Set(knowledge.list().filter(entry => entry.metadata).map(entry => entry.path));
+  for (const file of desired.keys()) {
+    if (metadataOnly.has(file)) throw new Error(`Cannot replace metadata-only file during text publication: ${file}`);
+  }
   const previousFiles = await readManagedFiles(knowledge);
   const currentManifest: Record<string, string> = {};
   for (const [file, content] of previousFiles) currentManifest[file] = hash(content);
@@ -259,7 +263,7 @@ async function copyLocalUnpublishedKnowledge(
   priorRemote: Record<string, string>,
 ): Promise<void> {
   const remotePaths = new Set(remote.list().map(entry => entry.path));
-  for (const entry of current.list()) {
+  for (const entry of current.list().filter(entry => isKnowledgeFile(entry.path) && !entry.metadata)) {
     const { content } = await current.read(entry.path);
     const previousHash = priorRemote[entry.path];
     const currentHash = hash(content);
@@ -287,7 +291,7 @@ async function copyLocalUnpublishedKnowledge(
 async function readManagedFiles(knowledge: AikidoKnowledgeBase): Promise<Map<string, string>> {
   const files = new Map<string, string>();
   let total = 0;
-  for (const entry of knowledge.list()) {
+  for (const entry of knowledge.list().filter(entry => isKnowledgeFile(entry.path) && !entry.metadata)) {
     const { content } = await knowledge.read(entry.path);
     total += Buffer.byteLength(content);
     if (total > MAX_CORPUS_BYTES) throw new Error(`Knowledge corpus exceeds ${MAX_CORPUS_BYTES} bytes`);
@@ -393,7 +397,7 @@ async function copyDirectory(source: string, destination: string): Promise<void>
 
 async function hashKnowledge(knowledge: AikidoKnowledgeBase): Promise<Record<string, string>> {
   const result: Record<string, string> = {};
-  for (const entry of knowledge.list()) {
+  for (const entry of knowledge.list().filter(entry => isKnowledgeFile(entry.path) && !entry.metadata)) {
     const { content } = await knowledge.read(entry.path);
     result[entry.path] = hash(content);
   }
@@ -414,7 +418,7 @@ export async function remoteSyncChanges(knowledge: AikidoKnowledgeBase): Promise
   const synced = await readRemoteFileManifest(cacheRoot);
   await knowledge.refresh();
   const current: Record<string, string> = {};
-  for (const entry of knowledge.list()) {
+  for (const entry of knowledge.list().filter(entry => isKnowledgeFile(entry.path) && !entry.metadata)) {
     const { content } = await knowledge.read(entry.path);
     current[entry.path] = hash(content);
   }

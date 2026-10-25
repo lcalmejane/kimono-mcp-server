@@ -14,6 +14,7 @@ export interface SemanticResult {
   model: string;
   chunks: number;
   embedded: number;
+  skippedChunks?: number;
   count: number;
   results: Array<SearchMatch & { score: number }>;
   changes: ChangeReport;
@@ -47,6 +48,7 @@ export interface SemanticStatus {
   operation?: string; stage?: string; startedAt?: string; completedAt?: string; indexedAt?: string;
   progress?: Count; error?: string;
   chunks?: number; model?: string;
+  skippedChunks?: number;
   /** Live counters: corpus files read, estimated tokens (UTF-8 bytes / 4) and embedded chunks (nodes). */
   files?: Count; estimatedTokens?: Count; embedded?: Count;
   chunksPerSecond?: number; etaSeconds?: number; updatedAt?: string;
@@ -251,7 +253,8 @@ export class SemanticIndex {
       if (tracked) {
         const corpus = this.knowledge.corpusStatus;
         this.update({ ...this.state, phase: 'ready', completedAt: new Date().toISOString(),
-          indexedAt: new Date().toISOString(), chunks: output.chunks, model: output.model, etaSeconds: 0,
+          indexedAt: new Date().toISOString(), chunks: output.chunks, model: output.model,
+          skippedChunks: output.skippedChunks ?? 0, etaSeconds: 0,
           files: { completed: corpus.files, total: corpus.files },
           estimatedTokens: { completed: estimateTokens(corpus.bytes), total: estimateTokens(corpus.bytes) },
           embedded: { completed: output.chunks, total: output.chunks } });
@@ -271,7 +274,7 @@ export class SemanticIndex {
   private async execute(
     operation: string,
     options: SemanticOptions,
-    observed?: (fingerprint: string) => void,
+    observed?: (fingerprint: string, partial?: boolean) => void,
   ): Promise<SemanticResult> {
     const model = process.env.KIMONO_MODEL_DIR;
     if (!model) throw new Error('Semantic search requires KIMONO_MODEL_DIR with model.onnx, tokenizer.json and model.json. Use the Kimono Docker image or install a local model.');
@@ -296,11 +299,15 @@ export class SemanticIndex {
       this.state.estimatedTokens.total = Math.max(this.state.estimatedTokens.total, this.state.estimatedTokens.completed);
       this.persist(false);
     };
+    let indexedFingerprint: string | undefined;
     async function* documents() {
       const fingerprint = createHash('sha256');
       let bytes = 0;
       for (const entry of selected) {
-        const { content } = await knowledge.read(entry.id);
+        // An unreadable document is traced and skipped; it must not abort the whole run.
+        const document = await knowledge.tryRead(entry.id);
+        if (!document) { counted(0); continue; }
+        const { content } = document;
         const size = Buffer.byteLength(content);
         bytes += size;
         counted(size);
@@ -308,7 +315,7 @@ export class SemanticIndex {
         fingerprint.update(JSON.stringify([entry.path, entry.kind, content]));
         yield { path: entry.path, kind: entry.kind, content };
       }
-      observed?.(fingerprint.digest('hex'));
+      indexedFingerprint = fingerprint.digest('hex');
     }
     const raw = await invokeSemantic({
       operation, model, cache: path.join(parent, 'semantic'), ...options,
@@ -331,6 +338,12 @@ export class SemanticIndex {
       || !Number.isSafeInteger(raw.chunks) || raw.chunks < 0 || typeof raw.embedded !== 'number'
       || !Number.isSafeInteger(raw.embedded) || raw.embedded < 0 || raw.embedded > raw.chunks
       || !Array.isArray(raw.results) || raw.count !== raw.results.length) throw new Error('Invalid semantic engine response');
+    const skippedChunks = raw.skippedChunks ?? 0;
+    if (typeof skippedChunks !== 'number' || !Number.isSafeInteger(skippedChunks) || skippedChunks < 0) {
+      throw new Error('Invalid semantic skipped chunk count');
+    }
+    if (skippedChunks > 0) console.error(`Kimono: ${skippedChunks} semantic passages could not be embedded; lexical and metadata retrieval remain available`);
+    if (indexedFingerprint) observed?.(indexedFingerprint, skippedChunks > 0);
     const results: SemanticResult['results'] = raw.results.map((hit: unknown) => {
       if (!record(hit) || typeof hit.path !== 'string' || !Number.isInteger(hit.line)
         || typeof hit.line !== 'number' || hit.line < 1 || typeof hit.score !== 'number'
@@ -344,6 +357,7 @@ export class SemanticIndex {
     return {
       engine: 'embsearch-core', model: raw.model, version: raw.version,
       chunks: raw.chunks, embedded: raw.embedded, count: results.length, results,
+      ...(raw.skippedChunks !== undefined ? { skippedChunks } : {}),
       changes,
     };
   }

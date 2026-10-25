@@ -25,6 +25,12 @@ La comparaison oppose la recherche Copilot standard au RAG local Kimono. Voir le
   votre machine.
 - **Recherche lexicale et sémantique :** trouvez des termes précis ou des
   notions similaires.
+- **Documents Office :** recherchez les cellules Excel (`.xlsx`) et les
+  paragraphes Word (`.docx`), ainsi que le texte et les tableaux PowerPoint
+  (`.pptx`) avec les numéros des diapositives.
+- **Catalogue de fichiers :** si le contenu est illisible, recherchez le nom,
+  le chemin relatif au projet, l'extension, la taille et la date de modification
+  lorsqu'elles sont disponibles.
 - **Contexte ciblé :** obtenez les chemins et plages de lignes avant de
   demander le texte source.
 - **Projet en lecture seule :** Kimono ne modifie pas les fichiers du projet.
@@ -34,6 +40,10 @@ La comparaison oppose la recherche Copilot standard au RAG local Kimono. Voir le
   de recherche et le modèle d'embedding. Aucun runtime séparé n'est à installer.
 - **Progression et paramètres :** le panneau Kimono suit l'indexation et
   configure le corpus.
+
+Le texte des PDF est recherchable si `pdftotext` (Poppler) est installé sur
+l'hôte d'extension. Sinon, les PDF restent recherchables par leurs métadonnées
+du système de fichiers.
 
 ## Installer depuis le Marketplace
 

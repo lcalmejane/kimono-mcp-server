@@ -2,7 +2,7 @@
   "name": "kimono-rag-mcp",
   "displayName": "Kimono RAG MCP",
   "description": "Local RAG for code and documentation with lexical and semantic search over MCP.",
-  "version": "0.6.5",
+  "version": "0.6.6",
   "publisher": "ai-kido",
   "license": "MIT",
   "repository": {

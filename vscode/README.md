@@ -25,6 +25,10 @@ The comparison is standard Copilot search versus local Kimono RAG. See the
 - **Local RAG:** index and search your source code and documentation on your
   machine.
 - **Lexical and semantic search:** find exact terms or related concepts.
+- **Office documents:** search Excel (`.xlsx`) cells, Word (`.docx`) paragraphs
+  and PowerPoint (`.pptx`) slide text and tables, with slide numbers.
+- **File catalogue:** when content cannot be read, search the filename, project-relative
+  path, extension, size and modification date where available.
 - **Targeted context:** receive file paths and line ranges before requesting
   source text.
 - **Read-only project access:** Kimono does not change your source files.
@@ -34,6 +38,9 @@ The comparison is standard Copilot search versus local Kimono RAG. See the
   engines and embedding model. No separate runtime installation is required.
 - **Progress and settings:** use the Kimono panel to monitor indexing and
   configure the project corpus.
+
+PDF text is searchable when `pdftotext` (Poppler) is installed on the extension
+host. Without it, PDF files remain searchable through their filesystem metadata.
 
 ## Install from the Marketplace
 

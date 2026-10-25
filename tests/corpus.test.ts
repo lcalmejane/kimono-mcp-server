@@ -72,7 +72,8 @@ it('indexes common source languages and extensionless files, with custom replace
   await write('src/extra.custom', 'custom source');
   const configured = new AikidoKnowledgeBase(root, false, corpusConfig({ mode: 'rag', extensions: ['.custom'], filenames: ['Dockerfile'] }));
   await configured.initialize();
-  expect(configured.list().map(entry => entry.path)).toEqual(['Dockerfile', 'src/extra.custom']);
+  expect(configured.list().filter(entry => !entry.metadata).map(entry => entry.path)).toEqual(['Dockerfile', 'src/extra.custom']);
+  expect(configured.list().find(entry => entry.path === 'docs/readme.md')?.metadata?.contentStatus).toBe('metadata-only');
   expect(configured.searchIndex.directory).not.toBe(knowledge.searchIndex.directory);
 });
 
@@ -87,11 +88,44 @@ it('preserves gitignore and non-overridable secret/dependency exclusions, skips 
   await writeFile(path.join(parent, 'outside.ts'), 'outside');
   await symlink(path.join(parent, 'outside.ts'), path.join(root, 'src/link.ts'));
   await knowledge.initialize();
-  expect(knowledge.list().map(entry => entry.path)).toEqual(['src/valid.rs']);
+  expect(knowledge.list().filter(entry => !entry.metadata).map(entry => entry.path)).toEqual(['src/valid.rs']);
+  expect(knowledge.list().find(entry => entry.path === 'src/binary.ts')?.metadata?.contentStatus).toBe('metadata-only');
+  expect(knowledge.list().some(entry => /ignored|generated|secret|node_modules|link/.test(entry.path))).toBe(false);
   expect(knowledge.corpusStatus.binary).toBe(1);
   await write('src/invalid.ts', Buffer.from([0xff, 0xfe]));
   await knowledge.refresh();
-  await expect(knowledge.read('src/invalid.ts')).rejects.toThrow('UTF-8');
+  await expect(knowledge.read('src/invalid.ts')).resolves.toMatchObject({ content: expect.any(String) });
+});
+
+it('indexes non-UTF-8 documents (Windows-1252, UTF-16) instead of failing', async () => {
+  const { knowledge, write } = await fixture();
+  await write('src/latin1.ts', Buffer.from('// caf\xe9 \xe0 la cr\xe8me', 'latin1'));
+  await write('src/utf16.ts', Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from('// bonjour', 'utf16le')]));
+  await write('src/broken.ts', Buffer.from([0x66, 0xc3, 0x28, 0xa0, 0xa1]));
+  await write('src/utf8.ts', '// café');
+  await knowledge.initialize();
+  expect(knowledge.list().map(entry => entry.path)).toEqual(['src/broken.ts', 'src/latin1.ts', 'src/utf16.ts', 'src/utf8.ts']);
+  expect((await knowledge.read('src/latin1.ts')).content).toBe('// café à la crème');
+  expect((await knowledge.read('src/utf16.ts')).content).toBe('// bonjour');
+  await expect(knowledge.read('src/broken.ts')).resolves.toBeDefined();
+});
+
+it('retains unreadable document metadata with a trace instead of aborting indexing', async () => {
+  const { knowledge, write } = await fixture();
+  await write('src/ok.ts', 'ok');
+  await write('src/gone.ts', 'soon removed');
+  await knowledge.initialize();
+  await rm(path.join(knowledge.root, 'src/gone.ts'));
+  const trace = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+  try {
+    await expect(knowledge.tryRead('src/gone.ts')).resolves.toMatchObject({
+      entry: { metadata: { contentStatus: 'metadata-only' } },
+      content: expect.stringContaining('Path: "src/gone.ts"'),
+    });
+    await expect(knowledge.tryRead('src/ok.ts')).resolves.toMatchObject({ content: 'ok' });
+    expect(trace).toHaveBeenCalledWith(expect.stringContaining('src/gone.ts'));
+    expect(knowledge.corpusStatus.skipped).toBe(1);
+  } finally { trace.mockRestore(); }
 });
 
 it.each(['rag', 'aikido'] as const)('applies inherited and nested gitignore to %s discovery, targeted refresh and snapshots', async mode => {
@@ -120,11 +154,12 @@ it.each(['rag', 'aikido'] as const)('applies inherited and nested gitignore to %
 });
 
 it('reports oversized files and rejects aggregate/file-count limits instead of returning a partial corpus', async () => {
-  const { root, knowledge, write } = await fixture({ maxFileBytes: 5, maxFiles: 1, maxCorpusBytes: 5 });
+  const { root, knowledge, write } = await fixture({ maxFileBytes: 5, maxFiles: 2, maxCorpusBytes: 1024 });
   await write('a.ts', 'a');
   await write('big.rs', '012345');
   await knowledge.initialize();
-  expect(knowledge.corpusStatus).toMatchObject({ files: 1, bytes: 1, oversized: 1 });
+  expect(knowledge.corpusStatus).toMatchObject({ files: 2, oversized: 1, metadataOnly: 1 });
+  expect((await knowledge.read('big.rs')).content).toContain('metadata-only');
   await write('b.ts', 'b');
   await expect(knowledge.refresh()).rejects.toThrow('Corpus limit exceeded');
   const bytesLimit = new AikidoKnowledgeBase(root, false, corpusConfig({ mode: 'rag', maxCorpusBytes: 1 }));

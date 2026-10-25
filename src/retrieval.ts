@@ -130,7 +130,7 @@ type QueryPlanLike = { terms?: unknown; expansions?: Array<{ term: string; relat
 
 function compactMetadata(extra: Record<string, unknown>): Record<string, unknown> {
   const result: Record<string, unknown> = {};
-  for (const key of ['engine', 'model', 'status', 'error', 'index', 'chunks', 'embedded']) if (extra[key] !== undefined) result[key] = extra[key];
+  for (const key of ['engine', 'model', 'status', 'error', 'index', 'chunks', 'embedded', 'skippedChunks']) if (extra[key] !== undefined) result[key] = extra[key];
   const plan = extra.queryPlan as QueryPlanLike | undefined;
   if (plan && typeof plan === 'object') {
     result.query = {
@@ -276,7 +276,8 @@ export class Retrieval {
     const limit = integer(input, 'limit', 25, 1, 100);
     const maxBytes = integer(input, 'maxBytes', 16384, 2048, 262144);
     const head = compactMetadata(extra);
-    type Located = { path: string; lines: number; score?: number; hits: Array<number | [number, number]>; terms?: string[] };
+    type Located = { path: string; lines: number; score?: number; hits: Array<number | [number, number]>; terms?: string[];
+      contentStatus?: 'metadata-only' };
     const files: Located[] = [];
     const byPath = new Map<string, Located>();
     const sizes = this.knowledge.immutable ? this.immutableLineCounts : new Map<string, number>();
@@ -290,7 +291,7 @@ export class Retrieval {
         && ((extra.queryPlan as QueryPlanLike).warnings as unknown[]).length ? { warnings: (extra.queryPlan as QueryPlanLike).warnings } : {}),
     };
     const output = () => compact ? { ...warnings, ...(omitted ? { truncated: true } : {}),
-      results: files.map(file => ({ path: file.path, ranges: [...file.hits]
+      results: files.map(file => ({ path: file.path, ...(file.contentStatus ? { contentStatus: file.contentStatus } : {}), ranges: [...file.hits]
         .map(item => Array.isArray(item) ? item : [item, item]).sort((a, b) => a[0] - b[0]) })) }
       : { ...head, count: hits, files: files.length, truncated: omitted,
         results: files.map(file => ({ ...file, hits: [...file.hits].sort((a, b) => (Array.isArray(a) ? a[0] : a) - (Array.isArray(b) ? b[0] : b)) })) };
@@ -307,7 +308,8 @@ export class Retrieval {
       let file = byPath.get(hit.path);
       const created = !file;
       if (!file) {
-        file = { path: hit.path, lines: total, ...(typeof hit.score === 'number' ? { score: Number(hit.score.toFixed(4)) } : {}), hits: [] };
+        file = { path: hit.path, lines: total, ...(typeof hit.score === 'number' ? { score: Number(hit.score.toFixed(4)) } : {}), hits: [],
+          ...(hit.metadata ? { contentStatus: hit.metadata.contentStatus } : {}) };
         byPath.set(hit.path, file); files.push(file);
       }
       if (file.hits.some(item => Array.isArray(item) ? item[0] <= hit.line && item[1] >= end : item === hit.line && end === hit.line)) continue;
@@ -344,13 +346,15 @@ export class Retrieval {
       requested.set(file, [...(requested.get(file) ?? []), [start, end]]);
     }
     await this.knowledge.refresh();
-    const passages: Array<{ path: string; startLine: number; endLine: number; content: string }> = [];
+    const passages: Array<{ path: string; startLine: number; endLine: number; content: string; contentStatus?: 'metadata-only' }> = [];
     const errors: Array<{ path: string; error: string }> = [];
     const pending: Array<{ path: string; startLine: number; endLine: number }> = [];
     for (const [file, spans] of requested) {
       let lines: string[];
+      let contentStatus: 'metadata-only' | undefined;
       try {
         const { entry, content } = await this.knowledge.read(file);
+        contentStatus = entry.metadata?.contentStatus;
         if (content.includes('\0')) throw new Error(`Binary content is not readable: ${entry.path}`);
         lines = documentLines(content);
       } catch (error) {
@@ -366,7 +370,8 @@ export class Retrieval {
       }
       if (!merged.length) errors.push({ path: file, error: 'startLine exceeds document length' });
       for (const [start, end] of merged) pending.push({ path: file, startLine: start, endLine: end });
-      for (const range of merged) passages.push({ path: file, startLine: range[0], endLine: range[1], content: lines.slice(range[0] - 1, range[1]).join('\n') });
+      for (const range of merged) passages.push({ path: file, startLine: range[0], endLine: range[1],
+        content: lines.slice(range[0] - 1, range[1]).join('\n'), ...(contentStatus ? { contentStatus } : {}) });
     }
     const output = (returned: typeof passages, remaining: typeof pending) => ({ count: returned.length, truncated: remaining.length > 0,
       passages: returned, ...(errors.length ? { errors } : {}), ...(remaining.length ? { remaining } : {}) });

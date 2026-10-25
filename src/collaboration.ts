@@ -157,7 +157,7 @@ export class KnowledgeCollaboration {
     const manifest: Manifest = {};
     const contents = new Map<string, string>();
     let totalBytes = 0;
-    const entries = this.knowledge.list().sort((a, b) => comparePath(a.path, b.path));
+    const entries = this.knowledge.list().filter(entry => isKnowledgeFile(entry.path) && !entry.metadata).sort((a, b) => comparePath(a.path, b.path));
     if (entries.length > MAX_FILES) throw new Error(`Collaboration is limited to ${MAX_FILES} files; larger knowledge remains available for research and read-only use`);
     for (const entry of entries) {
       const file = validatePath(entry.path);

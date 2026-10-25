@@ -16,12 +16,13 @@ export async function runProcess(
   timeout = 120_000,
   onStderr?: (chunk: string) => void,
   environment: NodeJS.ProcessEnv = process.env,
+  maxBuffer = 4 * 1024 * 1024,
 ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
   const redact = (value: string) => environment.KIMONO_GIT_TOKEN
     ? value.replaceAll(environment.KIMONO_GIT_TOKEN, '[REDACTED]') : value;
   try {
     const execution = execute(executable, args, {
-      cwd, timeout, maxBuffer: 4 * 1024 * 1024,
+      cwd, timeout, maxBuffer,
       env: { ...environment, GIT_TERMINAL_PROMPT: '0', GIT_PAGER: 'cat', PAGER: 'cat', GIT_EDITOR: 'true', GIT_SEQUENCE_EDITOR: 'true' },
     });
     children.add(execution.child);

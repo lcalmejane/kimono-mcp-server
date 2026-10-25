@@ -7,6 +7,9 @@ licenses; Kimono's license does not replace them.
 | --- | --- | --- |
 | fast-grep | 0.5.0 | [MIT, published crate](https://crates.io/crates/fast-grep/0.5.0) |
 | embsearch-core | 0.3.4 | [MIT, published crate](https://crates.io/crates/embsearch-core/0.3.4) |
+| fast-xml-parser | See npm lockfile | [MIT, XML parser](https://github.com/NaturalIntelligence/fast-xml-parser) |
+| yauzl | See npm lockfile | [MIT, ZIP reader](https://github.com/thejoshwolfe/yauzl) |
+| Poppler utilities (Docker/system PDF extraction) | Distribution package | [GPL-2.0-or-later, Poppler](https://poppler.freedesktop.org/) |
 | ort Rust bindings | 2.0.0-rc.10 | [MIT / Apache-2.0, published crate](https://crates.io/crates/ort/2.0.0-rc.10) |
 | ONNX Runtime | 1.31.0 | [MIT, Microsoft](https://github.com/microsoft/onnxruntime/tree/v1.31.0) |
 | multilingual-e5-small | Xenova revision 761b726dd34fb83930e26aab4e9ac3899aa1fa78 | [ONNX conversion](https://huggingface.co/Xenova/multilingual-e5-small/tree/761b726dd34fb83930e26aab4e9ac3899aa1fa78), [original model / MIT license declaration](https://huggingface.co/intfloat/multilingual-e5-small) |

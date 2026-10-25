@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.6.6 - 2026-10-25
+
+- Indexing no longer fails on non-UTF-8 documents: text is decoded as UTF-8,
+  UTF-16 (BOM) or Windows-1252.
+- RAG extracts Excel `.xlsx` worksheet rows with A1 addresses, Word `.docx`
+  paragraphs, PowerPoint `.pptx` slide text and tables in presentation order
+  with slide numbers, and PDF text through local Poppler. Docker includes `pdftotext`;
+  native and embedded hosts can install it separately.
+- Unsupported, binary, oversized and unreadable files remain searchable by
+  filename, ROOT-relative path, extension, size and modification time. Explicit
+  `metadata-only` records, stderr diagnostics and corpus counters distinguish
+  unavailable contents. Ignore, include/exclude and safety rules still apply.
+- Snapshots preserve extracted text and metadata without rewriting originals;
+  AI-KIDO text publication and remote sync exclude derived/binary documents.
+- The semantic helper skips only the passages whose embedding fails instead of
+  failing the whole update (`skippedChunks` in its response/status). Its index
+  basis remains partial when passages are skipped; systemic model failures
+  still fail explicitly.
+
 ## 0.6.5 - 2026-10-25
 
 - Clarify installation paths for Marketplace-compatible IDEs, Docker and

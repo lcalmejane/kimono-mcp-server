@@ -56,7 +56,8 @@ fn configure_runtime() -> Result<Runtime> {
     Ok(runtime)
 }
 
-fn embed_parallel(primary: &OnnxEmbedder, model: &Path, runtime: Runtime, texts: &[&str]) -> Result<Vec<Vec<f32>>> {
+// A `None` vector means the passage could not be embedded: it is traced and skipped.
+fn embed_parallel(primary: &OnnxEmbedder, model: &Path, runtime: Runtime, texts: &[&str]) -> Result<Vec<Option<Vec<f32>>>> {
     let total = texts.len();
     let started = Instant::now();
     // Length-sorted bulk batches minimise padding to the longest passage of each batch.
@@ -72,7 +73,7 @@ fn embed_parallel(primary: &OnnxEmbedder, model: &Path, runtime: Runtime, texts:
     let next = AtomicUsize::new(0);
     let completed = AtomicUsize::new(0);
     let failed = AtomicBool::new(false);
-    let results = Mutex::new(vec![Vec::new(); total]);
+    let results = Mutex::new(vec![None; total]);
     std::thread::scope(|scope| -> std::result::Result<(), String> {
         let handles: Vec<_> = (0..workers).map(|worker| {
             let (next, completed, failed, results, batches) = (&next, &completed, &failed, &results, &batches);
@@ -88,10 +89,20 @@ fn embed_parallel(primary: &OnnxEmbedder, model: &Path, runtime: Runtime, texts:
                     while !failed.load(Ordering::Relaxed) {
                         let Some(batch) = batches.get(next.fetch_add(1, Ordering::Relaxed)) else { break };
                         let input: Vec<String> = batch.iter().map(|&index| texts[index].to_string()).collect();
-                        let vectors = embedder.embed_batch(&input).map_err(|error| error.to_string())?;
-                        if vectors.len() != batch.len() {
-                            return Err("Embedding batch size mismatch".into());
-                        }
+                        let usable = |vector: &Vec<f32>| !vector.is_empty() && vector.iter().all(|value| value.is_finite());
+                        let vectors: Vec<Option<Vec<f32>>> = match embedder.embed_batch(&input) {
+                            Ok(vectors) if vectors.len() == batch.len() =>
+                                vectors.into_iter().map(|vector| Some(vector).filter(usable)).collect(),
+                            // One bad passage must not discard the batch: retry each one alone.
+                            _ => input.iter().map(|text| match embedder.embed_batch(std::slice::from_ref(text)) {
+                                Ok(mut single) if single.len() == 1 => single.pop().filter(usable),
+                                Ok(_) => None,
+                                Err(error) => {
+                                    eprintln!("kimono-semantic: passage not embeddable: {error}");
+                                    None
+                                }
+                            }).collect(),
+                        };
                         {
                             let mut results = results.lock().map_err(|_| "Embedding results lock poisoned")?;
                             for (&index, vector) in batch.iter().zip(vectors) {
@@ -123,9 +134,6 @@ fn embed_parallel(primary: &OnnxEmbedder, model: &Path, runtime: Runtime, texts:
         first
     })?;
     let vectors = results.into_inner().map_err(|_| "Embedding results lock poisoned")?;
-    if vectors.iter().any(|vector| vector.is_empty()) {
-        return Err("Missing embedding vector".into());
-    }
     Ok(vectors)
 }
 
@@ -375,9 +383,26 @@ fn execute(request: Request, runtime: Runtime) -> Result<serde_json::Value> {
             !reuse || previous.chunks.get(*id).map(|old| &old.hash) != Some(&chunk.hash)
         })
         .collect();
-    let embedded = updates.len();
     let texts: Vec<&str> = updates.iter().map(|(_, chunk)| chunk.text.as_str()).collect();
     let vectors = embed_parallel(&embedder, &request.model, runtime, &texts)?;
+    let mut fresh: Vec<(String, Vec<f32>)> = Vec::new();
+    let mut failed: Vec<String> = Vec::new();
+    for ((id, _), vector) in updates.iter().zip(vectors) {
+        match vector {
+            Some(vector) => fresh.push((id.to_string(), vector)),
+            None => failed.push(id.to_string()),
+        }
+    }
+    // Ignored passages are traced and left out; they are retried on the next update.
+    for id in &failed {
+        eprintln!("kimono-semantic: chunk ignored (embedding failed): {id}");
+        current.remove(id);
+    }
+    // Skipping isolated passages is tolerated; a systemic failure (model/runtime) is not.
+    if fresh.is_empty() && !failed.is_empty() {
+        return Err(format!("None of the {} passages could be embedded; check the model and ONNX runtime", failed.len()).into());
+    }
+    let embedded = fresh.len();
     let mut db = if reuse {
         Database::open(embedder, request.cache.join(&previous.generation))?
     } else {
@@ -394,11 +419,11 @@ fn execute(request: Request, runtime: Runtime) -> Result<serde_json::Value> {
             changed = true;
         }
     }
-    for ((id, _), vector) in updates.iter().zip(vectors) {
+    for (id, vector) in fresh {
         if reuse {
-            db.remove(id)?;
+            db.remove(&id)?;
         }
-        db.add_vector(id, vector)?;
+        db.add_vector(&id, vector)?;
         changed = true;
     }
     if request.operation == "compact" {
@@ -486,7 +511,7 @@ fn execute(request: Request, runtime: Runtime) -> Result<serde_json::Value> {
     }
     Ok(serde_json::json!({
         "engine": "embsearch-core", "version": "0.3.4", "model": model_id,
-        "chunks": db.len(), "embedded": embedded, "generation": generation,
+        "chunks": db.len(), "embedded": embedded, "skippedChunks": failed.len(), "generation": generation,
         "runtime": { "workers": runtime.workers, "threads": runtime.threads, "batch": runtime.batch },
         "count": hits.len(), "results": hits,
         "changes": { "added": added, "modified": modified, "deleted": deleted }

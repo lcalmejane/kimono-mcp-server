@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { lstat, mkdir, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import type { AikidoKnowledgeBase } from './knowledge.js';
+import type { AikidoKnowledgeBase, FileMetadata } from './knowledge.js';
 import { AikidoKnowledgeBase as KnowledgeBase } from './knowledge.js';
 import { sourceSnapshot } from './index-basis.js';
 import { readRemoteSourceMetadata } from './project-policy.js';
@@ -73,6 +73,8 @@ export class SnapshotManager {
     const directory = path.join(this.snapshotsRoot, id);
     const corpusRoot = path.join(directory, 'corpus');
     let bytes = 0;
+    let documents = 0;
+    const metadata = new Map<string, FileMetadata>();
     let snapshotCache: string | undefined;
     const inUseBytes = [...this.snapshots.values()].reduce((total, item) => total + item.bytes, 0);
     try {
@@ -87,7 +89,9 @@ export class SnapshotManager {
 
       const fingerprint = createHash('sha256');
       for (const entry of entries) {
-        const { content } = await this.source.read(entry.path);
+        const document = await this.source.tryRead(entry.path);
+        if (!document) continue;
+        const { content } = document;
         bytes += Buffer.byteLength(content);
         if (bytes > limits.snapshotMaxBytes) throw new Error(`Snapshot exceeds the ${limits.snapshotMaxBytes} byte corpus limit; use begin paths or raise snapshotMaxBytes`);
         if (inUseBytes + bytes > limits.snapshotsTotalBytes) throw new Error(`Active snapshots exceed the ${limits.snapshotsTotalBytes} byte total limit`);
@@ -95,6 +99,8 @@ export class SnapshotManager {
         if (!isWithin(canonicalCorpus, destination)) throw new Error(`Unsafe snapshot document path: ${entry.path}`);
         await mkdir(path.dirname(destination), { recursive: true, mode: 0o700 });
         await writeFile(destination, content, { mode: 0o600, flag: 'wx' });
+        documents++;
+        if (document.entry.metadata) metadata.set(entry.path, { ...document.entry.metadata });
         fingerprint.update(JSON.stringify([entry.path, entry.kind, content]));
       }
 
@@ -108,7 +114,8 @@ export class SnapshotManager {
         ? { ...remoteSource, corpusFingerprint: version }
         : null;
 
-      const knowledge = new KnowledgeBase(corpusRoot, true, this.source.config, this.source.isMemoryRoot);
+      // Preserve original paths while storing only canonical extracted UTF-8 text.
+      const knowledge = new KnowledgeBase(corpusRoot, true, this.source.config, this.source.isMemoryRoot, true, metadata);
       snapshotCache = knowledge.searchIndex.directory;
       await knowledge.initialize();
       await knowledge.semanticIndex.seedFrom(this.source.semanticIndex, version);
@@ -128,12 +135,12 @@ export class SnapshotManager {
         },
         knowledge,
         bytes,
-        documents: entries.length,
+        documents,
         ...(paths ? { paths } : {}),
         uses: 0,
         closing: false,
       };
-      const manifest: SnapshotManifest = { snapshotId: id, version, expiresAt, bytes, documents: entries.length };
+      const manifest: SnapshotManifest = { snapshotId: id, version, expiresAt, bytes, documents };
       await writeFile(path.join(directory, 'snapshot.json'), JSON.stringify(manifest), { mode: 0o600, flag: 'wx' });
       this.snapshots.set(id, snapshot);
       return this.describe(snapshot);

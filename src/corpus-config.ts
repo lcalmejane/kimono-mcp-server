@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
+import { DOCUMENT_EXTENSIONS } from './documents.js';
 
 export interface CorpusConfig {
   mode: 'aikido' | 'rag';
@@ -21,6 +22,7 @@ export const AIKIDO_EXTENSIONS = [
   '.md', '.mdx', '.mdc', '.txt', '.json', '.yaml', '.yml', '.toml', '.js', '.mjs', '.cjs', '.sh', '.py', '.ts', '.xml',
 ];
 const RAG_EXTENSIONS = [...AIKIDO_EXTENSIONS,
+  ...DOCUMENT_EXTENSIONS,
   '.tsx', '.jsx', '.vue', '.svelte', '.astro', '.css', '.scss', '.sass', '.less', '.html',
   '.java', '.kt', '.kts', '.go', '.rs', '.php', '.rb', '.rake', '.c', '.h', '.cc', '.cpp', '.hpp',
   '.cs', '.fs', '.fsx', '.swift', '.m', '.mm', '.scala', '.sql', '.graphql', '.gql', '.proto',

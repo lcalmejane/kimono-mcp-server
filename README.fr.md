@@ -218,6 +218,38 @@ indiquent les fichiers et lignes avant toute lecture du code. Les règles
 `.gitignore` sont respectées ; les répertoires courants de dépendances, build
 et cache sont exclus. Kimono ne modifie pas les fichiers du projet.
 
+### Documents Office, PDF et métadonnées des fichiers
+
+Le RAG extrait aussi le texte des documents **Excel `.xlsx`**, **Word `.docx`**, **PowerPoint `.pptx`**
+et **PDF**. Les résultats Excel conservent le nom de la feuille et les adresses
+des cellules, par exemple `Coûts!A5=Budget | B5=42`. Les résultats Word suivent
+l'ordre des paragraphes, y compris les cellules des tableaux. Le texte PowerPoint
+suit l'ordre des diapositives, tableaux inclus, avec leur numéro (`Slide 1: …`).
+Les notes du présentateur et le texte dans les images ne sont pas extraits. Les numéros de
+lignes désignent le texte extrait, pas la mise en page du document. Les
+formules utilisent leur résultat enregistré lorsqu'il existe ; Kimono
+n'exécute ni formules ni macros.
+
+L'extraction PDF utilise `pdftotext` de Poppler. Docker l'inclut ; en
+installation native ou avec l'extension embarquée, installer Poppler séparément
+(`brew install poppler` sur macOS, `sudo apt-get install poppler-utils` sur
+Debian/Ubuntu) et rendre `pdftotext` accessible dans le PATH du serveur. Les PDF
+numérisés ne sont pas traités par OCR.
+
+**Un fichier reste trouvable même si son contenu n'est pas lisible.** Pour les
+formats non pris en charge, fichiers binaires, trop volumineux, illisibles ou
+en échec d'extraction, Kimono indexe le nom, le chemin relatif au ROOT,
+l'extension, la taille et la date de dernière modification disponibles. Les
+résultats indiquent explicitement `contentStatus: "metadata-only"` et la raison
+de l'absence de contenu. Cela s'applique aussi lorsque l'extraction PDF n'est
+pas disponible. Les originaux ne sont jamais remplacés par le texte extrait
+ou les métadonnées.
+
+Les règles `.gitignore`, include/exclude et exclusions de sécurité restent
+appliquées aux métadonnées. Exclure un chemin pour retirer entièrement un
+fichier ; la liste d'extensions contrôle l'extraction du contenu, pas le
+catalogue des fichiers du RAG.
+
 ## Configurer le corpus
 
 Dans VS Code, utiliser **Kimono: Open Management Panel** ou configurer :

@@ -50,7 +50,9 @@ export class ProjectVocabulary {
       && vocabularyFile.test(entry.path) && /\.(md|mdx|mdc|txt)$/i.test(entry.path));
     let bytes = 0;
     for (const file of files.slice(0, 32)) {
-      const { content } = await this.knowledge.read(file.path);
+      const document = await this.knowledge.tryRead(file.path);
+      if (!document) continue;
+      const { content } = document;
       bytes += Buffer.byteLength(content);
       if (bytes > 1024 * 1024) { truncated = true; break; }
       sources.push(file.path);

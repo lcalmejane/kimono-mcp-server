@@ -31,8 +31,9 @@ it('searches native lexical and semantic generic code, including scoped snapshot
   await knowledge.initialize();
   const runtime = runtimeFor(knowledge);
   const updated = JSON.parse(await runtime.call('aikido_index', { operation: 'update', mode: 'all' }));
-  expect(updated.indexes.literal.changes.added).toEqual(['other/app.tsx', 'src/server.rs']);
-  expect(updated.indexes.semantic.changes.added).toEqual(['other/app.tsx', 'src/server.rs']);
+  const indexedFiles = ['.gitignore', 'other/app.tsx', 'src/.gitignore', 'src/server.rs'];
+  expect(updated.indexes.literal.changes.added).toEqual(indexedFiles);
+  expect(updated.indexes.semantic.changes.added).toEqual(indexedFiles);
   const { snapshotId } = JSON.parse(await runtime.call('aikido_snapshot', { operation: 'begin', paths: ['src'] }));
   try {
     for (const mode of ['literal', 'text', 'semantic', 'hybrid']) {
@@ -43,7 +44,8 @@ it('searches native lexical and semantic generic code, including scoped snapshot
       expect(JSON.stringify(search)).not.toContain('other/app.tsx');
       expect(JSON.stringify(search)).not.toMatch(/secret\.rs|generated\.rs|node_modules/);
       expect(search.results.every((file: Record<string, unknown>) =>
-        JSON.stringify(Object.keys(file).sort()) === '["path","ranges"]')).toBe(true);
+        JSON.stringify(Object.keys(file).sort()) === (file.contentStatus === 'metadata-only'
+          ? '["contentStatus","path","ranges"]' : '["path","ranges"]'))).toBe(true);
       expect(JSON.stringify(search)).not.toMatch(/"content"|"excerpt"|"score"|Secure authentication checks tokens/);
     }
     for (const mode of ['literal', 'text', 'semantic', 'hybrid']) {

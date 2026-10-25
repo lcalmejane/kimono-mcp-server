@@ -188,6 +188,10 @@ export class FastGrepIndex {
       }
     } catch (error) {
       if (missing(error)) return undefined;
+      if (error instanceof Error && 'code' in error && (error.code === 'EACCES' || error.code === 'EPERM')) {
+        console.error('Kimono: corpus stat unavailable; refreshing searchable file metadata:', error.message);
+        return undefined;
+      }
       throw error;
     }
     return hash.digest('hex');
@@ -212,7 +216,13 @@ export class FastGrepIndex {
     }
     try {
       for (const file of current.sort((a, b) => a.localeCompare(b))) {
-        const { content, entry } = await this.knowledge.read(file);
+        const document = await this.knowledge.tryRead(file);
+        if (!document) {
+          // Unreadable document: traced by the knowledge base, dropped from the index, indexing continues.
+          if (file in previous) { changes.deleted.push(file); delete owners[file]; }
+          continue;
+        }
+        const { content, entry } = document;
         fingerprint.update(JSON.stringify([file, entry.kind, content]));
         let existing: string | undefined;
         const baseline = previous[file] && previous[file] !== 'base'
