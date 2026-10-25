@@ -20,7 +20,7 @@ const createTransport = options => {
 try {
   const pkg = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'));
   const target = `${process.platform}-${process.arch}`;
-  const archive = path.join(root, 'vscode', `kimono-mcp-${pkg.version}-${target}.vsix`);
+  const archive = path.join(root, 'vscode', `kimono-rag-mcp-${pkg.version}-${target}.vsix`);
   const extracted = path.join(scratch, 'unpacked');
   await mkdir(extracted);
   // Test the installed archive, including ZIP permissions, not the build staging tree.

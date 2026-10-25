@@ -40,12 +40,12 @@ responses; follow `nextQuery` / `remaining` when truncated. See the
 1. Install **VS Code 1.106 or newer**, and enable an MCP-capable chat client
    such as GitHub Copilot. MCP tools are not an LLM or an autonomous agent.
 2. Open [GitHub Releases](https://github.com/lcalmejane/kimono-mcp-server/releases)
-   and download the matching `kimono-mcp-<version>-<target>.vsix` and
+   and download the matching `kimono-rag-mcp-<version>-<target>.vsix` and
    `SHA256SUMS.txt`. You may verify the SHA-256 with `shasum -a 256 <file>` on
    macOS, `sha256sum <file>` on Linux or `Get-FileHash <file> -Algorithm SHA256`
    in PowerShell.
 3. Run **Extensions: Install from VSIX…**, select the file, and reload if asked.
-   Alternatively: `code --install-extension /path/to/kimono-mcp-<version>-<target>.vsix`.
+   Alternatively: `code --install-extension /path/to/kimono-rag-mcp-<version>-<target>.vsix`.
 4. Open and trust a folder containing your knowledge base. Run **Kimono: Open
    Settings** if its ROOT is not the folder itself.
 5. Run **MCP: List Servers**, select **Kimono: …**, and start it. Approve VS
@@ -63,8 +63,8 @@ Choose the **extension host's** platform, not the computer displaying VS Code.
 For Remote SSH, WSL and Dev Containers, install in the remote workspace host
 using its Extensions menu. A Mac connected to Linux ARM64 needs `linux-arm64`.
 Intel macOS, native Windows ARM64 and standalone browser-only `vscode.dev` are
-not currently built/supported. There is no Marketplace or Open VSX publication;
-download and install a newer VSIX to update.
+not currently built/supported. GitHub Releases provide platform-specific VSIX
+files for manual installation and remain an alternative distribution channel.
 
 ### Kimono panel, live indexing and search test
 
@@ -109,12 +109,13 @@ automatic (French or English, following VS Code or the browser).
 
 ### Updating the development VSIX
 
-Version 0.6.1 uses **`ai-kido.kimono-mcp`**, the selected future Marketplace
-publisher identity. The 0.5.0 development VSIX used `tatami.kimono-mcp`;
-VS Code treats these as different extensions. Uninstall the old extension
-before installing 0.6.1 to avoid duplicate MCP providers. Review settings and
-re-enter any remote bearer token using **Kimono: Set Remote Token**: secrets
-and global cache storage are not migrated between publisher identities.
+Versions 0.6.1–0.6.2 use **`ai-kido.kimono-mcp`**; version 0.6.3 changes the
+extension identity to **`ai-kido.kimono-rag-mcp`** after the Marketplace
+reported the previous slug as already existing. VS Code treats these as
+separate extensions. Uninstall the old `ai-kido.kimono-mcp` extension before
+installing 0.6.3 to avoid duplicate MCP providers. Review settings and
+re-enter any remote bearer token: secrets and global cache storage are not
+migrated between extension identities.
 For old AI-KIDO workspaces, explicitly select `kimono.corpusMode: "aikido"`;
 the new default is generic read-only RAG.
 
@@ -138,10 +139,12 @@ ne dépend pas du workspace de développement Tatami. La mise à jour se fait en
 installant le nouveau VSIX. Le mode restreint bloque le démarrage. Une politique
 d'organisation peut également interdire MCP ou les extensions hors Marketplace.
 
-La 0.6.1 utilise l'identifiant **`ai-kido.kimono-mcp`**. Désinstaller
-l'ancienne extension `tatami.kimono-mcp` avant de l'installer pour éviter
-deux fournisseurs MCP. Les secrets et caches ne sont pas migrés entre ces
-identités ; ressaisir le jeton distant et sélectionner explicitement
+Les versions 0.6.1–0.6.2 utilisent l'identifiant **`ai-kido.kimono-mcp`** ;
+la 0.6.3 passe à **`ai-kido.kimono-rag-mcp`** après le conflit de nom signalé
+par le Marketplace. VS Code considère ces deux identifiants comme des
+extensions distinctes. Désinstaller l'ancienne extension avant d'installer
+la 0.6.3 pour éviter deux fournisseurs MCP. Les secrets et caches ne sont
+pas migrés entre ces identités ; ressaisir le jeton distant et sélectionner explicitement
 `kimono.corpusMode: "aikido"` pour les anciens workspaces AI-KIDO.
 
 ### Panneau Kimono et indexation en temps réel (français)

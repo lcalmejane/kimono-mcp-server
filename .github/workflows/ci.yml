@@ -108,7 +108,7 @@ jobs:
             tar -czf "kimono-native-${target}.tar.gz" -C "release-assets/kimono-native-${target}" .
           done
           cp vscode-assets/* .
-          sha256sum kimono-native-*.tar.gz kimono-mcp-*.vsix kimono-mcp-*.build.json > SHA256SUMS.txt
+          sha256sum kimono-native-*.tar.gz kimono-rag-mcp-*.vsix kimono-rag-mcp-*.build.json > SHA256SUMS.txt
       - name: Publish VSIX and native bundles to the version release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -121,5 +121,5 @@ jobs:
           gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 \
             || gh release create "$GITHUB_REF_NAME" --draft --verify-tag --title "$GITHUB_REF_NAME" \
               --notes "Standalone Kimono MCP VS Code extensions and native bundles. Installation: https://github.com/${GITHUB_REPOSITORY}/blob/${GITHUB_REF_NAME}/vscode/README.md"
-          gh release upload "$GITHUB_REF_NAME" kimono-native-*.tar.gz kimono-mcp-*.vsix kimono-mcp-*.build.json SHA256SUMS.txt --clobber
+          gh release upload "$GITHUB_REF_NAME" kimono-native-*.tar.gz kimono-rag-mcp-*.vsix kimono-rag-mcp-*.build.json SHA256SUMS.txt --clobber
           gh release edit "$GITHUB_REF_NAME" --draft=false

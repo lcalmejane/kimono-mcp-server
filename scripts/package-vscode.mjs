@@ -54,7 +54,7 @@ await build({
   bundle: true, platform: 'node', format: 'esm', target: 'node24',
   banner: { js: "import { createRequire as kimonoCreateRequire } from 'node:module'; const require = kimonoCreateRequire(import.meta.url);" },
 });
-const output = path.join(root, 'vscode', `kimono-mcp-${pkg.version}-${target}.vsix`);
+const output = path.join(root, 'vscode', `kimono-rag-mcp-${pkg.version}-${target}.vsix`);
 await createVSIX({ cwd: stage, packagePath: output, target, dependencies: false });
 const sha256 = async filename => createHash('sha256').update(await readFile(filename)).digest('hex');
 await writeFile(output.replace(/\.vsix$/, '.build.json'), `${JSON.stringify({

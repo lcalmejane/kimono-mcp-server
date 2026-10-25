@@ -1,8 +1,8 @@
 {
-  "name": "kimono-mcp",
+  "name": "kimono-rag-mcp",
   "displayName": "Kimono MCP",
   "description": "Local project RAG and AI-KIDO MCP with embedded lexical and semantic search.",
-  "version": "0.6.2",
+  "version": "0.6.3",
   "publisher": "ai-kido",
   "license": "MIT",
   "repository": {

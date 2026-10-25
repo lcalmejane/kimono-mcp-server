@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.3 - 2026-10-25
+
+- Rename the VS Code extension slug to `kimono-rag-mcp` after Marketplace
+  rejected the previous slug as already existing; the publisher remains
+  `ai-kido`. This changes the VS Code extension ID to
+  `ai-kido.kimono-rag-mcp`. Reinstall the new extension ID alongside existing
+  settings as needed; VS Code treats publisher/name changes as a separate
+  extension identity.
+
 ## 0.6.2 - 2026-10-25
 
 - VS Code: Kimono Activity Bar view (same kimono icon as Tatami), a management
