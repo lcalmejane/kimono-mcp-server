@@ -107,7 +107,7 @@ jobs:
           name: marketplace-vsix
           path: ${{ runner.temp }}/marketplace-assets
 
-      - name: Publish and verify each platform VSIX
+      - name: Publish every platform VSIX
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
           EXTENSION_ID: ai-kido.kimono-rag-mcp
@@ -117,20 +117,30 @@ jobs:
           for target in darwin-arm64 linux-arm64 linux-x64 win32-x64; do
             npx --no-install vsce publish --skip-duplicate \
               --packagePath "$RUNNER_TEMP/marketplace-assets/kimono-rag-mcp-$VERSION-$target.vsix"
-            indexed=false
-            for attempt in $(seq 1 30); do
-              listing="$(npx --no-install vsce show "$EXTENSION_ID" --json)"
+          done
+
+      - name: Verify Marketplace visibility
+        env:
+          EXTENSION_ID: ai-kido.kimono-rag-mcp
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 30); do
+            listing="$(npx --no-install vsce show "$EXTENSION_ID" --json)"
+            missing=()
+            for target in darwin-arm64 linux-arm64 linux-x64 win32-x64; do
               if jq -e --arg version "$VERSION" --arg target "$target" \
                 'any(.versions[]?; .version == $version and .targetPlatform == $target)' \
                 <<< "$listing" >/dev/null; then
                 echo "Marketplace lists $EXTENSION_ID $VERSION for $target."
-                indexed=true
-                break
+              else
+                missing+=("$target")
               fi
-              sleep 10
             done
-            if [[ "$indexed" != true ]]; then
-              echo "Marketplace did not index $EXTENSION_ID $VERSION for $target within 5 minutes." >&2
-              exit 1
+            if [[ "${#missing[@]}" -eq 0 ]]; then
+              exit 0
             fi
+            sleep 10
           done
+          echo "Publication completed, but Marketplace visibility is still pending for: ${missing[*]}" >&2
+          exit 1
