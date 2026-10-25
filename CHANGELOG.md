@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.5.0 - 2026-10-25
+
+- Standalone Kimono MCP VS Code extension, with native MCP registration, trusted
+  local multi-root workspaces, optional remote HTTP and endpoint-scoped bearer
+  tokens in SecretStorage. Independent of Tatami Core and Agent.
+- GitHub CI packages platform VSIX files with Node.js, MCP server, lexical and
+  semantic engines/model; verifies packaged MCP/native behavior before publishing
+  tagged releases with provenance and checksums. Bilingual integration guide.
+
 ## 0.3.0 - 2026-10-17
 
 - Genuine paths-scoped index updates for a file, file list or directory subtree, including missing targets as deletions. Only selected source bodies are read and literal batch shards index only selected changes; semantic synchronization retains untouched vectors without re-embedding.

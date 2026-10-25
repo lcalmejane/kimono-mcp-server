@@ -5,7 +5,21 @@ on:
   pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
+  extension-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run test:vscode
+
   test:
     runs-on: ubuntu-latest
     steps:
@@ -15,6 +29,7 @@ jobs:
 
   bundle:
     if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v'))
+    needs: [test, extension-test]
     strategy:
       fail-fast: false
       matrix:
@@ -34,6 +49,7 @@ jobs:
         with:
           node-version: 24
       - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - run: npm ci
       - name: Validate locked dependency pins
         run: node scripts/check-search-versions.mjs --offline
       - name: Require tag version to match package version
@@ -46,6 +62,20 @@ jobs:
           npm run bundle:native -- \
             --target "${{ matrix.target }}" \
             --output "native-bundles/${{ matrix.target }}"
+      - name: Build standalone VS Code extension
+        env:
+          BUILD_TARGET: ${{ matrix.target }}
+        run: npm run package:vscode
+      - name: Exercise packaged server through the VS Code provider
+        run: npm run test:vscode:integration
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kimono-vscode-${{ matrix.target }}
+          path: |
+            vscode/*.vsix
+            vscode/*.build.json
+          if-no-files-found: error
+          retention-days: 30
       - uses: actions/upload-artifact@v4
         with:
           name: kimono-native-${{ matrix.target }}
@@ -55,7 +85,7 @@ jobs:
 
   release:
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-    needs: bundle
+    needs: [test, extension-test, bundle]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -64,13 +94,22 @@ jobs:
         with:
           pattern: kimono-native-*
           path: release-assets
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: kimono-vscode-*
+          path: vscode-assets
+          merge-multiple: true
       - name: Archive target bundles and publish checksums
         run: |
           for target in darwin-arm64 linux-arm64 linux-x64 win32-x64; do
+            if [[ "$target" != win32-* ]]; then
+              chmod +x "release-assets/kimono-native-${target}/bin/"*
+            fi
             tar -czf "kimono-native-${target}.tar.gz" -C "release-assets/kimono-native-${target}" .
           done
-          sha256sum kimono-native-*.tar.gz > SHA256SUMS.txt
-      - name: Publish native bundles to the version release
+          cp vscode-assets/* .
+          sha256sum kimono-native-*.tar.gz kimono-mcp-*.vsix kimono-mcp-*.build.json > SHA256SUMS.txt
+      - name: Publish VSIX and native bundles to the version release
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
@@ -81,6 +120,6 @@ jobs:
           fi
           gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 \
             || gh release create "$GITHUB_REF_NAME" --draft --verify-tag --title "$GITHUB_REF_NAME" \
-              --notes "Reproducible native Kimono bundles for this tagged release."
-          gh release upload "$GITHUB_REF_NAME" kimono-native-*.tar.gz SHA256SUMS.txt --clobber
+              --notes "Standalone Kimono MCP VS Code extensions and native bundles. Installation: https://github.com/${GITHUB_REPOSITORY}/blob/${GITHUB_REF_NAME}/vscode/README.md"
+          gh release upload "$GITHUB_REF_NAME" kimono-native-*.tar.gz kimono-mcp-*.vsix kimono-mcp-*.build.json SHA256SUMS.txt --clobber
           gh release edit "$GITHUB_REF_NAME" --draft=false

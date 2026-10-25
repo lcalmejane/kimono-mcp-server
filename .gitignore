@@ -10,3 +10,6 @@ data/
 semantic/target/
 native-stage/
 native-bundles/
+vscode/.package/
+vscode/*.vsix
+vscode/*.build.json

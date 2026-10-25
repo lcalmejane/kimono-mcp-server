@@ -1,5 +1,10 @@
 # Embedded native bundles
 
+The same CI also builds standalone **Kimono MCP VS Code extensions**, embedding
+these bundles, the MCP server and Node.js. See the
+[VSIX distribution guide](vscode-distribution.md) and
+[installation/integration guide](../vscode/README.md).
+
 The `ci.yml` GitHub Actions workflow builds the locked `fgr` and
 `kimono-semantic` executables on native runners for `darwin-arm64`,
 `linux-arm64`, `linux-x64`, and `win32-x64`. Each run packages the matching

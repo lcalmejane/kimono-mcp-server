@@ -8,6 +8,9 @@ without writing the client workspace or requiring Git.
 
 ## Short usage guides / Guides pratiques
 
+- [VS Code: install the standalone GitHub VSIX (English / français)](vscode/README.md)
+- [Build and release the VS Code extension with GitHub CI](docs/vscode-distribution.md)
+
 - [English: standalone, integration and concurrent clients](docs/usage.en.md)
 - [Français : standalone, intégration et clients concurrents](docs/usage.fr.md)
 - [English / Français: progressive JSON search, metadata, ranges and harness integration](docs/retrieval.md)

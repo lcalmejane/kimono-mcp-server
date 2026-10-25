@@ -1,0 +1,65 @@
+{
+  "name": "kimono-mcp",
+  "displayName": "Kimono MCP",
+  "description": "Standalone AI-KIDO knowledge MCP with embedded lexical and semantic search.",
+  "version": "0.5.0",
+  "publisher": "tatami",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/lcalmejane/kimono-mcp-server.git"
+  },
+  "engines": { "vscode": "^1.106.0" },
+  "categories": ["Other"],
+  "main": "./extension.cjs",
+  "files": ["extension.cjs", "native.cjs", "native/**", "runtime/**", "server/**", "README.md", "LICENSE", "THIRD_PARTY_NOTICES.md"],
+  "extensionKind": ["workspace"],
+  "activationEvents": ["onStartupFinished"],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": false,
+      "description": "Kimono requires a trusted workspace before starting a knowledge server."
+    },
+    "virtualWorkspaces": { "supported": false }
+  },
+  "contributes": {
+    "mcpServerDefinitionProviders": [
+      { "id": "kimono.mcp", "label": "Kimono MCP" }
+    ],
+    "commands": [
+      { "command": "kimono.configure", "title": "Kimono: Open Settings" },
+      { "command": "kimono.setToken", "title": "Kimono: Set Remote Bearer Token" },
+      { "command": "kimono.clearToken", "title": "Kimono: Clear Remote Bearer Token" }
+    ],
+    "configuration": {
+      "title": "Kimono MCP",
+      "properties": {
+        "kimono.mode": {
+          "type": "string",
+          "enum": ["embedded", "remote", "disabled"],
+          "default": "embedded",
+          "scope": "machine",
+          "description": "Embedded uses the bundled local server. Remote connects to an existing HTTP MCP. Disabled removes the definitions."
+        },
+        "kimono.root": {
+          "type": "string",
+          "default": "",
+          "scope": "resource",
+          "description": "Knowledge directory, absolute or relative to each workspace folder. Empty uses that folder. Caches stay outside it."
+        },
+        "kimono.url": {
+          "type": "string",
+          "default": "",
+          "scope": "machine",
+          "description": "Remote HTTP MCP endpoint. HTTPS required except localhost. Never put credentials in this URL."
+        },
+        "kimono.gitProfileFile": {
+          "type": "string",
+          "default": "",
+          "scope": "machine",
+          "description": "Optional absolute path to the current user's private 0600/0400 Git read-profile JSON outside the knowledge root. Never put secrets in settings."
+        }
+      }
+    }
+  }
+}

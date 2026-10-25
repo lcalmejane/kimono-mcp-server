@@ -1,6 +1,6 @@
 {
   "name": "kimono-mcp-server",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "description": "MCP server for discovering and activating AI-KIDO knowledge-base capabilities",
   "license": "MIT",
   "repository": {
@@ -23,7 +23,10 @@
     "start": "node dist/index.js",
     "test": "vitest run",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "bundle:native": "node scripts/package-native-bundle.mjs"
+    "bundle:native": "node scripts/package-native-bundle.mjs",
+    "test:vscode": "node --test vscode/test/*.cjs",
+    "package:vscode": "node scripts/package-vscode.mjs",
+    "test:vscode:integration": "node scripts/test-vscode-package.mjs"
   },
   "engines": {
     "node": ">=24"
@@ -33,6 +36,8 @@
     "ignore": "^7.0.5"
   },
   "devDependencies": {
+    "@vscode/vsce": "^3.6.0",
+    "esbuild": "^0.28.2",
     "@types/node": "^24.0.0",
     "tsx": "^4.19.0",
     "typescript": "^5.7.0",
