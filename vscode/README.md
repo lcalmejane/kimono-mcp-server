@@ -68,10 +68,10 @@ download and install a newer VSIX to update.
 
 ### Updating the development VSIX
 
-Version 0.6.0 uses **`lcalmejane.kimono-mcp`**, the selected future Marketplace
+Version 0.6.1 uses **`ai-kido.kimono-mcp`**, the selected future Marketplace
 publisher identity. The 0.5.0 development VSIX used `tatami.kimono-mcp`;
 VS Code treats these as different extensions. Uninstall the old extension
-before installing 0.6.0 to avoid duplicate MCP providers. Review settings and
+before installing 0.6.1 to avoid duplicate MCP providers. Review settings and
 re-enter any remote bearer token using **Kimono: Set Remote Token**: secrets
 and global cache storage are not migrated between publisher identities.
 For old AI-KIDO workspaces, explicitly select `kimono.corpusMode: "aikido"`;
@@ -97,7 +97,7 @@ ne dépend pas du workspace de développement Tatami. La mise à jour se fait en
 installant le nouveau VSIX. Le mode restreint bloque le démarrage. Une politique
 d'organisation peut également interdire MCP ou les extensions hors Marketplace.
 
-La 0.6.0 utilise l'identifiant **`lcalmejane.kimono-mcp`**. Désinstaller
+La 0.6.1 utilise l'identifiant **`ai-kido.kimono-mcp`**. Désinstaller
 l'ancienne extension `tatami.kimono-mcp` avant de l'installer pour éviter
 deux fournisseurs MCP. Les secrets et caches ne sont pas migrés entre ces
 identités ; ressaisir le jeton distant et sélectionner explicitement

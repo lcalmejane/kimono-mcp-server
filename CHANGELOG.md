@@ -1,6 +1,14 @@
 # Changelog
 
-## 0.6.0 - 2026-10-25
+## 0.6.1 - 2026-10-25
+
+- Use `ai-kido.kimono-mcp` as the VSIX identity and future Marketplace namespace,
+  rather than a personal publisher. Marketplace availability/access must still
+  be verified before submission. Settings lookup uses the installed extension ID.
+- Supersedes the unpublished 0.6.0 tag: its distribution/container workflows
+  were cancelled before release publication when the publisher choice changed.
+
+## 0.6.0 - 2026-10-25 (unpublished)
 
 - Smaller exposed retrieval definitions (22.5% fewer serialized bytes across
   snapshot/search/file, including batching). `aikido_search` and its `aikido`

@@ -24,7 +24,7 @@ Manual runs **do not publish releases**. For a release:
 1. Update **both** server and extension versions in [`package.json`](../package.json)
    and [`vscode/package.json`](../vscode/package.json); update the lockfile and changelog.
 2. Commit and push the changes to this repository.
-3. Push the matching tag, for example `v0.6.0` for version `0.6.0`.
+3. Push the matching tag, for example `v0.6.1` for version `0.6.1`.
 4. Only after server tests, extension tests and all native/package smoke jobs pass,
    CI creates a draft release, attaches all `.vsix`, `.build.json`, native archives
    and `SHA256SUMS.txt`, then publishes it. Published immutable releases are not
@@ -33,8 +33,8 @@ Manual runs **do not publish releases**. For a release:
 No Marketplace account, PAT or manual upload is required. The release job alone
 has `contents: write` via `GITHUB_TOKEN`; other jobs have read-only permissions.
 This workflow does not publish to Marketplace/Open VSX. The owner selected
-`lcalmejane` as the future Marketplace publisher; 0.6.0 VSIX files already
-use the stable ID `lcalmejane.kimono-mcp`. Follow the
+`ai-kido` as the future Marketplace publisher; 0.6.1 VSIX files already
+use the ID `ai-kido.kimono-mcp`. Follow the
 [Marketplace publication brief](../vscode/fiche.md) to submit the verified
 GitHub release VSIX files later, without rebuilding under another identity.
 Marketplace credentials and listing approval remain separate prerequisites.

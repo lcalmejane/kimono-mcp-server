@@ -48,7 +48,7 @@ function fixture(options = {}) {
   };
   const context = {
     extensionPath: path.join(process.cwd(), "vscode"), extension: {
-      id: "lcalmejane.kimono-mcp", packageJSON: { version: "0.6.0" },
+      id: "ai-kido.kimono-mcp", packageJSON: { version: "0.6.1" },
     },
     globalStorageUri: uri(path.join(process.cwd(), ".local-runtime-vscode-test")),
     secrets: {

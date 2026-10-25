@@ -26,8 +26,8 @@ required for default RAG. The wider method and ecosystem are optional next steps
 |---|---|
 | Current technical name | `kimono-mcp` |
 | Proposed display name | **Kimono MCP — Shared Knowledge & Local RAG** |
-| Current manifest publisher | `lcalmejane` — selected by the owner; verify Marketplace account access before submission |
-| Intended full ID | `lcalmejane.kimono-mcp` |
+| Current manifest publisher | `ai-kido` — selected by the owner; verify availability and Marketplace account access before submission |
+| Intended full ID | `ai-kido.kimono-mcp` |
 | Short description | Local code and docs RAG for MCP assistants. Give your team and agents a common knowledge layer, with targeted reads and local embeddings. |
 | Proposed categories | `AI`, `Other`; validate against the current Marketplace schema before publication |
 | Proposed keywords | `MCP`, `RAG`, `local search`, `semantic search`, `Copilot`, `AI-KIDO` |
@@ -38,7 +38,7 @@ required for default RAG. The wider method and ecosystem are optional next steps
 | Local RAG guide | <https://github.com/lcalmejane/kimono-mcp-server/blob/main/docs/local-rag.md> |
 | Existing distributions | <https://github.com/lcalmejane/kimono-mcp-server/releases> |
 
-Publisher/name above match the 0.6.0 manifest; display name, description and
+Publisher/name above match the 0.6.1 manifest; display name, description and
 categories remain editorial proposals. GitHub distributions are separate from
 Marketplace publication: do not claim that a Marketplace listing exists.
 
@@ -225,7 +225,7 @@ separate embedded installs do not automatically share a corpus.
 
 ### Account, identity and assets
 
-- [ ] Create or verify access to the Marketplace publisher `lcalmejane`. A name in the manifest is
+- [ ] Create or verify access to the Marketplace publisher `ai-kido`. A name in the manifest is
   not proof of reservation, ownership or verified identity.
 - [ ] Approve the display name; keep a stable technical ID for updates.
 - [ ] Declare support contact, repository and issue links.
