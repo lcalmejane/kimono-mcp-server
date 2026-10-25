@@ -37,9 +37,14 @@ responses; follow `nextQuery` / `remaining` when truncated. See the
 
 ## Installation (English)
 
+Install **[Kimono RAG MCP by AI-KIDO from the Visual Studio
+Marketplace](https://marketplace.visualstudio.com/items?itemName=ai-kido.kimono-rag-mcp)**,
+or use the GitHub Release VSIX below for offline or manual installation.
+
 1. Install **VS Code 1.106 or newer**, and enable an MCP-capable chat client
    such as GitHub Copilot. MCP tools are not an LLM or an autonomous agent.
-2. Open [GitHub Releases](https://github.com/lcalmejane/kimono-mcp-server/releases)
+2. For manual installation, open
+   [GitHub Releases](https://github.com/lcalmejane/kimono-mcp-server/releases)
    and download the matching `kimono-rag-mcp-<version>-<target>.vsix` and
    `SHA256SUMS.txt`. You may verify the SHA-256 with `shasum -a 256 <file>` on
    macOS, `sha256sum <file>` on Linux or `Get-FileHash <file> -Algorithm SHA256`
@@ -123,9 +128,15 @@ the new default is generic read-only RAG.
 
 ## Installation (français)
 
+Installer **[Kimono RAG MCP by AI-KIDO depuis le Visual Studio
+Marketplace](https://marketplace.visualstudio.com/items?itemName=ai-kido.kimono-rag-mcp)**,
+ou utiliser le VSIX de la release GitHub ci-dessous pour une installation
+manuelle ou hors ligne.
+
 1. Utiliser **VS Code 1.106 minimum** avec un client de chat compatible MCP
    (par exemple GitHub Copilot). Kimono apporte les outils, pas un modèle LLM.
-2. Télécharger le VSIX correspondant à l'OS et à l'architecture de **l'hôte
+2. Pour une installation manuelle, télécharger le VSIX correspondant à l'OS et
+   à l'architecture de **l'hôte
    d'extension** dans les
    [Releases GitHub](https://github.com/lcalmejane/kimono-mcp-server/releases).
    Le tableau ci-dessus donne les quatre plateformes construites.

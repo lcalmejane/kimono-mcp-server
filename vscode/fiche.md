@@ -1,7 +1,7 @@
-# Kimono MCP — Visual Studio Marketplace publication brief
+# Kimono MCP — Visual Studio Marketplace listing
 
-English editorial and publication preparation for version 0.6.4+.
-This is not a live Marketplace listing or Microsoft approval.
+The `v0.6.4` listing is live. This document records its metadata and the
+remaining owner-maintenance checklist; publication is not Microsoft endorsement.
 Public copy is separated from the publisher-only checklist below.
 
 ## 1. Positioning
@@ -20,27 +20,28 @@ publication and conflict handling.
 Kimono works independently. No AI-KIDO adoption or Tatami installation is
 required for default RAG. The wider method and ecosystem are optional next steps.
 
-## 2. Proposed Marketplace metadata
+## 2. Published Marketplace metadata
 
-| Field | Proposal |
+| Field | Value |
 |---|---|
-| Current technical name | `kimono-rag-mcp` |
+| Technical name | `kimono-rag-mcp` |
 | Display name | **Kimono RAG MCP by AI-KIDO** |
-| Current manifest publisher | `ai-kido` — selected by the owner; verify availability and Marketplace account access before submission |
-| Intended full ID | `ai-kido.kimono-rag-mcp` |
+| Publisher | `ai-kido` |
+| Full ID | `ai-kido.kimono-rag-mcp` |
 | Short description | Local code and docs RAG for MCP assistants. Give your team and agents a common knowledge layer, with targeted reads and local embeddings. |
-| Categories (manifest 0.6.4) | `AI`, `Machine Learning`, `Other`; validate against the current Marketplace schema before publication |
-| Proposed keywords | `MCP`, `RAG`, `local search`, `semantic search`, `Copilot`, `AI-KIDO` |
+| Marketplace categories | `AI`, `Machine Learning` |
+| Marketplace tags | `ai-kido`, `copilot`, `mcp`, `rag`, `semantic search` |
 | License | MIT; retain bundled component and model notices |
+| Marketplace listing | <https://marketplace.visualstudio.com/items?itemName=ai-kido.kimono-rag-mcp> |
 | Discovery website | <https://ai-kido.fr> |
 | Source | <https://github.com/lcalmejane/kimono-mcp-server> |
 | Support / issues | <https://github.com/lcalmejane/kimono-mcp-server/issues> |
 | Local RAG guide | <https://github.com/lcalmejane/kimono-mcp-server/blob/main/docs/local-rag.md> |
 | Existing distributions | <https://github.com/lcalmejane/kimono-mcp-server/releases> |
 
-Publisher/name/icon above match the 0.6.4 manifest; description and categories
-remain editorial proposals. GitHub distributions are separate from
-Marketplace publication: do not claim that a Marketplace listing exists.
+The extension identity, display name, description, categories and tags above
+were verified against the live listing. GitHub Releases remain an alternate
+distribution channel.
 
 ## 3. Public copy — adapt for the Marketplace README
 
@@ -229,9 +230,9 @@ separate embedded installs do not automatically share a corpus.
 
 ### Account, identity and assets
 
-- [ ] Create or verify access to the Marketplace publisher `ai-kido`. A name in the manifest is
+- [x] Create or verify access to the Marketplace publisher `ai-kido`. A name in the manifest is
   not proof of reservation, ownership or verified identity.
-- [ ] Approve the display name; keep a stable technical ID for updates.
+- [x] Approve the display name; keep a stable technical ID for updates.
 - [ ] Declare support contact, repository and issue links.
 - [x] Original 256×256 PNG icon in the Tatami/AI-KIDO style (`media/icon.png`, source `media/icon.svg`) declared in the manifest.
 - [ ] Capture real MCP activation, live indexing view, search test and selected-read screenshots.
@@ -242,15 +243,15 @@ separate embedded installs do not automatically share a corpus.
 
 ### Package and copy
 
-- [ ] Adapt public copy into the [packaged README](README.md); Marketplace uses
-  that file, not this brief. Remove "not published" statements only at launch.
-- [ ] Apply approved metadata to the [manifest](package.json): display name,
+- [x] Adapt public copy into the [packaged README](README.md); Marketplace uses
+  that file, not this brief. Link to the live listing from installation steps.
+- [x] Apply approved metadata to the [manifest](package.json): display name,
   description, categories, keywords, icon and support links.
-- [ ] Link to an actually published version with default RAG; 0.5.x does not
+- [x] Link to an actually published version with default RAG; 0.5.x does not
   include it. Local 0.6.0 work is not evidence of publication.
-- [ ] Align server/extension versions, lockfile and changelog; build from an
+- [x] Align server/extension versions, lockfile and changelog; build from an
   identified commit without local modifications.
-- [ ] Build/test all four native VSIX targets. Linux ARM64 local validation
+- [x] Build/test all four native VSIX targets. Linux ARM64 local validation
   does not certify the other new-version packages.
 - [ ] Check licenses, notices, current upload-size limits, and absence of
   project data, caches and secrets from every package.
@@ -262,27 +263,26 @@ separate embedded installs do not automatically share a corpus.
   supported authentication method.
 - [ ] Restrict token scope/lifetime if required and store it in CI secrets,
   never in documentation, versioned commands or logs.
-- [ ] Publish native VSIX files as platform variants of one extension/version,
+- [x] Publish native VSIX files as platform variants of one extension/version,
   not as an allegedly universal VSIX.
 - [x] Prepare a separate manual
   [Marketplace workflow](../.github/workflows/publish-marketplace.yml) that
   downloads the selected published release, verifies all four VSIX checksums,
   and publishes all platform targets with `vsce`.
-- [ ] The owner must create/verify publisher `ai-kido`, configure repository
+- [x] The owner created/verified publisher `ai-kido`, configured repository
   secret `VSCE_PAT`, and review the listing before manually dispatching the
   workflow. Dispatch immediately performs publication; there is no second
   confirmation screen.
-- [ ] For an already built and validated VSIX, the submission command has
-  this form:
+- [x] The owner reviewed the listing and manually dispatched the workflow to
+  publish `v0.6.4`; the workflow verified each platform in Marketplace metadata.
+- [x] Publish target VSIX files sequentially and wait for each target to appear
+  in Marketplace version metadata before continuing.
 
-```sh
-npx vsce publish --packagePath vscode/kimono-rag-mcp-<version>-<target>.vsix
-```
-
-- [ ] Require human approval for first publication and a separate Marketplace
+- [x] Require human approval for first publication and a separate Marketplace
   job after existing gates. Current CI publishes GitHub Releases, not Marketplace.
-- [ ] After acceptance, check the live listing, links, platform downloads and
-  upgrade path, then update public installation instructions and announcements.
+- [x] Check the live listing and all four platform targets; update the public
+  installation instructions. Real installation tests and announcements remain
+  separate follow-up work.
 
 Official references:
 [publishing](https://code.visualstudio.com/api/working-with-extensions/publishing-extension)
