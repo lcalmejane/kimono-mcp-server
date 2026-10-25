@@ -1,12 +1,39 @@
 # Kimono MCP for VS Code / pour VS Code
 
-Standalone AI-KIDO knowledge MCP extension, built entirely from
+Standalone local project RAG and AI-KIDO knowledge MCP extension, built entirely from
 [Kimono](https://github.com/lcalmejane/kimono-mcp-server).
 No Tatami Agent, Tatami Core, Docker, npm or separately installed Node.js is
 needed to run it. Each platform VSIX includes Node.js (24 in CI), the MCP server,
 fast-grep, the semantic engine, ONNX Runtime and the pinned multilingual model.
 Installation does not download engines or model weights. An LLM/chat client
 using the tools can still require its own account and network connection.
+
+## One knowledge base. Your team. Your agents.
+
+Give MCP assistants a common way to find evidence in code and documentation
+maintained by people. Use the extension alone for local retrieval, or configure
+a shared HTTP service when several clients need one corpus. Separate embedded
+instances do not automatically synchronize workspaces or conversations.
+RAG is read-only by default; versioned publication/conflict handling requires
+explicit AI-KIDO mode.
+
+The goal is a useful shared knowledge layer, not a guaranteed cheaper search.
+The [current Gemini pilot](https://github.com/lcalmejane/kimono-mcp-server/blob/main/benchmarks/results/current.md)
+uses the current runtime on single-agent RAG tasks, not a multi-agent
+productivity measurement.
+Its planning pair used 71.4% less cumulative input and 52.0% less wall time
+with Kimono. One exploratory pair, human review pending; the separate native
+research answer failed the JSON-format gate. This is not a validated savings
+guarantee or an estimate of billing reduction.
+See the [usage guide](https://github.com/lcalmejane/kimono-mcp-server/blob/main/docs/usage.en.md)
+for deployment boundaries and [discover AI-KIDO / Tatami](https://ai-kido.fr)
+for the wider workflow.
+
+Batch independent searches with `aikido_search queries:[...]` (up to 20),
+then combine selected locations in one `aikido_file operation=ranges` call
+(up to 50 ranges, merged per file). Both use the same snapshot and bounded
+responses; follow `nextQuery` / `remaining` when truncated. See the
+[batch retrieval contract](https://github.com/lcalmejane/kimono-mcp-server/blob/main/docs/retrieval.md#batch-searches-then-batch-reads).
 
 ## Installation (English)
 
@@ -39,6 +66,17 @@ Intel macOS, native Windows ARM64 and standalone browser-only `vscode.dev` are
 not currently built/supported. There is no Marketplace or Open VSX publication;
 download and install a newer VSIX to update.
 
+### Updating the development VSIX
+
+Version 0.6.0 uses **`lcalmejane.kimono-mcp`**, the selected future Marketplace
+publisher identity. The 0.5.0 development VSIX used `tatami.kimono-mcp`;
+VS Code treats these as different extensions. Uninstall the old extension
+before installing 0.6.0 to avoid duplicate MCP providers. Review settings and
+re-enter any remote bearer token using **Kimono: Set Remote Token**: secrets
+and global cache storage are not migrated between publisher identities.
+For old AI-KIDO workspaces, explicitly select `kimono.corpusMode: "aikido"`;
+the new default is generic read-only RAG.
+
 ## Installation (français)
 
 1. Utiliser **VS Code 1.106 minimum** avec un client de chat compatible MCP
@@ -59,13 +97,60 @@ ne dépend pas du workspace de développement Tatami. La mise à jour se fait en
 installant le nouveau VSIX. Le mode restreint bloque le démarrage. Une politique
 d'organisation peut également interdire MCP ou les extensions hors Marketplace.
 
+La 0.6.0 utilise l'identifiant **`lcalmejane.kimono-mcp`**. Désinstaller
+l'ancienne extension `tatami.kimono-mcp` avant de l'installer pour éviter
+deux fournisseurs MCP. Les secrets et caches ne sont pas migrés entre ces
+identités ; ressaisir le jeton distant et sélectionner explicitement
+`kimono.corpusMode: "aikido"` pour les anciens workspaces AI-KIDO.
+
 ## Integration / intégration
+
+### Local RAG for any source project (0.6.0+)
+
+RAG is the default: open a generic code/documentation project without an
+AI-KIDO entry point. The explicit setting below is optional:
+
+```json
+{
+  "kimono.mode": "embedded",
+  "kimono.corpusMode": "rag",
+  "kimono.root": "",
+  "kimono.configFile": "/absolute/private/config/kimono-project.json"
+}
+```
+
+`configFile` is optional; its host-controlled JSON config can select languages,
+include/exclude globs and large-project budgets. `corpusMode` overrides the
+file's mode. No project config is loaded implicitly. Restart MCP after changing
+configuration. In RAG mode no AI-KIDO entry point is needed and project files
+are read-only; Git sync/retarget and collaboration are AI-KIDO-only. Source edits
+remain with the client. Generic UTF-8 source languages include TSX/JSX, Java,
+Go, Rust, PHP, C/C++ and many others, plus extensionless build files.
+
+Root and nested `.gitignore` files apply automatically in both modes, including
+snapshots and lexical/semantic search. Includes cannot override them.
+`node_modules`, `dist` and `build` remain excluded even without Git ignore rules.
+
+**Français :** le mode RAG par défaut indexe le code et les documents sans
+structure AI-KIDO, en respectant les `.gitignore` et exclusions de dépendances.
+Les moteurs/embeddings restent locaux ; le
+chat peut transmettre les extraits à son fournisseur. Les gains en tokens ne
+sont pas garantis et ne concernent pas automatiquement les complétions inline.
+Choisir explicitement `aikido` active le fonctionnement de la Memory Bank.
+
+See [Local RAG: policy, limits and Copilot/Claude Code/Codex/Antigravity setup](https://github.com/lcalmejane/kimono-mcp-server/blob/main/docs/local-rag.md).
+The distribution includes `stdio.cjs` for other MCP clients; installing the
+VSIX alone does not configure those clients. RAG requires version 0.6.0+;
+0.5.x distributions only provide the original AI-KIDO behavior.
+
+### AI-KIDO (explicit opt-in)
 
 Settings example (user or remote-host settings):
 
 ```json
 {
   "kimono.mode": "embedded",
+  "kimono.corpusMode": "aikido",
   "kimono.root": "knowledge"
 }
 ```
@@ -74,6 +159,9 @@ Settings example (user or remote-host settings):
 the open folder. In a multi-root workspace, each local folder gets a distinct
 MCP definition; folder-specific `kimono.root` settings are supported.
 ROOT must already exist; Kimono does not clone or populate it on installation.
+AI-KIDO mode requires `prompts/index.md` or `index.md`. Upgrading from 0.5.x
+requires selecting `aikido` explicitly to preserve AI-KIDO-specific workflows;
+entry-point presence does not switch modes automatically.
 Both a project containing `prompts/` and a dedicated knowledge directory work.
 Caches/indexes live in VS Code's private extension storage, outside ROOT.
 
@@ -83,10 +171,10 @@ disable or uninstall the extension to remove its definitions. Existing manual
 Kimono/Tatami Agent definitions remain independent: disable one registration
 if you see duplicates. Restart the MCP server after changing ROOT or mode.
 
-All existing MCP tools are available, including snapshot-scoped search,
+In AI-KIDO mode all existing MCP tools are available, including snapshot-scoped search,
 `aikido_file`, local embeddings and collaboration. For research:
 
-1. Begin with `aikido_snapshot` (`operation=begin`).
+1. Begin with `aikido_snapshot` (`operation=begin`, optional `paths` to capture only relevant subtrees).
 2. Use its `snapshotId` with `aikido_search` (`mode=text`, `semantic` or `hybrid`).
 3. Read the selected locations with `aikido_file` (`operation=ranges`).
 4. End the snapshot (`operation=end`).

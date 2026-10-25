@@ -4,6 +4,62 @@
 
 ## Ce que fournit Kimono
 
+### Une base de connaissances pour votre équipe et vos agents
+
+La valeur de Kimono ne se limite pas aux tokens : plusieurs clients MCP peuvent
+retrouver des preuves dans un corpus commun, inspectable et maintenu par les
+humains. Un service HTTP partagé donne un point d'accès commun ; des lancements
+stdio indépendants restent des processus locaux distincts. Chaque snapshot
+fige sa propre version, sans synchroniser les conversations ni les éditions.
+Le RAG par défaut est en lecture seule. Le mode AI-KIDO explicite ajoute
+comparaison, publication versionnée et traitement des conflits.
+
+Le [pilote courant](../benchmarks/results/current.md) porte sur le runtime actuel.
+Une base commune peut justifier ce compromis fonctionnel pour une équipe,
+mais ce bénéfice n'est pas mesuré : les tâches sont mono-agent en RAG,
+sans outil de collaboration exposé. Ce n'est ni un surcoût fixe, ni une
+promesse d'économie ou de productivité collective chiffrée.
+
+Sur la paire courante de préparation d'ajout, Kimono utilise 71,4 % d'entrée
+cumulée et 52,0 % de temps en moins. Une répétition, revue humaine en attente ;
+la réponse native de la tâche de recherche échoue au format JSON. Ces chiffres
+restent exploratoires, sans économie validée à qualité équivalente.
+
+### Support : pourquoi un MCP local peut-il consommer plus de tokens ?
+
+Le transport local et l'indexation n'appellent pas de modèle. Le client peut
+en revanche présenter au modèle les schémas/descriptions des outils, les
+consignes serveur, les arguments/résultats et l'historique accumulé.
+Les outils natifs ont eux aussi un schéma ; MCP ajoute une interface à décrire.
+
+Moins d'octets de réponse ne garantit pas moins d'entrée cumulée : les
+définitions et les résultats précédents peuvent rester dans le contexte des
+requêtes suivantes. Cache-read, entrée hors cache et sortie restent distincts ;
+le compteur diagnostic `tool_tokens` ne ventile pas exactement la facture.
+Voir les [mesures et diagnostics courants](../benchmarks/results/current.md).
+Dans ce pilote, le diagnostic vaut 680 par requête en natif, contre 1 903
+avec Kimono. Les requêtes modèle passent de 21 à 9 en recherche et de 31 à 9
+en planification ; la connexion prend 0,528/0,395 s. Une consommation cumulée
+moindre peut donc coexister avec davantage de description d'outils par requête,
+sans isoler ici la contribution causale du batching.
+Ce n'est pas une taxe fixe du protocole. Limiter les outils activés, regrouper
+les plages de lecture et cibler les snapshots sont des pistes à mesurer,
+sans sacrifier qualité, erreurs explicites ou cohérence des sources.
+
+### RAG local générique (v0.6.0)
+
+Le mode RAG est le défaut, sans point d'entrée AI-KIDO requis. Les `.gitignore`
+racine/imbriqués s'appliquent automatiquement ; `node_modules` et les sorties
+de build restent exclus même sans règle Git.
+Pour AI-KIDO, choisir explicitement `KIMONO_CORPUS_MODE=aikido`,
+CLI `--corpus-mode aikido` ou `kimono.corpusMode: "aikido"` dans l'extension.
+Le mode RAG ne publie aucun fichier
+et refuse collaboration/sync Git ; les fonctions ci-dessous restent celles du
+mode AI-KIDO. Voir le [guide RAG local](local-rag.md) pour les langages,
+inclusions/exclusions, limites configurables, snapshots ciblés et branchements
+Copilot, Claude Code, Codex et Antigravity. Les index/embeddings sont locaux ;
+les extraits transmis au chat peuvent partir vers le fournisseur du modèle.
+
 ### Guidance Git en lecture seule et synchronisation distante
 
 `aikido_git` expose `infos`, `sync` et `retarget`. Le ROOT peut être un dossier
@@ -68,14 +124,22 @@ Pour une recherche multi-appels, commencer par `aikido_snapshot {"operation":"be
 Passer le `snapshotId` retourné à `aikido` list/search/read/activate/execute,
 `aikido_search` et `aikido_file`, puis terminer avec
 `aikido_snapshot {"operation":"end","snapshotId":"…"}`. Les réponses incluent
-l'identifiant, la `version` du corpus et sa `provenance`. Durée maximale :
-15 minutes, 8 snapshots actifs, 256 Mio au total.
+l'identifiant ; `begin` fournit la `version` et la `provenance`, non répétées
+dans les recherches compactes. Durée maximale :
+15 minutes, 8 snapshots actifs, 256 Mio au total par défaut en mode AI-KIDO.
+Les limites deviennent configurables ; `begin` peut limiter la capture avec
+`paths`. Voir les [budgets RAG](local-rag.md#grands-dépôts--large-repositories).
 
 Pour un harnais économe en tokens, suivre le [contrat JSON progressif](retrieval.md) :
-métadonnées/en-têtes, localisations de recherche (fichiers et lignes, sans texte,
-par défaut), puis les seuls passages retenus en un lot `aikido_file` `ranges`,
+regrouper les questions indépendantes dans `aikido_search queries:[...]`
+(1–20 chaînes), puis les passages retenus de toutes les recherches dans un
+seul lot `aikido_file` `ranges` (1–50 plages, chevauchements fusionnés),
 et une section ou un fichier complet seulement si nécessaire. Le MCP publie aussi
-ce protocole dans ses `instructions` d'initialisation pour tout client MCP. Les fichiers complets restent une demande explicite ;
+ce protocole dans ses `instructions` d'initialisation pour tout client MCP.
+Les options de recherche sont communes ; un budget global (minimum 4096 octets)
+couvre réponses ordonnées, erreurs par requête et reprise `nextQuery`.
+Les lectures tronquées indiquent les plages `remaining`. Les recherches unitaires
+et vectorielles restent disponibles. Les fichiers complets restent une demande explicite ;
 suivre les indications de pagination/troncature plutôt que charger toute la base.
 
 ## Modes explicites de collaboration

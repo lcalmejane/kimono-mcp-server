@@ -1,3 +1,4 @@
+import { corpusConfig } from '../src/corpus-config.js';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -16,7 +17,7 @@ async function fixture() {
   cleanup.push(root);
   await mkdir(path.join(root, 'prompts'), { recursive: true });
   await writeFile(path.join(root, 'prompts/index.md'), '# Index');
-  const knowledge = new AikidoKnowledgeBase(root);
+  const knowledge = new AikidoKnowledgeBase(root, false, corpusConfig({ mode: 'aikido' }));
   cleanup.push(knowledge.searchIndex.directory);
   return { root, knowledge };
 }

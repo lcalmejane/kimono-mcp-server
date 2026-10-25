@@ -4,6 +4,7 @@ import path from 'node:path';
 import { AikidoKnowledgeBase } from './knowledge.js';
 import { RepositoryAccess } from './repository.js';
 import { readRemoteSourceMetadata } from './project-policy.js';
+import { within } from './synchronization.js';
 
 type Engine = 'literal' | 'semantic';
 interface Snapshot {
@@ -27,18 +28,20 @@ export function corpusFingerprint(documents: Array<{ path: string; kind: string;
   return hash.digest('hex');
 }
 
-export async function sourceSnapshot(knowledge: AikidoKnowledgeBase): Promise<Snapshot> {
+export async function sourceSnapshot(knowledge: AikidoKnowledgeBase, paths?: string[]): Promise<Snapshot> {
   // An independent scan detects additions/deletions as well as edits during indexing.
-  const scan = new AikidoKnowledgeBase(knowledge.root);
+  const scan = new AikidoKnowledgeBase(knowledge.root, knowledge.immutable, knowledge.config,
+    knowledge.immutable ? knowledge.isMemoryRoot : undefined);
   await scan.initialize();
-  const documents = [];
+  const fingerprint = createHash('sha256');
   for (const entry of scan.list().sort((a, b) => a.path.localeCompare(b.path))) {
+    if (!within(entry.path, paths)) continue;
     const { content } = await scan.read(entry.path);
-    documents.push({ ...entry, content });
+    fingerprint.update(JSON.stringify([entry.path, entry.kind, content]));
   }
   const state = await new RepositoryAccess(knowledge.root).infos().catch(() => null);
   return { head: state?.head ?? null, branch: state?.branch ?? null, dirty: state?.dirty ?? null,
-    statusFingerprint: state?.statusFingerprint ?? null, corpusFingerprint: corpusFingerprint(documents) };
+    statusFingerprint: state?.statusFingerprint ?? null, corpusFingerprint: fingerprint.digest('hex') };
 }
 
 async function load(knowledge: AikidoKnowledgeBase, engine: Engine): Promise<BasisState | null> {

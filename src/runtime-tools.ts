@@ -22,22 +22,40 @@ export interface RuntimeRequestContext {
   allowLocalGitProfile?: boolean;
 }
 
+export const SEARCH_PROPERTIES = {
+  ...RETRIEVAL_PROPERTIES,
+  detail: { type: 'string', enum: ['compact', 'locations', 'excerpts'], default: 'compact', description: 'locations adds diagnostics; excerpts adds text.' },
+  contextLines: { type: 'integer', minimum: 0, maximum: 20, description: 'Excerpts only; alone selects excerpts (legacy).' },
+  query: { type: 'string', minLength: 1, description: 'One query, or use queries.' },
+  queries: { type: 'array', minItems: 1, maxItems: 20, items: { type: 'string', minLength: 1 },
+    description: 'Ordered batch; shared options/budget (min 4096 bytes), per-query errors. Resume at nextQuery.' },
+  vector: { type: 'array', minItems: 1, maxItems: 16384, items: { type: 'number' } },
+  embeddingModel: { type: 'string', description: 'Vector only: exact aikido_embed model; matching preprocessing required.' },
+  mode: { type: 'string', enum: ['literal', 'regex', 'text', 'semantic', 'hybrid'], default: 'literal' },
+  regex: { type: 'boolean' },
+  enrich: { type: 'boolean', default: true, description: 'Declared vocabulary aliases only; no translation/LLM.' },
+  kind: { type: 'string', enum: ['command', 'agent', 'skill', 'workflow', 'knowledge'] },
+  limit: { type: 'integer', minimum: 1, maximum: 100, default: 25, description: 'Hits per query.' },
+};
+
 export const RUNTIME_TOOLS: Tool[] = [
   {
     name: 'aikido_snapshot',
-    description: 'Begin or end an immutable, bounded knowledge snapshot. Use its snapshotId on every related list, search and file read; lexical and semantic search plus reads then use the same captured corpus. Snapshots expire after 15 minutes and are limited to 8 active snapshots / 256 MiB total.',
+    description: 'Begin/end an immutable snapshot; reuse snapshotId for search/read. TTL/budgets returned by begin.',
     inputSchema: {
       type: 'object', additionalProperties: false, required: ['operation'],
       properties: {
         operation: { type: 'string', enum: ['begin', 'end'] },
-        snapshotId: { type: 'string', description: 'Required for operation=end; returned by operation=begin.' },
+        snapshotId: { type: 'string', description: 'end only; returned by begin.' },
+        paths: { anyOf: [{ type: 'string', minLength: 1 }, { type: 'array', minItems: 1, maxItems: 256, items: { type: 'string', minLength: 1 } }],
+          description: 'begin: ROOT-relative subtrees, no globs; omit for all.' },
       },
     },
     annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
   },
   {
     name: 'aikido_embed',
-    description: 'operation=info introspects the active local embedding model without inference: exact identifier, name, dimensions, pooling, normalization, prefixes, token cap and SHA-256 of model/tokenizer/spec. Default operation=embed generates a text vector with usage=query or document. Neither operation reads or modifies ROOT/indexes. Text beyond the token cap is truncated.',
+    description: 'info: model identity/preprocessing/hashes, no inference. embed: local query/document vector; input truncates at model token cap. No ROOT/index changes.',
     inputSchema: {
       type: 'object', additionalProperties: false,
       oneOf: [
@@ -46,7 +64,7 @@ export const RUNTIME_TOOLS: Tool[] = [
       ],
       properties: {
         operation: { type: 'string', enum: ['embed', 'info'], default: 'embed' },
-        text: { type: 'string', minLength: 1, description: 'Non-blank text, maximum 32768 UTF-8 bytes.' },
+        text: { type: 'string', minLength: 1, description: 'Nonblank; max 32768 UTF-8 bytes.' },
         usage: { type: 'string', enum: ['query', 'document'], default: 'query' },
       },
     },
@@ -54,7 +72,7 @@ export const RUNTIME_TOOLS: Tool[] = [
   },
   {
     name: 'aikido_root',
-    description: 'Inspect the configured AIKIDO_ROOT. The root is a dedicated knowledge directory and may not be a Git repository.',
+    description: 'Inspect ROOT, corpus policy and readiness; Git optional.',
     inputSchema: {
       type: 'object', additionalProperties: false, required: ['operation'],
       properties: {
@@ -65,46 +83,39 @@ export const RUNTIME_TOOLS: Tool[] = [
   },
   {
     name: 'aikido_search',
-    description: 'Snapshot-scoped search. Prefer text for natural language lexical retrieval, semantic for vectors, or hybrid for parallel text+semantic branches. Normalization and one-hop repository glossary enrichment are reported compactly (query terms, expansions with glossary source lines, branch status/errors, scores, provenance) for the consuming LLM. literal remains exact phrase; regex remains explicit regex. not-ready means poll aikido_index status instead of repeatedly searching. Default detail=locations returns only where to look (path, total lines, best score, hit lines, matched terms); then request the needed passages in ONE aikido_file operation=ranges batch with the same snapshotId, and read whole files only when really needed.',
+    description: 'Search snapshot: query or queries[] batch. compact returns paths/ranges, no text. text=terms, literal=phrase, regex=pattern, semantic=meaning, hybrid=both. Read hits in one aikido_file ranges batch.',
     inputSchema: {
       type: 'object', additionalProperties: false,
       oneOf: [
-        { required: ['snapshotId', 'query'], not: { anyOf: [{ required: ['vector'] }, { required: ['embeddingModel'] }] } },
-        { required: ['snapshotId', 'vector', 'embeddingModel', 'mode'], properties: { mode: { const: 'semantic' } }, not: { required: ['query'] } },
+        { required: ['query'] },
+        { required: ['queries'] },
+        { required: ['vector', 'embeddingModel', 'mode'], properties: { mode: { const: 'semantic' } } },
       ],
+      required: ['snapshotId'],
       properties: {
-        ...RETRIEVAL_PROPERTIES,
-        snapshotId: { type: 'string', description: 'Required snapshot from aikido_snapshot begin.' },
-        detail: { type: 'string', enum: ['locations', 'excerpts'], default: 'locations', description: 'locations (default, token-frugal): files ordered by best score with matched line numbers ([start,end] for semantic chunks) and matched terms, no text. Then fetch only the needed passages in one aikido_file operation=ranges call. excerpts: legacy passages with context, document metadata and scoring details (diagnostics only).' },
-        contextLines: { type: 'integer', minimum: 0, maximum: 20, default: 2, description: 'detail=excerpts only. Passing it without detail selects excerpts for backward compatibility.' },
-        query: { type: 'string' }, regex: { type: 'boolean', default: false },
-        vector: { type: 'array', minItems: 1, maxItems: 16384, items: { type: 'number' }, description: 'Finite non-zero embedding; must match the active model dimension.' },
-        embeddingModel: { type: 'string', description: 'Exact model identifier returned by aikido_embed; caller is responsible for vector provenance and matching preprocessing.' },
-        mode: { type: 'string', enum: ['literal', 'regex', 'text', 'semantic', 'hybrid'], default: 'literal' },
-        enrich: { type: 'boolean', default: true, description: 'text/semantic/hybrid: enrich only from declared project vocabulary aliases. No built-in translation, LLM call or ROOT mutation. Cross-language text retrieval requires explicit bilingual glossary aliases; queryPlan includes provenance and warnings.' },
-        kind: { type: 'string', enum: ['command', 'agent', 'skill', 'workflow', 'knowledge'] },
-        limit: { type: 'integer', minimum: 1, maximum: 100, default: 25 },
+        ...SEARCH_PROPERTIES,
+        snapshotId: { type: 'string' },
       },
     },
     annotations: { readOnlyHint: true },
   },
   {
     name: 'aikido_index',
-    description: 'Refresh external lexical/semantic indexes from the current configured knowledge ROOT. This changes only external cache state; it does not modify ROOT. status with mode=semantic polls progress.',
+    description: 'Refresh external indexes, never ROOT. status requires mode=semantic.',
     inputSchema: {
       type: 'object', additionalProperties: false, required: ['operation'],
       properties: {
         operation: { type: 'string', enum: ['update', 'status'] },
         mode: { type: 'string', enum: ['literal', 'semantic', 'all'], default: 'literal' },
-        background: { type: 'boolean', default: false, description: 'Full semantic update only: start preparation and return status immediately; poll status for progress.' },
+        background: { type: 'boolean', default: false, description: 'Full semantic update only; poll status.' },
         paths: { anyOf: [{ type: 'string', minLength: 1 }, { type: 'array', minItems: 1, maxItems: 256, items: { type: 'string', minLength: 1 } }],
-          description: 'update only: ROOT-relative files/directories; deleted paths accepted, overlaps deduplicated. No globs, absolute paths or traversal.' },
+          description: 'update: ROOT-relative subtrees/deletions; no globs/traversal.' },
       },
     },
   },
   {
     name: 'aikido_git',
-    description: 'Knowledge-project Git guidance only. Retarget associates a credential-free repository URL/optional branch. Sync retrieves that source in read direction, anonymously or using the current user\'s host-resolved read credentials, then indexes its knowledge. The policy manifest URL is never selected implicitly. No checkout, commit, push, merge or branch creation.',
+    description: 'AI-KIDO only. infos: guidance. retarget: explicit source URL. sync: read remote knowledge into ROOT, preserving local conflicts. No Git mutations; credentials stay host-managed.',
     inputSchema: {
       type: 'object', additionalProperties: false, required: ['operation'],
       allOf: [{
@@ -117,54 +128,55 @@ export const RUNTIME_TOOLS: Tool[] = [
       properties: {
         operation: { type: 'string', enum: ['infos', 'sync', 'retarget'] },
         mode: { type: 'string', enum: ['literal', 'semantic', 'all'], default: 'all' },
-        gitUrl: { type: 'string', description: 'Credential-free HTTPS/SSH Git URL; required for retarget.' },
-        branch: { type: ['string', 'null'], description: 'Optional existing branch to read; omit to use remote default HEAD. Never creates a branch.' },
-        connectionId: { type: 'string', maxLength: 128, pattern: '^[A-Za-z0-9_-]*$', description: 'Optional opaque host-managed credential reference for sync; empty means anonymous. Never pass tokens or keys.' },
+        gitUrl: { type: 'string', description: 'retarget: HTTPS/SSH, no credentials.' },
+        branch: { type: ['string', 'null'], description: 'Existing branch; omit for remote HEAD.' },
+        connectionId: { type: 'string', maxLength: 128, pattern: '^[A-Za-z0-9_-]*$', description: 'sync: host credential ID, never secrets; empty=anonymous.' },
       },
     },
     annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
   },
   {
     name: 'aikido_collaboration',
-    description: 'Generic MCP-only shared knowledge collaboration: guidance, status, three-way compare, read a pinned shared revision, and explicitly publish an optimistic revision. A successful publish safely synchronizes the accepted document revision into configured AIKIDO_ROOT, so later snapshots/searches see it; open snapshots remain pinned. No Git or Tatami API is required. Use personal-replica operations only when the client has separate files; verified embedded stdio editing the exact configured ROOT should instead call aikido_index update. Never infer shared-directory mode for HTTP.',
+    description: 'AI-KIDO knowledge revisions, not Git. Call guidance first. Personal replicas: status, compare, pinned read, optimistic publish into ROOT; resolve conflicts explicitly. Verified same-ROOT stdio edits: index update instead. HTTP never implies same-ROOT.',
     inputSchema: {
       type: 'object', additionalProperties: false, required: ['operation'],
       properties: {
         operation: { type: 'string', enum: ['guidance', 'status', 'compare', 'read', 'publish'] },
         localManifest: { type: 'object', maxProperties: 2000, additionalProperties: { type: 'string', pattern: '^[a-f0-9]{64}$' },
-          description: 'Optional ROOT-relative eligible path to SHA-256 map. Omit to use the configured MCP ROOT snapshot.' },
-        baseVersion: { type: 'string', pattern: '^[a-f0-9]{64}$', description: 'Persisted shared revision the local replica started from.' },
-        expectedSharedVersion: { type: 'string', pattern: '^[a-f0-9]{64}$', description: 'Required current shared revision optimistic concurrency guard for publish.' },
-        sharedVersion: { type: 'string', pattern: '^[a-f0-9]{64}$', description: 'Read: required exact revision. Status: optional historical revision to include as requestedRevision without moving the current pointer.' },
-        paths: { type: 'array', minItems: 1, maxItems: 100, items: { type: 'string' }, description: 'Relative eligible paths to read from the pinned revision.' },
+          description: 'Eligible path -> SHA-256; omit for ROOT snapshot.' },
+        baseVersion: { type: 'string', pattern: '^[a-f0-9]{64}$', description: 'Replica starting revision.' },
+        expectedSharedVersion: { type: 'string', pattern: '^[a-f0-9]{64}$', description: 'publish: required current revision guard.' },
+        sharedVersion: { type: 'string', pattern: '^[a-f0-9]{64}$', description: 'read: exact revision required; status: historical revision.' },
+        paths: { type: 'array', minItems: 1, maxItems: 100, items: { type: 'string' }, description: 'Read paths at sharedVersion.' },
         offset: { type: 'integer', minimum: 0, default: 0 },
         limit: { type: 'integer', minimum: 1, maximum: 100, default: 100 },
         changes: { type: 'array', maxItems: 2000, items: { type: 'object', additionalProperties: false, required: ['path', 'content'],
           properties: { path: { type: 'string' }, content: { type: ['string', 'null'] } } },
-          description: 'Changed file content as UTF-8 text; null deletes. Content hashes must match localManifest.' },
+          description: 'UTF-8; null deletes. Hashes must match localManifest.' },
         resolutions: { type: 'object', maxProperties: 2000, additionalProperties: { type: 'string', enum: ['local', 'shared'] },
-          description: 'Explicit per-conflict choice; publish never silently chooses last-write-wins.' },
+          description: 'Explicit conflict choices; no last-write-wins.' },
       },
     },
     annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
   },
   {
     name: 'aikido_file',
-    description: 'Snapshot-scoped read-only JSON retrieval: ranges (batch: up to 50 {path,startLine,endLine?} merged per file, optional contextLines, one byte budget; returns passages and any remaining ranges), metadata, Markdown outline, or read by inclusive 1-based startLine/endLine, exact section, or explicit full=true. Pass snapshotId from aikido_snapshot begin; reads use that immutable corpus.',
+    description: 'Read snapshot; prefer ranges[] across files (1-based inclusive, merged). Follow remaining if truncated. Other operations: metadata, outline, read lines/section; full last.',
     inputSchema: {
       type: 'object', additionalProperties: false, required: ['operation', 'snapshotId'],
-      if: { properties: { operation: { const: 'ranges' } } },
-      then: { required: ['ranges'], not: { anyOf: [{ required: ['path'] }, { required: ['section'] }, { required: ['full'] }, { required: ['startLine'] }, { required: ['endLine'] }] } },
-      else: { required: ['path'], not: { anyOf: [{ required: ['ranges'] }, { required: ['contextLines'] }] } },
+      oneOf: [
+        { required: ['ranges'], properties: { operation: { const: 'ranges' } } },
+        { required: ['path'], properties: { operation: { enum: ['metadata', 'outline', 'read'] } } },
+      ],
       properties: {
         ...READ_PROPERTIES,
         offset: { type: 'integer', minimum: 0, default: 0 },
         limit: { type: 'integer', minimum: 1, maximum: 100, default: 25 },
-        operation: { type: 'string', enum: ['ranges', 'metadata', 'outline', 'read'] }, path: { type: 'string', description: 'Required except for operation=ranges.' },
+        operation: { type: 'string', enum: ['ranges', 'metadata', 'outline', 'read'] }, path: { type: 'string' },
         ranges: { type: 'array', minItems: 1, maxItems: 50, items: { type: 'object', additionalProperties: false, required: ['path', 'startLine'],
-          properties: { path: { type: 'string' }, startLine: { type: 'integer', minimum: 1 }, endLine: { type: 'integer', minimum: 1, description: 'Inclusive; default startLine.' } } } },
-        contextLines: { type: 'integer', minimum: 0, maximum: 20, default: 0, description: 'operation=ranges only: lines added around each range before merging.' },
-        snapshotId: { type: 'string', description: 'Required snapshot from aikido_snapshot begin.' },
+          properties: { path: { type: 'string' }, startLine: { type: 'integer', minimum: 1 }, endLine: { type: 'integer', minimum: 1 } } } },
+        contextLines: { type: 'integer', minimum: 0, maximum: 20, default: 0, description: 'ranges only; context before merging.' },
+        snapshotId: { type: 'string' },
       },
     },
     annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
@@ -186,7 +198,8 @@ class RuntimeTools {
   private readonly repository: RepositoryAccess;
   private readonly collaboration: KnowledgeCollaboration;
   readonly retrieval: Retrieval;
-  constructor(private readonly knowledge: AikidoKnowledgeBase, responseMetadata?: Record<string, unknown>) {
+  constructor(private readonly knowledge: AikidoKnowledgeBase,
+    private readonly responseMetadata: Record<string, unknown> = {}) {
     this.repository = new RepositoryAccess(knowledge.root);
     this.collaboration = new KnowledgeCollaboration(knowledge);
     this.retrieval = new Retrieval(knowledge, responseMetadata);
@@ -200,7 +213,7 @@ class RuntimeTools {
         const mode = input.mode;
         const semantic = name === 'aikido_search' && (mode === 'semantic' || mode === 'hybrid');
         let availability: { error: string; index: unknown } | undefined;
-        if (semantic && snapshot.knowledge.semanticIndex.status().phase === 'unknown') {
+        if (semantic && !snapshot.paths && snapshot.knowledge.semanticIndex.status().phase === 'unknown') {
           const source = this.knowledge.semanticIndex;
           if (!await snapshot.knowledge.semanticIndex.seedFrom(source, snapshot.version)) {
             const status = source.status();
@@ -212,7 +225,9 @@ class RuntimeTools {
           }
         }
         const result = await runtimeFor(snapshot.knowledge, snapshotMetadata(snapshot)).execute(name, input, {}, availability);
-        return decorateSnapshotResult(result, snapshot);
+        const compact = name === 'aikido_search' && (input.queries !== undefined || input.detail === 'compact'
+          || input.detail === undefined && input.contextLines === undefined);
+        return compact ? result : decorateSnapshotResult(result, snapshot);
       });
     }
     if (name === 'aikido_index' && input.operation === 'status') {
@@ -231,14 +246,21 @@ class RuntimeTools {
 
   private async execute(name: string, input: Record<string, unknown>, context: RuntimeRequestContext = {},
     semanticAvailability?: { error: string; index: unknown }): Promise<string> {
+    if (this.knowledge.config.mode === 'rag' &&
+      (name === 'aikido_collaboration' || name === 'aikido_git' && input.operation !== 'infos')) {
+      throw new Error('RAG mode is local read-only retrieval: collaboration publication and remote Git sync are AI-KIDO-only. Use client tools for project edits and Git.');
+    }
     if (name === 'aikido_snapshot') {
       const operation = text(input, 'operation', true);
       const manager = snapshotsFor(this.knowledge);
       if (operation === 'begin') {
         if (input.snapshotId !== undefined) throw new Error('begin does not accept snapshotId');
-        return JSON.stringify(await manager.begin());
+        return JSON.stringify(await manager.begin(synchronizationPaths(input.paths)));
       }
-      if (operation === 'end') return JSON.stringify(await manager.end(text(input, 'snapshotId', true)!));
+      if (operation === 'end') {
+        if (input.paths !== undefined) throw new Error('end does not accept paths');
+        return JSON.stringify(await manager.end(text(input, 'snapshotId', true)!));
+      }
       throw new Error('operation must be begin or end');
     }
     if (name === 'aikido_embed') {
@@ -260,6 +282,7 @@ class RuntimeTools {
         const retarget = await readRetargetMetadata(this.knowledge.searchIndex.directory);
         return JSON.stringify({
           root: this.knowledge.root, initialized: this.knowledge.isInitialized,
+          corpus: this.knowledge.corpusStatus,
           policy,
           retarget,
           note: 'Knowledge-only MCP: project files and Git remotes are never modified.',
@@ -268,6 +291,7 @@ class RuntimeTools {
       throw new Error('Only operation=status is available; project files are never initialized or changed through MCP');
     }
     if (name === 'aikido_search') {
+      if (input.queries !== undefined) return this.searchBatch(input, semanticAvailability);
       const kind = input.kind;
       if (kind !== undefined && kind !== 'agent' && kind !== 'skill' && kind !== 'command' && kind !== 'workflow' && kind !== 'knowledge') throw new Error('Invalid knowledge kind');
       const limit = input.limit ?? 25;
@@ -426,6 +450,44 @@ class RuntimeTools {
       throw new Error('Only aikido_file ranges, metadata, outline and read are available; MCP never edits project files');
     }
     throw new Error(`Unknown tool: ${name}`);
+  }
+
+  private async searchBatch(input: Record<string, unknown>,
+    availability?: { error: string; index: unknown }): Promise<string> {
+    const { queries, ...options } = input;
+    if (!Array.isArray(queries) || queries.length < 1 || queries.length > 20
+      || !queries.every((query: unknown) => typeof query === 'string')) {
+      throw new Error('queries must contain 1-20 strings');
+    }
+    if (['query', 'vector', 'embeddingModel'].some(key => input[key] !== undefined)) {
+      throw new Error('queries cannot be combined with query, vector or embeddingModel');
+    }
+    const maxBytes = integer(input, 'maxBytes', 16384, 4096, 262144);
+    const compact = input.detail === 'compact' || input.detail === undefined && input.contextLines === undefined;
+    const metadata = compact ? { snapshotId: this.responseMetadata.snapshotId } : this.responseMetadata;
+    const searches: Record<string, unknown>[] = [];
+    const output = (nextQuery: number) => JSON.stringify({ searches, ...metadata,
+      ...(nextQuery < queries.length ? { truncated: true, nextQuery } : {}) });
+    for (let index = 0; index < queries.length; index++) {
+      // Reserve the envelope and continuation before giving this query the remaining budget.
+      const available = maxBytes - Buffer.byteLength(output(index)) - 64;
+      if (available < 2048) return output(index);
+      let result: Record<string, unknown>;
+      try {
+        result = JSON.parse(await this.execute('aikido_search', { ...options, query: queries[index], maxBytes: available }, {}, availability));
+        delete result.snapshotId;
+        delete result.version;
+        delete result.provenance;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        result = { error: message.length > 512 ? `${message.slice(0, 512)}...` : message };
+      }
+      searches.push(result);
+      if (Buffer.byteLength(output(index + 1)) > maxBytes) {
+        throw new Error('Search batch exceeded maxBytes; increase the response budget');
+      }
+    }
+    return output(queries.length);
   }
 
   private async infos() {

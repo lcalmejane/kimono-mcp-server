@@ -1,3 +1,4 @@
+import { corpusConfig } from '../src/corpus-config.js';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -15,7 +16,7 @@ it('keeps enriched text search available while semantic indexing is still runnin
   const root = await mkdtemp(path.join(tmpdir(), 'kimono-planned-search-'));
   roots.push(root);
   await writeFile(path.join(root, 'index.md'), '# Project');
-  const knowledge = new AikidoKnowledgeBase(root);
+  const knowledge = new AikidoKnowledgeBase(root, false, corpusConfig({ mode: 'aikido' }));
   await knowledge.initialize();
   const entry = knowledge.list()[0];
   vi.spyOn(knowledge.searchIndex, 'searchCandidates').mockResolvedValue({ matches: [{
@@ -40,7 +41,7 @@ it('ranks original whole terms above aliases, suppresses definition-only noise, 
   const root = await mkdtemp(path.join(tmpdir(), 'kimono-ranked-search-'));
   roots.push(root);
   await writeFile(path.join(root, 'index.md'), '# Project');
-  const knowledge = new AikidoKnowledgeBase(root);
+  const knowledge = new AikidoKnowledgeBase(root, false, corpusConfig({ mode: 'aikido' }));
   await knowledge.initialize();
   const entry = knowledge.list()[0];
   const candidate = (file: string, excerpt: string, line = 1) => ({ ...entry, path: file, title: file.replace('.md', ''), line, excerpt });

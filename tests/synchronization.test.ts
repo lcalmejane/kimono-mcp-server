@@ -1,3 +1,4 @@
+import { corpusConfig } from '../src/corpus-config.js';
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -20,7 +21,7 @@ async function fixture() {
   for (const file of ['index.md', 'selected/edit.md', 'selected/delete.md', 'selected/empty.md', 'selected-neighbor/keep.md']) {
     await writeFile(path.join(root, 'prompts', file), file.endsWith('empty.md') ? '' : `old ${file}`);
   }
-  const knowledge = new AikidoKnowledgeBase(root);
+  const knowledge = new AikidoKnowledgeBase(root, false, corpusConfig({ mode: 'aikido' }));
   directories.push(knowledge.searchIndex.directory);
   await knowledge.initialize();
   return { root, knowledge, runtime: runtimeFor(knowledge) };

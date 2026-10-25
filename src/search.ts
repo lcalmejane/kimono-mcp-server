@@ -1,11 +1,12 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import type { AikidoKnowledgeBase, KnowledgeEntry, KnowledgeKind, SearchMatch } from './knowledge.js';
 import { runProcess } from './process.js';
 import { within, type ChangeReport } from './synchronization.js';
-import { corpusFingerprint, trackIndex } from './index-basis.js';
+import { trackIndex } from './index-basis.js';
+import { corpusConfig } from './corpus-config.js';
 
 type Owners = Record<string, string>;
 type Candidates = { matches: SearchMatch[]; truncated: boolean };
@@ -20,7 +21,11 @@ export class FastGrepIndex {
   private freshSignature: string | undefined;
 
   constructor(private readonly knowledge: AikidoKnowledgeBase) {
-    const key = createHash('sha256').update(knowledge.root).digest('hex').slice(0, 24);
+    const includeSpec = process.env.AIKIDO_INCLUDE_SPEC === 'true';
+    // Keep existing AI-KIDO retargets/revisions in their original cache.
+    const legacy = !includeSpec && JSON.stringify(knowledge.config) === JSON.stringify(corpusConfig({ mode: 'aikido' }));
+    const identity = legacy ? knowledge.root : JSON.stringify([knowledge.root, knowledge.config, includeSpec]);
+    const key = createHash('sha256').update(identity).digest('hex').slice(0, 24);
     this.directory = path.join(process.env.KIMONO_CACHE_DIR ?? path.join(homedir(), '.cache', 'kimono'), key);
     if (this.directory === knowledge.root || this.directory.startsWith(`${knowledge.root}${path.sep}`)) {
       throw new Error('KIMONO_CACHE_DIR must be outside AIKIDO_ROOT');
@@ -91,50 +96,63 @@ export class FastGrepIndex {
     const owners = await this.owners();
     const matches: SearchMatch[] = [];
     let truncated = false;
+    const boundMatches = () => {
+      if (matches.length <= limit) return;
+      truncated = true;
+      if (perFile !== undefined) {
+        const positions = new Map<string, number>();
+        const ordered = matches.map(hit => {
+          const position = positions.get(hit.path) ?? 0;
+          positions.set(hit.path, position + 1);
+          return { hit, position };
+        }).sort((a, b) => a.position - b.position || a.hit.path.localeCompare(b.hit.path));
+        matches.splice(0, matches.length, ...ordered.slice(0, limit).map(item => item.hit));
+      } else matches.length = limit;
+    };
     for (const shard of [...new Set(Object.values(owners))]) {
-      const selected = entries.filter(entry => owners[entry.path] === shard);
-      if (!selected.length) continue;
-      const directory = shard === 'base' ? (this.knowledge.immutable ? this.knowledge.root : this.documents)
-        : path.join(this.directory, shard, 'documents');
-      const args = ['--format', 'json', '--ignore-case', '--hidden', '--no-ignore', '--index', this.index(shard), '--max-results', String(limit)];
-      // Bound JSON below runProcess's buffer; fgr reports every output limit.
-      args.push('--max-output-bytes', '2097152', '--no-auto-update');
-      if (perFile !== undefined) args.push('--max-results-per-file', String(perFile));
-      if (!regex) args.push('--fixed-strings');
-      // A file has exactly one live owner. Superseded postings are never searched.
-      for (const entry of selected) args.push('--include', entry.path.replace(/([*?[\]{}])/g, '\\$1'));
-      args.push('--', query, directory);
-      const result = await runProcess(this.binary, args, directory, [0, 1]);
-      if (result.exitCode === 1) continue;
-      const data: unknown = JSON.parse(result.stdout);
-      if (!isRecord(data) || !Array.isArray(data.files)) throw new Error('Invalid fast-grep JSON response');
-      truncated ||= Boolean(data.truncated);
-      const byPath = new Map(selected.map(entry => [entry.path, entry]));
-      for (const file of data.files) {
-        if (!isRecord(file) || typeof file.path !== 'string' || !Array.isArray(file.matches)) {
-          throw new Error('Invalid fast-grep file response');
-        }
-        const relative = path.isAbsolute(file.path) ? path.relative(directory, file.path) : file.path;
-        const entry = byPath.get(relative.split(path.sep).join('/'));
-        if (!entry) throw new Error(`fast-grep returned an out-of-scope file: ${file.path}`);
-        for (const match of file.matches) {
-          if (!isRecord(match) || typeof match.line !== 'number' || typeof match.text !== 'string') {
-            throw new Error('Invalid fast-grep match response');
+      // Bound command-line size on Windows/POSIX even for very large catalogues.
+      const batches: KnowledgeEntry[][] = [];
+      let size = 0;
+      for (const entry of entries.filter(entry => owners[entry.path] === shard)) {
+        const length = Buffer.byteLength(entry.path) * 2 + 32;
+        if (!batches.length || size + length > 12_000) { batches.push([]); size = 0; }
+        batches[batches.length - 1].push(entry);
+        size += length;
+      }
+      for (const selected of batches) {
+        const directory = shard === 'base' ? (this.knowledge.immutable ? this.knowledge.root : this.documents)
+          : path.join(this.directory, shard, 'documents');
+        const args = ['--format', 'json', '--ignore-case', '--hidden', '--no-ignore', '--index', this.index(shard), '--max-results', String(limit)];
+        // Bound JSON below runProcess's buffer; fgr reports every output limit.
+        args.push('--max-output-bytes', '2097152', '--no-auto-update');
+        if (perFile !== undefined) args.push('--max-results-per-file', String(perFile));
+        if (!regex) args.push('--fixed-strings');
+        for (const entry of selected) args.push('--include', entry.path.replace(/([*?[\]{}])/g, '\\$1'));
+        args.push('--', query, directory);
+        const result = await runProcess(this.binary, args, directory, [0, 1]);
+        if (result.exitCode === 1) continue;
+        const data: unknown = JSON.parse(result.stdout);
+        if (!isRecord(data) || !Array.isArray(data.files)) throw new Error('Invalid fast-grep JSON response');
+        truncated ||= Boolean(data.truncated);
+        const byPath = new Map(selected.map(entry => [entry.path, entry]));
+        for (const file of data.files) {
+          if (!isRecord(file) || typeof file.path !== 'string' || !Array.isArray(file.matches)) {
+            throw new Error('Invalid fast-grep file response');
           }
-          matches.push({ ...entry, line: match.line, excerpt: match.text.slice(0, 1000) });
+          const relative = path.isAbsolute(file.path) ? path.relative(directory, file.path) : file.path;
+          const entry = byPath.get(relative.split(path.sep).join('/'));
+          if (!entry) throw new Error(`fast-grep returned an out-of-scope file: ${file.path}`);
+          for (const match of file.matches) {
+            if (!isRecord(match) || typeof match.line !== 'number' || typeof match.text !== 'string') {
+              throw new Error('Invalid fast-grep match response');
+            }
+            matches.push({ ...entry, line: match.line, excerpt: match.text.slice(0, 1000) });
+          }
         }
+        boundMatches();
       }
     }
-    if (perFile !== undefined && matches.length > limit) {
-      const positions = new Map<string, number>();
-      const ordered = matches.map(hit => {
-        const position = positions.get(hit.path) ?? 0;
-        positions.set(hit.path, position + 1);
-        return { hit, position };
-      }).sort((a, b) => a.position - b.position || a.hit.path.localeCompare(b.hit.path));
-      return { matches: ordered.slice(0, limit).map(item => item.hit), truncated: true };
-    }
-    return { matches: matches.slice(0, limit), truncated: truncated || matches.length > limit };
+    return { matches, truncated };
   }
 
   private index(shard: string): string {
@@ -184,51 +202,50 @@ export class FastGrepIndex {
     const owners = { ...previous };
     const changes: ChangeReport = { added: [], modified: [], deleted: [] };
     const current = this.knowledge.list().filter(entry => within(entry.path, paths)).map(entry => entry.path);
-    const contents = new Map<string, string>();
-    const documents = [];
+    const contents = new Set<string>();
+    const fingerprint = createHash('sha256');
+    const shard = `shard-${randomUUID()}`;
     for (const file of Object.keys(previous).filter(file => within(file, paths) && !current.includes(file))) {
       changes.deleted.push(file);
       delete owners[file];
     }
-    for (const file of current) {
-      const { content, entry } = await this.knowledge.read(file);
-      documents.push({ path: file, kind: entry.kind, content });
-      let existing: string | undefined;
-      const baseline = previous[file] && previous[file] !== 'base'
-        ? path.join(this.directory, previous[file], 'documents', file) : path.join(this.documents, file);
-      try { existing = await readFile(baseline, 'utf8'); }
-      catch (error) { if (!missing(error)) throw error; }
-      if (!(file in previous)) changes.added.push(file);
-      else if (existing !== content) changes.modified.push(file);
-      if (rebuild || !(file in previous) || existing !== content) contents.set(file, content);
-    }
-    observed?.(corpusFingerprint(documents));
-    // fast-grep's update walks its entire root and rebuilds previous delta files.
-    // Immutable batch shards avoid both operations for a paths-scoped update.
-    const shard = `shard-${randomUUID()}`;
-    if (contents.size) {
-      const documents = path.join(this.directory, shard, 'documents');
-      try {
-        for (const [file, content] of contents) {
-          const target = path.join(documents, file);
+    try {
+      for (const file of current.sort((a, b) => a.localeCompare(b))) {
+        const { content, entry } = await this.knowledge.read(file);
+        fingerprint.update(JSON.stringify([file, entry.kind, content]));
+        let existing: string | undefined;
+        const baseline = previous[file] && previous[file] !== 'base'
+          ? path.join(this.directory, previous[file], 'documents', file) : path.join(this.documents, file);
+        try { existing = await readFile(baseline, 'utf8'); }
+        catch (error) { if (!missing(error)) throw error; }
+        if (!(file in previous)) changes.added.push(file);
+        else if (existing !== content) changes.modified.push(file);
+        if (rebuild || !(file in previous) || existing !== content) {
+          const target = path.join(this.directory, shard, 'documents', file);
           await mkdir(path.dirname(target), { recursive: true });
           await writeFile(target, content, { mode: 0o600 });
+          contents.add(file);
         }
-        await runProcess(this.binary, ['index', '-i', documents, '--output', this.index(shard), '--hidden', '--no-ignore'], documents);
-      } catch (error) {
-        await rm(path.join(this.directory, shard), { recursive: true, force: true });
-        throw error;
       }
-      for (const file of contents.keys()) owners[file] = shard;
+      observed?.(fingerprint.digest('hex'));
+      // Immutable batch shards avoid full-root rebuilds for paths-scoped updates.
+      if (contents.size) {
+        const documents = path.join(this.directory, shard, 'documents');
+        await runProcess(this.binary, ['index', '-i', documents, '--output', this.index(shard), '--hidden', '--no-ignore'], documents);
+        for (const file of contents) owners[file] = shard;
+      }
+    } catch (error) {
+      await rm(path.join(this.directory, shard), { recursive: true, force: true });
+      throw error;
     }
     // Commit ownership before compatibility mirrors: failed mirror writes must
     // never make an old base index look synchronized with newer source text.
     await this.save('literal-state.json', owners);
     await this.save('manifest.json', Object.keys(owners).sort());
-    for (const [file, content] of contents) {
+    for (const file of contents) {
       const target = path.join(this.documents, file);
       await mkdir(path.dirname(target), { recursive: true });
-      await writeFile(target, content, { mode: 0o600 });
+      await copyFile(path.join(this.directory, shard, 'documents', file), target);
     }
     for (const file of changes.deleted) await rm(path.join(this.documents, file), { force: true });
     for (const unused of new Set(Object.values(previous))) {

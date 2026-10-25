@@ -2,17 +2,17 @@ import path from 'node:path';
 import { AikidoKnowledgeBase, fileId, type KnowledgeEntry, type SearchMatch } from './knowledge.js';
 
 export const RETRIEVAL_PROPERTIES = {
-  pathPrefix: { type: 'string', description: 'Exact ROOT-relative file or directory subtree; not a glob.' },
+  pathPrefix: { type: 'string', description: 'ROOT-relative file/subtree, no glob.' },
   scope: { type: 'string', enum: ['all', 'memory', 'code'], default: 'all' },
   type: { type: 'string', enum: ['agent', 'concept', 'technique', 'use_case', 'hard_point', 'markdown', 'script', 'config', 'file'] },
-  extension: { type: 'string', description: 'File extension without leading dot, e.g. md.' },
-  maxBytes: { type: 'integer', minimum: 2048, maximum: 262144, default: 16384, description: 'Maximum UTF-8 bytes in the serialized JSON response; never a token estimate.' },
+  extension: { type: 'string', description: 'Without dot.' },
+  maxBytes: { type: 'integer', minimum: 2048, maximum: 262144, default: 16384, description: 'Total response UTF-8 bytes.' },
 };
 export const READ_PROPERTIES = {
-  startLine: { type: 'integer', minimum: 1, description: 'Inclusive, 1-based. Default 1.' },
-  endLine: { type: 'integer', minimum: 1, description: 'Inclusive. Default startLine + 199.' },
-  section: { type: 'string', description: 'Exact Markdown heading title. Ambiguous duplicate titles are rejected; use outline and line ranges.' },
-  full: { type: 'boolean', default: false, description: 'Explicit whole-file read; incompatible with ranges/section. Default byte budget becomes 16 MiB.' },
+  startLine: { type: 'integer', minimum: 1, description: '1-based inclusive; default 1.' },
+  endLine: { type: 'integer', minimum: 1, description: 'Inclusive; default startLine+199.' },
+  section: { type: 'string', description: 'Unique Markdown heading.' },
+  full: { type: 'boolean', default: false, description: 'Whole file; no lines/section. Default budget 16 MiB.' },
   maxBytes: { type: 'integer', minimum: 2048, maximum: 16777216, default: 16384 },
 };
 
@@ -147,11 +147,16 @@ function compactMetadata(extra: Record<string, unknown>): Record<string, unknown
 }
 
 export class Retrieval {
+  private readonly immutableLineCounts = new Map<string, number>();
+
   constructor(private readonly knowledge: AikidoKnowledgeBase,
     private readonly responseMetadata: Record<string, unknown> = {}) {}
 
-  private json(value: object, maxBytes?: number): string {
-    const json = JSON.stringify({ ...value, ...this.responseMetadata });
+  private json(value: object, maxBytes?: number, compact = false): string {
+    const metadata = compact
+      ? (this.responseMetadata.snapshotId ? { snapshotId: this.responseMetadata.snapshotId } : {})
+      : this.responseMetadata;
+    const json = JSON.stringify({ ...value, ...metadata });
     if (maxBytes !== undefined && Buffer.byteLength(json) > maxBytes) {
       throw new Error('Response exceeds maxBytes; increase the response budget');
     }
@@ -257,27 +262,38 @@ export class Retrieval {
   }
 
   async search(input: Record<string, unknown>, matches: Array<SearchMatch & { score?: number }>, extra: Record<string, unknown>): Promise<string> {
-    const detail = input.detail ?? (input.contextLines !== undefined ? 'excerpts' : 'locations');
-    if (detail !== 'locations' && detail !== 'excerpts') throw new Error('detail must be locations or excerpts');
-    if (detail === 'locations') {
+    const detail = input.detail ?? (input.contextLines !== undefined ? 'excerpts' : 'compact');
+    if (detail !== 'compact' && detail !== 'locations' && detail !== 'excerpts') throw new Error('detail must be compact, locations or excerpts');
+    if (detail === 'compact' || detail === 'locations') {
       if (input.contextLines !== undefined) throw new Error('contextLines requires detail=excerpts; use aikido_file ranges with contextLines');
-      return this.locations(input, matches, extra);
+      return this.locations(input, matches, extra, detail === 'compact');
     }
     return this.excerpts(input, matches, extra);
   }
 
   // Token-frugal default: where to look, not what is there. Passages are fetched afterwards in one aikido_file ranges batch.
-  private async locations(input: Record<string, unknown>, matches: Array<SearchMatch & { score?: number; matchedTerms?: string[] }>, extra: Record<string, unknown>): Promise<string> {
+  private async locations(input: Record<string, unknown>, matches: Array<SearchMatch & { score?: number; matchedTerms?: string[] }>, extra: Record<string, unknown>, compact = false): Promise<string> {
     const limit = integer(input, 'limit', 25, 1, 100);
     const maxBytes = integer(input, 'maxBytes', 16384, 2048, 262144);
     const head = compactMetadata(extra);
     type Located = { path: string; lines: number; score?: number; hits: Array<number | [number, number]>; terms?: string[] };
     const files: Located[] = [];
     const byPath = new Map<string, Located>();
-    const sizes = new Map<string, number>();
+    const sizes = this.knowledge.immutable ? this.immutableLineCounts : new Map<string, number>();
     let hits = 0, omitted = matches.length > limit;
-    const output = () => ({ ...head, count: hits, files: files.length, truncated: omitted,
-      results: files.map(file => ({ ...file, hits: [...file.hits].sort((a, b) => (Array.isArray(a) ? a[0] : a) - (Array.isArray(b) ? b[0] : b)) })) });
+    const warnings = {
+      ...(extra.status && extra.status !== 'ok' ? { status: extra.status } : {}),
+      ...(extra.error ? { error: extra.error } : {}),
+      ...(Array.isArray(extra.branches) && extra.branches.some(branch => branch.status !== 'ok')
+        ? { branches: extra.branches.filter(branch => branch.status !== 'ok').map(branch => ({ mode: branch.mode, status: branch.status, error: branch.error })) } : {}),
+      ...(Array.isArray((extra.queryPlan as QueryPlanLike | undefined)?.warnings)
+        && ((extra.queryPlan as QueryPlanLike).warnings as unknown[]).length ? { warnings: (extra.queryPlan as QueryPlanLike).warnings } : {}),
+    };
+    const output = () => compact ? { ...warnings, ...(omitted ? { truncated: true } : {}),
+      results: files.map(file => ({ path: file.path, ranges: [...file.hits]
+        .map(item => Array.isArray(item) ? item : [item, item]).sort((a, b) => a[0] - b[0]) })) }
+      : { ...head, count: hits, files: files.length, truncated: omitted,
+        results: files.map(file => ({ ...file, hits: [...file.hits].sort((a, b) => (Array.isArray(a) ? a[0] : a) - (Array.isArray(b) ? b[0] : b)) })) };
     for (const hit of matches) {
       if (hits >= limit) { omitted = true; break; }
       let total = sizes.get(hit.path);
@@ -299,14 +315,14 @@ export class Retrieval {
       file.hits.push(end > hit.line ? [hit.line, end] : hit.line);
       if (Array.isArray(hit.matchedTerms) && hit.matchedTerms.length) file.terms = [...new Set([...(file.terms ?? []), ...hit.matchedTerms])];
       hits++;
-      if (Buffer.byteLength(this.json(output())) > maxBytes) {
+      if (Buffer.byteLength(this.json(output(), undefined, compact)) > maxBytes) {
         file.hits.pop(); file.terms = previousTerms; hits--; omitted = true;
         if (created) { files.pop(); byPath.delete(hit.path); }
         break;
       }
     }
     if (!hits && matches.length) throw new Error('Search metadata exceeds maxBytes; increase the response budget');
-    return this.json(output(), maxBytes);
+    return this.json(output(), maxBytes, compact);
   }
 
   // Batched passage retrieval after a locations search: one call, merged per-file ranges, a single byte budget.

@@ -10,6 +10,12 @@ import { register } from '../vscode/extension.cjs';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const scratch = await mkdtemp(path.join(root, '.local-runtime-vscode-'));
 let transport;
+let diagnostics = '';
+const createTransport = options => {
+  const channel = new StdioClientTransport({ ...options, stderr: 'pipe' });
+  channel.stderr.on('data', chunk => { diagnostics += chunk.toString(); });
+  return channel;
+};
 try {
   const pkg = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'));
   const target = `${process.platform}-${process.arch}`;
@@ -27,6 +33,7 @@ try {
   await mkdir(path.join(knowledge, 'prompts'), { recursive: true });
   await writeFile(path.join(knowledge, 'prompts/index.md'), '# Knowledge\n\nKimono integration distribution evidence.\n');
   let provider;
+  const settings = { corpusMode: 'aikido' };
   const noop = () => ({ dispose() {} });
   const uri = file => ({ scheme: 'file', fsPath: file });
   const vscode = {
@@ -37,7 +44,7 @@ try {
     },
     workspace: {
       isTrusted: true, workspaceFolders: [{ name: 'Fixture', uri: uri(knowledge) }],
-      getConfiguration: () => ({ get: (_key, fallback) => fallback }),
+      getConfiguration: () => ({ get: (key, fallback) => settings[key] ?? fallback }),
       onDidChangeConfiguration: noop, onDidChangeWorkspaceFolders: noop, onDidGrantWorkspaceTrust: noop,
     },
     lm: { registerMcpServerDefinitionProvider: (_id, value) => { provider = value; return noop(); } },
@@ -51,10 +58,9 @@ try {
   });
   const [definition] = await provider.provideMcpServerDefinitions();
   await provider.resolveMcpServerDefinition(definition, { isCancellationRequested: false });
-  transport = new StdioClientTransport({
+  transport = createTransport({
     command: definition.command, args: definition.args, cwd: definition.cwd.fsPath,
     env: Object.fromEntries(Object.entries(definition.env).filter(([, value]) => value !== null)),
-    stderr: 'inherit',
   });
   const client = new Client({ name: 'kimono-vsix-smoke', version: '1.0.0' });
   await client.connect(transport);
@@ -81,7 +87,50 @@ try {
   const ended = await client.callTool({ name: 'aikido_snapshot', arguments: { operation: 'end', snapshotId: snapshotData.snapshotId } });
   assert.ok(!ended.isError, JSON.stringify(ended));
   await client.close();
-  console.log('Packaged VS Code provider: MCP handshake, tools, ROOT, native lexical search and ONNX embedding passed.');
+  await rm(path.join(knowledge, 'prompts/index.md'));
+  await mkdir(path.join(knowledge, 'src'));
+  await writeFile(path.join(knowledge, 'src/main.rs'), '// Local RAG source retrieval\nfn authenticate() {}\n');
+  delete settings.corpusMode;
+  const [ragDefinition] = await provider.provideMcpServerDefinitions();
+  await provider.resolveMcpServerDefinition(ragDefinition, { isCancellationRequested: false });
+  transport = createTransport({
+    command: ragDefinition.command, args: ragDefinition.args, cwd: ragDefinition.cwd.fsPath,
+    env: Object.fromEntries(Object.entries(ragDefinition.env).filter(([, value]) => value !== null)),
+  });
+  const ragClient = new Client({ name: 'kimono-vsix-rag-smoke', version: '1.0.0' });
+  await ragClient.connect(transport);
+  const ragStatus = await ragClient.callTool({ name: 'aikido_root', arguments: { operation: 'status' } });
+  assert.ok(!ragStatus.isError, JSON.stringify(ragStatus));
+  const ragData = JSON.parse(ragStatus.content.find(item => item.type === 'text').text);
+  assert.equal(ragData.corpus.mode, 'rag');
+  const captured = await ragClient.callTool({ name: 'aikido_snapshot', arguments: { operation: 'begin', paths: ['src'] } });
+  assert.ok(!captured.isError, JSON.stringify(captured));
+  const ragId = JSON.parse(captured.content.find(item => item.type === 'text').text).snapshotId;
+  for (const mode of ['text', 'semantic']) {
+    const result = await ragClient.callTool({ name: 'aikido_search', arguments: { snapshotId: ragId, query: 'authenticate', mode } });
+    assert.ok(!result.isError, JSON.stringify(result));
+    assert.match(JSON.stringify(result), /src\/main.rs/);
+  }
+  await ragClient.callTool({ name: 'aikido_snapshot', arguments: { operation: 'end', snapshotId: ragId } });
+  await ragClient.close();
+  // The same bundle is usable outside VS Code, with the generic stdio launcher.
+  transport = createTransport({
+    command: ragDefinition.command,
+    args: [path.join(stage, 'stdio.cjs'), 'serve', '--root', knowledge],
+    env: { PATH: process.env.PATH ?? '', KIMONO_CACHE_DIR: path.join(scratch, 'external-cache') },
+  });
+  const externalClient = new Client({ name: 'generic-mcp-host', version: '1.0.0' });
+  await externalClient.connect(transport);
+  const externalStatus = await externalClient.callTool({ name: 'aikido_root', arguments: { operation: 'status' } });
+  assert.ok(!externalStatus.isError, JSON.stringify(externalStatus));
+  assert.equal(JSON.parse(externalStatus.content.find(item => item.type === 'text').text).corpus.mode, 'rag');
+  await externalClient.close();
+  assert.equal((diagnostics.match(/ready on stdio/g) ?? []).length, 3, diagnostics);
+  assert.doesNotMatch(diagnostics, /locked by another writer|Semantic index preparation failed/, diagnostics);
+  console.log('Packaged VSIX passed: AI-KIDO tools/ROOT/384D embedding and generic RAG without entry point, scoped snapshot, lexical and semantic code retrieval.');
+} catch (error) {
+  console.error(diagnostics);
+  throw error;
 } finally {
   if (transport) await transport.close();
   await rm(scratch, { recursive: true, force: true });

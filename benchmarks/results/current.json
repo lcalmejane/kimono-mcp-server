@@ -1,0 +1,809 @@
+{
+  "schemaVersion": 1,
+  "campaign": "current-batched-gemini-20261025",
+  "startedAt": "2026-10-25T08:43:46.351Z",
+  "generatedAt": "2026-10-25T08:51:41.631Z",
+  "supersedes": "All previous Kimono development campaigns in this session; reports and private traces deleted at owner's request.",
+  "protocol": {
+    "harness": "GitHub Copilot CLI 1.0.103.\nRun 'copilot update' to check for updates.",
+    "requestedModel": "gemini-3.8-flash",
+    "serverVersion": "0.6.0-unreleased",
+    "repetitions": 1,
+    "sessions": 4,
+    "timeoutMs": 600000,
+    "indexMode": "literal",
+    "searchDetail": "compact",
+    "policy": {
+      "mode": "rag",
+      "include": [
+        "src/**",
+        "tests/**",
+        "docs/**",
+        "README.md",
+        "package.json"
+      ],
+      "exclude": [
+        "docs/local-rag.md",
+        "docs/harness-benchmark.md"
+      ]
+    },
+    "order": [
+      "research:without",
+      "research:with",
+      "addon-plan:with",
+      "addon-plan:without"
+    ],
+    "cachePolicy": "Kimono prewarmed once, shared between treatment cells; OS/provider caches uncontrolled",
+    "isolation": {
+      "nativeTools": [
+        "grep",
+        "glob",
+        "view"
+      ],
+      "customInstructions": false,
+      "builtinMcps": false,
+      "perCellHome": true,
+      "memory": false,
+      "enforcement": "CLI available-tools whitelist plus observed tool/MCP audit"
+    },
+    "sourceCommit": "4a50e4422ffce75139c06a5f597d800d44b8d84d",
+    "sourceDirty": true,
+    "runnerSha256": "cac7fd11c54c686dc2e8fb5dd56c005525b9524bf480741590644978e6fd49f9",
+    "summarizerSha256": "cac7fd11c54c686dc2e8fb5dd56c005525b9524bf480741590644978e6fd49f9",
+    "runtimeSha256": "1a0aee36bf83230b7b6f01f21b4795507be75829a76fbf43a60c2f9985e84e48",
+    "runtimeUnchangedAfterCellsVerified": true,
+    "runtimeManifest": [
+      {
+        "file": "cli.js",
+        "sha256": "945a2a9837797ff146864fc7d61a2eabf5bcb02b5c5e162aa6e11cff7d4ca88e"
+      },
+      {
+        "file": "collaboration.js",
+        "sha256": "79d3f39c3c86b74f95289e4a59ce1a9368635554b465cad9fd604ff31345289c"
+      },
+      {
+        "file": "commands.js",
+        "sha256": "96194fae79e886c7e587d1fcec1198758d09a41af4fda614a5b9fde4774ab9c3"
+      },
+      {
+        "file": "corpus-config.js",
+        "sha256": "3ba6ad6b4141f6cac64eeefca38c22db3a8e4f2443a285d3d7c511c38682fb8c"
+      },
+      {
+        "file": "git-profile.js",
+        "sha256": "a09f9f876a4d1e6f3973a70ad35b1b857cbee35846cc171c0973636b790e3a70"
+      },
+      {
+        "file": "index-basis.js",
+        "sha256": "adbd4ff252c51b6626d191935d9f03384b3f02c30600f4ac33134a988a9e9de5"
+      },
+      {
+        "file": "index.js",
+        "sha256": "cc54da473be80d09721b47a8683f427dfdba2060b763c634e62be63610b0a28c"
+      },
+      {
+        "file": "knowledge.js",
+        "sha256": "9de9811bbb7bc91629c12c6fb53277d324ff34221a94015f27ecdb8004817f79"
+      },
+      {
+        "file": "lifecycle.js",
+        "sha256": "540e7401f2ff5de41f1216f753ad1dbd174ee1ecbf095241296ceb0e90541825"
+      },
+      {
+        "file": "planned-search.js",
+        "sha256": "261a96cfa752fa09d4362384ade10e7c35e2eac1651b7277b0e6eaf74535c84c"
+      },
+      {
+        "file": "process.js",
+        "sha256": "fee712ea559a83a6deaed3f47446bfb0f3bfc4fd7cdad0de07511b958934b636"
+      },
+      {
+        "file": "project-policy.js",
+        "sha256": "1e837a69b714e728369f01c18b8db8d27bd18787533cdca2be8c4132001043c4"
+      },
+      {
+        "file": "query-plan.js",
+        "sha256": "9df825b98d0926818f1e16c9fa76845e55bfc6851085dc9d3093d0e80f6d8dd4"
+      },
+      {
+        "file": "remote-sync.js",
+        "sha256": "87bf72163436f19e07ca8d3a6647aee133d7a8574076723a381c500ac582c30e"
+      },
+      {
+        "file": "repository.js",
+        "sha256": "15bf0522abf8037bef4536bf20bd0db82e647e8615f74fa548cdd0a8bbadb6d8"
+      },
+      {
+        "file": "retrieval.js",
+        "sha256": "3d2d7557b9c3b2fc0490872eee2c6c8d36d4ead18fa8a3dc8e2f1b2066c3e9b7"
+      },
+      {
+        "file": "runtime-tools.js",
+        "sha256": "24951d7a576f856123ae55c6100b953d862f425a5b5e3d2533b61caac43e3efc"
+      },
+      {
+        "file": "search.js",
+        "sha256": "5c9ff47ef84c9b42f3caa9f8a48a1f3970aed1d6934db0914aad8f5178bd3e2b"
+      },
+      {
+        "file": "semantic.js",
+        "sha256": "708b387ca65b8d497c23bb577bc31f25fbdb5ac70ad84d7be50aca6c3b8af190"
+      },
+      {
+        "file": "server.js",
+        "sha256": "c4c8c0e0945f943a5f51c2ee97eba967b380e01ac093563ff224dbe400a45839"
+      },
+      {
+        "file": "snapshots.js",
+        "sha256": "8fd217f36bd7ddce768a15c2caea0853a407af20da782d8c21aa5704303bcf75"
+      },
+      {
+        "file": "synchronization.js",
+        "sha256": "442c6c628952ce1a3f6567d9086956800239699bba98129572f73aed05a05298"
+      }
+    ],
+    "dockerImageId": "sha256:2b14ca553c9e50a804e9b521d7c331f11df3da2749098c48bef9d4f1b8963845",
+    "node": "v26.12.1",
+    "platform": "darwin",
+    "arch": "arm64"
+  },
+  "corpus": {
+    "sha256": "8b8931e1d072001adf659a31c43c862bef60f92032efa2402c3d38ddaf0409d4",
+    "fileCount": 51,
+    "bytes": 558634,
+    "manifest": [
+      {
+        "path": "docs/native-bundles.md",
+        "sha256": "17292acb80b8a0bad5b610b807d4108258b67b38e2a8d1a7dbd448f2e7bf95da",
+        "bytes": 3253
+      },
+      {
+        "path": "docs/retrieval.md",
+        "sha256": "e002d54f123956024e91a43ddea9059dc682ae3be99d29878fc3a3abd75cf6be",
+        "bytes": 22952
+      },
+      {
+        "path": "docs/usage.en.md",
+        "sha256": "839eaf226a9d73349ca342a10a5ba33acc24fccfc0328917310e465eec078414",
+        "bytes": 15515
+      },
+      {
+        "path": "docs/usage.fr.md",
+        "sha256": "1a3097c8705ed4033f17706575de27545147c5387968a7c9848e300edc5b9b94",
+        "bytes": 16886
+      },
+      {
+        "path": "docs/vscode-distribution.md",
+        "sha256": "6388d9d1c53575ce7b889d85321e118ab98f9c4ae2958716a878e6f9d3baad20",
+        "bytes": 3953
+      },
+      {
+        "path": "package.json",
+        "sha256": "51fb3fe1b652680e66bf2376f8a343866b4973e2dc4fbcbe7b22027f5f69f0cb",
+        "bytes": 1558
+      },
+      {
+        "path": "README.md",
+        "sha256": "a2cf52bb0d4f6b3c8ead3a94a9e1c1381277bb906d57baa794494ee5c71d221c",
+        "bytes": 46353
+      },
+      {
+        "path": "src/cli.ts",
+        "sha256": "b6ba16eb8d71d34bd10f7f37fdd2d87fae2cb22a004ed16abd05a857eff60cf2",
+        "bytes": 404
+      },
+      {
+        "path": "src/collaboration.ts",
+        "sha256": "780c45fda0bd99105f6bb502aec544d132689fb9a854ac71b3edb4960f079d6c",
+        "bytes": 30384
+      },
+      {
+        "path": "src/commands.ts",
+        "sha256": "592c49147337ee491e157a4bf40aed1605cc7e584eb36b2b0f4acc8f79448734",
+        "bytes": 4935
+      },
+      {
+        "path": "src/corpus-config.ts",
+        "sha256": "06815a3aeb6aa9418652f3648082829fbd0228f6100d476de91c9dd3c2444f48",
+        "bytes": 5195
+      },
+      {
+        "path": "src/git-profile.ts",
+        "sha256": "c59ba9305a85a817d4aa21db8fa9595467bb00df7737da7189476ece5b8b058c",
+        "bytes": 11620
+      },
+      {
+        "path": "src/index-basis.ts",
+        "sha256": "bab1b9ac734f12a5a7a27562546ba1d62dba38cfd2da026adef4fca70a453704",
+        "bytes": 6314
+      },
+      {
+        "path": "src/index.ts",
+        "sha256": "627ee85b96c44c5de7efbffecfad7a21e807fde2324cb7c2af2f7367099cffa7",
+        "bytes": 216
+      },
+      {
+        "path": "src/knowledge.ts",
+        "sha256": "348adb91b71628a7197cc8fbaf4f875d9fa9a478ad3cf1ad1f8e7903b3677c65",
+        "bytes": 12410
+      },
+      {
+        "path": "src/lifecycle.ts",
+        "sha256": "7876cd6e6c486a4329e76206e4555c843ae69944bce024bfebb21ded879ef444",
+        "bytes": 1658
+      },
+      {
+        "path": "src/planned-search.ts",
+        "sha256": "f0138967c9e65ee31a36889e9e4ac34f1ff1e6a54e401deb9ddd2bd9e423b8a6",
+        "bytes": 9242
+      },
+      {
+        "path": "src/process.ts",
+        "sha256": "cf5ff3a27cdc5736af93a367992b5c26f20ed94b0cc517390d49a5679d2dba11",
+        "bytes": 1832
+      },
+      {
+        "path": "src/project-policy.ts",
+        "sha256": "d35ada0d79975920b8a1d965dfd47df21f807726c81130e1cb67cd818032b573",
+        "bytes": 8615
+      },
+      {
+        "path": "src/query-plan.ts",
+        "sha256": "2be79d811e2601416ed59425347cebd79e3556885dd2a03bcc3dc856ef7638c9",
+        "bytes": 7170
+      },
+      {
+        "path": "src/remote-sync.ts",
+        "sha256": "4f8923a01a89b9d8defdd6506c1aec2e8d9219ea3c8bac8a9f9ffea6159373f6",
+        "bytes": 24988
+      },
+      {
+        "path": "src/repository.ts",
+        "sha256": "3e27bdc69a849d2fffd074da7e1d2bcb8bdbffa284d6c8e8ba1b19bc13a7d06a",
+        "bytes": 16345
+      },
+      {
+        "path": "src/retrieval.ts",
+        "sha256": "fd6ffe573baa80c9341a116f891885936d30e9acb1f8d45b5a186a7bac1bd3b2",
+        "bytes": 25454
+      },
+      {
+        "path": "src/runtime-tools.ts",
+        "sha256": "c2fea03eb9847a5aae31d4e25fbc688fbc912cbe97065da8e9a88620d93b73d6",
+        "bytes": 31830
+      },
+      {
+        "path": "src/search.ts",
+        "sha256": "8901e20a7b42b83dde041a4d13fff7d1b091314e10bde00d4c1a0fb58db3b7c0",
+        "bytes": 14686
+      },
+      {
+        "path": "src/semantic.ts",
+        "sha256": "048a15beaab676a3525c3cc7ee0fab3a5ea56e362b8af1ca63eac1ae01c9ea34",
+        "bytes": 15275
+      },
+      {
+        "path": "src/server.ts",
+        "sha256": "ae63ecc7bf3165676c51b95c5a9c00c2dbb471d3be17756118952c358690e392",
+        "bytes": 21403
+      },
+      {
+        "path": "src/snapshots.ts",
+        "sha256": "8aca60823ca92e3891c798bd166c7a7a6bc317acfd2620d40832fe056d48270c",
+        "bytes": 11792
+      },
+      {
+        "path": "src/synchronization.ts",
+        "sha256": "622b3f571f41220b4645720f8191a42c65a150c4c8e507a7728d1cb3c50653fa",
+        "bytes": 1253
+      },
+      {
+        "path": "tests/bench-harness.test.ts",
+        "sha256": "b6120141907cff971fbb7ac16b9cd74fec96a5850395f90416debd12dd1080a3",
+        "bytes": 6514
+      },
+      {
+        "path": "tests/cli.test.ts",
+        "sha256": "8a452bdb1f3984a9da7b96dca371d7940604260ab306df41cdd81124b4fb7725",
+        "bytes": 1245
+      },
+      {
+        "path": "tests/corpus.test.ts",
+        "sha256": "8cb966bd98da057e69556248a2c001a55152c1a2675dd95b5997414498246646",
+        "bytes": 13507
+      },
+      {
+        "path": "tests/git-profile.test.ts",
+        "sha256": "d292f9a7d95fb2a710f12117480307e57b75bfeb26e452f58c206cd4c0dc2c9a",
+        "bytes": 8637
+      },
+      {
+        "path": "tests/http-git-auth.test.ts",
+        "sha256": "65acedb120f27c0421d3c3bdb310d7d35b1b5b5453d960aba76f33e9fd1f3cd1",
+        "bytes": 4573
+      },
+      {
+        "path": "tests/knowledge.test.ts",
+        "sha256": "baa3abbf981de646d77d9d0b956932ba6acfb58f8d0d4ca6263b74cb72cfab1a",
+        "bytes": 3096
+      },
+      {
+        "path": "tests/lexical-search.test.ts",
+        "sha256": "8d0534c0694259bcfad39f82c9ed7d9cece5a2111fb93d5993232084fe0ba4c7",
+        "bytes": 5841
+      },
+      {
+        "path": "tests/lifecycle.test.ts",
+        "sha256": "3465eab8baf8152ef1b99711c5888b9c3dd9241eb2d209697b71b6b59672a9fa",
+        "bytes": 1605
+      },
+      {
+        "path": "tests/planned-search.test.ts",
+        "sha256": "2382ea2dc75ffef2e7c676ad17b4b8b489fa55201cd32f6de46406b0c72d0484",
+        "bytes": 3700
+      },
+      {
+        "path": "tests/query-plan.test.ts",
+        "sha256": "922cfc9b7ab31954ed23075031dbfa4f92f9c3f50c4c8636677b5b10c88aaf05",
+        "bytes": 4774
+      },
+      {
+        "path": "tests/rag-native.test.ts",
+        "sha256": "7dc1a895d6df9975a49585e05cb90b40fa85b1178e44a71bc07d56e3727d4923",
+        "bytes": 4557
+      },
+      {
+        "path": "tests/readiness.test.ts",
+        "sha256": "52cabadb91d932f331172dc4d38b7e8beee49b90724024982ed7105b53fdbe84",
+        "bytes": 4197
+      },
+      {
+        "path": "tests/remote-sync.test.ts",
+        "sha256": "69c3f4e81b3c43305b71897921ba0ed2329dd1868de54b1bb07928702f1b3e4c",
+        "bytes": 13040
+      },
+      {
+        "path": "tests/repository-info.test.ts",
+        "sha256": "72880e7711be3de876ab31bbe5d05515b65a50ba9fce347f23f1e455fe56362c",
+        "bytes": 10931
+      },
+      {
+        "path": "tests/retrieval.test.ts",
+        "sha256": "10f04d0508cc948def029e4c5f1d965b331f18d6413a5c79074ed5e55902ebc5",
+        "bytes": 33555
+      },
+      {
+        "path": "tests/runtime.test.ts",
+        "sha256": "ba94a6d6cc0bad046fa344e33c67e0f17ec1c13b1a53b470fbcfe0fc7d7e3bed",
+        "bytes": 10136
+      },
+      {
+        "path": "tests/semantic.test.ts",
+        "sha256": "1e08b143e301c7a72ee3f3e7ee48cd06edf657dde4d99f1b676420fe50e59dce",
+        "bytes": 20757
+      },
+      {
+        "path": "tests/server.test.ts",
+        "sha256": "6bc75522edfae849fb47e8259db0c79e89d469ac06bd3cc3f67e63d1a0c5ad7f",
+        "bytes": 14870
+      },
+      {
+        "path": "tests/shutdown.test.ts",
+        "sha256": "5561a7cbbe69e6fc21a1f13bdbd66b0ab718902a5726455edd7dfc1b7e313ddb",
+        "bytes": 1382
+      },
+      {
+        "path": "tests/snapshots.test.ts",
+        "sha256": "0ed3a1c1491c555de4f9e5b83d13bc0b90bd2d1460d6b8ecb43faa3c2149264f",
+        "bytes": 6825
+      },
+      {
+        "path": "tests/synchronization.test.ts",
+        "sha256": "9d8fd6a7af0f8ab1909865dd861a75a596ff30c47c6466a4dcd0065b7f4a4f95",
+        "bytes": 8563
+      },
+      {
+        "path": "tests/transport.test.ts",
+        "sha256": "cccaa3276c8ca7505269ed64b41ff94a1feaa8571f47ae18bcc0a787d84016fb",
+        "bytes": 2838
+      }
+    ]
+  },
+  "warmup": {
+    "wallMs": 621.0476659999986,
+    "outsideCellTiming": true
+  },
+  "cells": [
+    {
+      "task": "find-ignore-policy",
+      "kind": "research",
+      "repetition": 1,
+      "variant": "without",
+      "status": "ok",
+      "wallMs": 111212.04812500002,
+      "exitCode": 0,
+      "failure": null,
+      "corpusUnchanged": true,
+      "mcpUsed": false,
+      "usage": {
+        "models": [
+          "gemini-3.8-flash"
+        ],
+        "inputTokens": 323368,
+        "outputTokens": 2475,
+        "cacheReadTokens": 233126,
+        "cacheWriteTokens": 0,
+        "reasoningTokens": 5807,
+        "uncachedInputTokens": 90242,
+        "apiMs": 105937
+      },
+      "isolation": {
+        "passed": true,
+        "inventoryObserved": true,
+        "allowedTools": [
+          "grep",
+          "glob",
+          "view"
+        ],
+        "observedTools": [
+          "glob",
+          "grep",
+          "view"
+        ],
+        "unexpectedTools": [],
+        "unexpectedServers": []
+      },
+      "quality": {
+        "formatValid": false,
+        "evidenceValid": false,
+        "expectedPathCoverage": 0,
+        "humanReview": "pending"
+      },
+      "diagnostics": {
+        "modelRequests": 21,
+        "requestSnapshots": 21,
+        "requestPromptSumMatchesUsage": true,
+        "toolTokensPerRequest": [
+          680
+        ],
+        "toolCountPerRequest": [
+          3
+        ],
+        "summedDiagnosticToolTokens": 14280,
+        "finalPromptTokens": 26421,
+        "toolCalls": {
+          "glob": 2,
+          "grep": 8,
+          "view": 12
+        },
+        "searchBatchSizes": [],
+        "readBatchSizes": [],
+        "toolFailureCount": 1,
+        "toolResponseContentUtf8Bytes": 61004,
+        "summedToolElapsedMs": 392.0,
+        "mcpPendingToConnectedMs": null
+      }
+    },
+    {
+      "task": "find-ignore-policy",
+      "kind": "research",
+      "repetition": 1,
+      "variant": "with",
+      "status": "ok",
+      "wallMs": 79076.847958,
+      "exitCode": 0,
+      "failure": null,
+      "corpusUnchanged": true,
+      "mcpUsed": true,
+      "usage": {
+        "models": [
+          "gemini-3.8-flash"
+        ],
+        "inputTokens": 105223,
+        "outputTokens": 2270,
+        "cacheReadTokens": 65285,
+        "cacheWriteTokens": 0,
+        "reasoningTokens": 4026,
+        "uncachedInputTokens": 39938,
+        "apiMs": 72979
+      },
+      "isolation": {
+        "passed": true,
+        "inventoryObserved": true,
+        "allowedTools": [
+          "grep",
+          "glob",
+          "view",
+          "kimono-aikido_snapshot",
+          "kimono-aikido_search",
+          "kimono-aikido_file"
+        ],
+        "observedTools": [
+          "kimono-aikido_file",
+          "kimono-aikido_search",
+          "kimono-aikido_snapshot"
+        ],
+        "unexpectedTools": [],
+        "unexpectedServers": []
+      },
+      "quality": {
+        "formatValid": true,
+        "evidenceValid": true,
+        "expectedPathCoverage": 1,
+        "humanReview": "pending"
+      },
+      "diagnostics": {
+        "modelRequests": 9,
+        "requestSnapshots": 9,
+        "requestPromptSumMatchesUsage": true,
+        "toolTokensPerRequest": [
+          1903
+        ],
+        "toolCountPerRequest": [
+          6
+        ],
+        "summedDiagnosticToolTokens": 17127,
+        "finalPromptTokens": 19053,
+        "toolCalls": {
+          "kimono-aikido_snapshot": 2,
+          "kimono-aikido_search": 2,
+          "kimono-aikido_file": 4
+        },
+        "searchBatchSizes": [
+          4,
+          4
+        ],
+        "readBatchSizes": [
+          4,
+          1,
+          1,
+          1
+        ],
+        "toolFailureCount": 0,
+        "toolResponseContentUtf8Bytes": 40361,
+        "summedToolElapsedMs": 402.0,
+        "mcpPendingToConnectedMs": 528.0,
+        "batchResponseCount": 2,
+        "searchResponsesHaveNoExcerptField": true,
+        "compactHitShapeAndBoundsVerified": true,
+        "batchSuffixTruncations": 0,
+        "truncatedQueries": 5,
+        "queriesWithWarnings": 8,
+        "queryErrorCount": 0,
+        "emptyQueryResults": 1
+      }
+    },
+    {
+      "task": "plan-config-addon",
+      "kind": "addon-plan",
+      "repetition": 1,
+      "variant": "with",
+      "status": "ok",
+      "wallMs": 84034.47408400002,
+      "exitCode": 0,
+      "failure": null,
+      "corpusUnchanged": true,
+      "mcpUsed": true,
+      "usage": {
+        "models": [
+          "gemini-3.8-flash"
+        ],
+        "inputTokens": 130244,
+        "outputTokens": 2433,
+        "cacheReadTokens": 81630,
+        "cacheWriteTokens": 0,
+        "reasoningTokens": 3446,
+        "uncachedInputTokens": 48614,
+        "apiMs": 77677
+      },
+      "isolation": {
+        "passed": true,
+        "inventoryObserved": true,
+        "allowedTools": [
+          "grep",
+          "glob",
+          "view",
+          "kimono-aikido_snapshot",
+          "kimono-aikido_search",
+          "kimono-aikido_file"
+        ],
+        "observedTools": [
+          "kimono-aikido_file",
+          "kimono-aikido_search",
+          "kimono-aikido_snapshot"
+        ],
+        "unexpectedTools": [],
+        "unexpectedServers": []
+      },
+      "quality": {
+        "formatValid": true,
+        "evidenceValid": true,
+        "expectedPathCoverage": 1,
+        "humanReview": "pending"
+      },
+      "diagnostics": {
+        "modelRequests": 9,
+        "requestSnapshots": 9,
+        "requestPromptSumMatchesUsage": true,
+        "toolTokensPerRequest": [
+          1903
+        ],
+        "toolCountPerRequest": [
+          6
+        ],
+        "summedDiagnosticToolTokens": 17127,
+        "finalPromptTokens": 23572,
+        "toolCalls": {
+          "kimono-aikido_snapshot": 2,
+          "kimono-aikido_search": 2,
+          "kimono-aikido_file": 4
+        },
+        "searchBatchSizes": [
+          5,
+          3
+        ],
+        "readBatchSizes": [
+          4,
+          3,
+          4,
+          2
+        ],
+        "toolFailureCount": 0,
+        "toolResponseContentUtf8Bytes": 55574,
+        "summedToolElapsedMs": 415.0,
+        "mcpPendingToConnectedMs": 395.0,
+        "batchResponseCount": 2,
+        "searchResponsesHaveNoExcerptField": true,
+        "compactHitShapeAndBoundsVerified": true,
+        "batchSuffixTruncations": 0,
+        "truncatedQueries": 6,
+        "queriesWithWarnings": 8,
+        "queryErrorCount": 0,
+        "emptyQueryResults": 0
+      }
+    },
+    {
+      "task": "plan-config-addon",
+      "kind": "addon-plan",
+      "repetition": 1,
+      "variant": "without",
+      "status": "ok",
+      "wallMs": 175224.21604100004,
+      "exitCode": 0,
+      "failure": null,
+      "corpusUnchanged": true,
+      "mcpUsed": false,
+      "usage": {
+        "models": [
+          "gemini-3.8-flash"
+        ],
+        "inputTokens": 454796,
+        "outputTokens": 3347,
+        "cacheReadTokens": 316443,
+        "cacheWriteTokens": 0,
+        "reasoningTokens": 9300,
+        "uncachedInputTokens": 138353,
+        "apiMs": 170105
+      },
+      "isolation": {
+        "passed": true,
+        "inventoryObserved": true,
+        "allowedTools": [
+          "grep",
+          "glob",
+          "view"
+        ],
+        "observedTools": [
+          "glob",
+          "grep",
+          "view"
+        ],
+        "unexpectedTools": [],
+        "unexpectedServers": []
+      },
+      "quality": {
+        "formatValid": true,
+        "evidenceValid": true,
+        "expectedPathCoverage": 1,
+        "humanReview": "pending"
+      },
+      "diagnostics": {
+        "modelRequests": 31,
+        "requestSnapshots": 31,
+        "requestPromptSumMatchesUsage": true,
+        "toolTokensPerRequest": [
+          680
+        ],
+        "toolCountPerRequest": [
+          3
+        ],
+        "summedDiagnosticToolTokens": 21080,
+        "finalPromptTokens": 28501,
+        "toolCalls": {
+          "glob": 1,
+          "grep": 14,
+          "view": 15
+        },
+        "searchBatchSizes": [],
+        "readBatchSizes": [],
+        "toolFailureCount": 0,
+        "toolResponseContentUtf8Bytes": 58331,
+        "summedToolElapsedMs": 270.0,
+        "mcpPendingToConnectedMs": null
+      }
+    }
+  ],
+  "pairs": [
+    {
+      "task": "find-ignore-policy",
+      "repetition": 1,
+      "eligibleForClaim": false,
+      "reasons": [
+        "without: human quality review pending/failed",
+        "without: incomplete automatic evidence checks",
+        "with: human quality review pending/failed",
+        "fewer than 3 repetitions; pilot only"
+      ],
+      "exploratoryInputReductionPercent": 67.46029291704806,
+      "exploratoryWallReductionPercent": 28.895430583996372
+    },
+    {
+      "task": "plan-config-addon",
+      "repetition": 1,
+      "eligibleForClaim": false,
+      "reasons": [
+        "without: human quality review pending/failed",
+        "with: human quality review pending/failed",
+        "fewer than 3 repetitions; pilot only"
+      ],
+      "exploratoryInputReductionPercent": 71.36210520760956,
+      "exploratoryWallReductionPercent": 52.04174629359614
+    }
+  ],
+  "limitations": [
+    "One pair per task; no confidence interval or universal savings claim.",
+    "Human quality review pending; automated checks validate format, path bounds and coverage only.",
+    "Malformed answers are preserved, not repaired or rerun.",
+    "Single-agent read-only RAG; no code implementation, multi-agent ROI or semantic-retrieval measurement.",
+    "Provider/OS caches and model variability uncontrolled; input tokens include cached input, not a bill.",
+    "Diagnostic tool_tokens is not an exact additive provider billing partition.",
+    "Frozen dirty checkout; development image uses a local tag, not a published immutable release."
+  ],
+  "privateEvidenceSha256": {
+    "find-ignore-policy-1-without/stdout.jsonl": "2ea9a9ac0b5a46ce7bb30cf949b91b2ed0fffe5fb896f83cefeacb3de6618c98",
+    "find-ignore-policy-1-without/stderr.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "find-ignore-policy-1-without/usage.json": "8c2854a36df8eb62c1ca3d52e4ed0cbefb41cf08b3d4eab8b74408d458226ecb",
+    "find-ignore-policy-1-without/answer.txt": "414046cc17243605ca73d78f682025cef85215927d687dec2f38ff5243b15cd6",
+    "find-ignore-policy-1-without/result.json": "e0b0f7b104338e64537ba34ae1d2ff99068202cdafb0198f3a35ed32cabbbcbe",
+    "find-ignore-policy-1-without/review.json": "e2b27092a8d844e9473f638452cf462df0ec98293ff852bf4dcb621cec08395e",
+    "find-ignore-policy-1-without/invocation.json": "f8b945ea6c258b8eb280bcd364cc67f2733c27d9c43d66217cc109d728089bab",
+    "find-ignore-policy-1-with/stdout.jsonl": "2556fb13d0cc799c6733a1766bae6ddc867a21193989d28f75991373e709cee2",
+    "find-ignore-policy-1-with/stderr.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "find-ignore-policy-1-with/usage.json": "790562b37288fe6795043258196fce238b326198de9f5e924d8a2cc2e418ce2b",
+    "find-ignore-policy-1-with/answer.txt": "53ff1cfcc0dceec35e78ac3b214c29a5fa6ca2b673f407a3d6426759f7b26751",
+    "find-ignore-policy-1-with/result.json": "86c913d47f2e514cd93027d6ad16097985f86d27d37fa561ccf8cfc8d1d52b3a",
+    "find-ignore-policy-1-with/review.json": "e2b27092a8d844e9473f638452cf462df0ec98293ff852bf4dcb621cec08395e",
+    "find-ignore-policy-1-with/invocation.json": "4c2500f030b8cd7b1226770ee00a411db902d86430422f2226648e56964c6be7",
+    "plan-config-addon-1-with/stdout.jsonl": "de766b805acefacaec1facac71eb3d3e13f85b1294be9bd06b58a23993ae33ac",
+    "plan-config-addon-1-with/stderr.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "plan-config-addon-1-with/usage.json": "14d8b3c9d13bacddf7fe8b4c16a51e7fbd66402b21e14275230d74f29d8e7619",
+    "plan-config-addon-1-with/answer.txt": "7290f3283b23ec36f8923774b29c5e09472f5b5b906567e93d9bc64460832926",
+    "plan-config-addon-1-with/result.json": "90203fa26632cf1a5209b731dafb667e3ba45993ff25f214c6b72f739850ecc0",
+    "plan-config-addon-1-with/review.json": "2f0b5e54fca1f8accb80f0dc4afd46a4156dad6ff28fd21a72e5887e99b50112",
+    "plan-config-addon-1-with/invocation.json": "85e64fd69909c67c3696f185c9ee68da8068b37401bfdac8f915f0ca069c467d",
+    "plan-config-addon-1-without/stdout.jsonl": "cb18e188f675169355c94e8be3552a4cdab125825e5a559d8c26a2282d5be668",
+    "plan-config-addon-1-without/stderr.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "plan-config-addon-1-without/usage.json": "7dbb2b31835b2aa3027ba69f93e8bce4c0ba1d68944c60e654a2b305b1bd0a20",
+    "plan-config-addon-1-without/answer.txt": "8a477352b1dcad1a57856d2788878164ec0a78efaa59e05c6eeac85ef7e1516a",
+    "plan-config-addon-1-without/result.json": "0f44c756f17b9c8cefff13301ec00ff0a1f384856d5e054ae2c0a3bf47957b5e",
+    "plan-config-addon-1-without/review.json": "2f0b5e54fca1f8accb80f0dc4afd46a4156dad6ff28fd21a72e5887e99b50112",
+    "plan-config-addon-1-without/invocation.json": "aef5e96b65b4ac37d9c6c7f87482d064c1e94930cb60bd63e19551b120815f80",
+    "run.json": "34a209b7c420d1d0142a783a787cb4a307aa13334d6672e3a73053f322faaf45",
+    "warmup.json": "710cecdf54f90a02f5d99459a872d1ed67afaabec4dc113d5e9c15e669f29369",
+    "results.json": "04c3d7d5d524c6a5d97e8e87700db85c0fc7725dd94daddc41cd325ec4fea907",
+    "pairs.json": "aec82ba13011d346b59701177e28f4ea7c07c02689ba190270c1ab25083f3ec4",
+    "summary.json": "fc69fe7ed720bf4a6c83bb66ed4dd03f7699dfe425971078083ae45993f82bdc",
+    "harness-version.txt": "0381297224b3ae763df6f5434597b39b5ea5d26a42cab604ad8d346d69487237",
+    "analyze.py": "3ce7cdf61a5b31bacc18c5b4a073e97b2626ef8d5d0b457f3051f00f4616e230"
+  }
+}

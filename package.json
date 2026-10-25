@@ -1,7 +1,7 @@
 {
   "name": "kimono-mcp-server",
-  "version": "0.5.0",
-  "description": "MCP server for discovering and activating AI-KIDO knowledge-base capabilities",
+  "version": "0.6.0",
+  "description": "Local project RAG and AI-KIDO knowledge retrieval over MCP",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -22,11 +22,13 @@
     "sync": "tsx src/cli.ts sync",
     "start": "node dist/index.js",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json && npm run typecheck:bench",
+    "typecheck:bench": "tsc --noEmit --strict --skipLibCheck --module NodeNext --target ES2022 --types node scripts/bench-harness.ts",
     "bundle:native": "node scripts/package-native-bundle.mjs",
     "test:vscode": "node --test vscode/test/*.cjs",
     "package:vscode": "node scripts/package-vscode.mjs",
-    "test:vscode:integration": "node scripts/test-vscode-package.mjs"
+    "test:vscode:integration": "node scripts/test-vscode-package.mjs",
+    "bench:harness": "tsx scripts/bench-harness.ts"
   },
   "engines": {
     "node": ">=24"

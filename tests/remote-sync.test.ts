@@ -1,3 +1,4 @@
+import { corpusConfig } from '../src/corpus-config.js';
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { promisify } from 'node:util';
@@ -40,7 +41,7 @@ describe('explicit remote knowledge sync', () => {
 
     vi.stubEnv('KIMONO_CACHE_DIR', cache);
     vi.stubEnv('FGR_BIN', 'fgr-test');
-    const knowledge = new AikidoKnowledgeBase(root);
+    const knowledge = new AikidoKnowledgeBase(root, false, corpusConfig({ mode: 'aikido' }));
     await knowledge.initialize();
     const runtime = runtimeFor(knowledge);
     await runtime.call('aikido_git', {
@@ -169,7 +170,7 @@ describe('explicit remote knowledge sync', () => {
     const policy = path.join(base, 'policy.json');
     await writeFile(policy, JSON.stringify({ projectId: 'p1', gitUrl: 'https://github.com/org/catalog.git' }));
     vi.stubEnv('KIMONO_PROJECT_POLICY_FILE', policy);
-    const knowledge = new AikidoKnowledgeBase(root);
+    const knowledge = new AikidoKnowledgeBase(root, false, corpusConfig({ mode: 'aikido' }));
     await knowledge.initialize();
     await expect(runtimeFor(knowledge).call('aikido_git', { operation: 'sync' }))
       .rejects.toThrow('Retarget an explicit');
@@ -218,7 +219,7 @@ process.exit(result.status ?? 1);
     const realRun = processes.runProcess;
     vi.spyOn(processes, 'runProcess').mockImplementation(async (...args) =>
       args[0] === 'fgr-test' ? { stdout: '', stderr: '', exitCode: 0 } : realRun(...args));
-    const knowledge = new AikidoKnowledgeBase(root);
+    const knowledge = new AikidoKnowledgeBase(root, false, corpusConfig({ mode: 'aikido' }));
     await knowledge.initialize();
     const runtime = runtimeFor(knowledge);
     await runtime.call('aikido_git', { operation: 'retarget', gitUrl: 'git@git.example.invalid:team/knowledge.git' });

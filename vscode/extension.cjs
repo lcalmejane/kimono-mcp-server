@@ -71,12 +71,18 @@ function register(vscode, context, native = nativeEnvironment) {
         await fs.mkdir(storage, { recursive: true, mode: 0o700 });
         const profile = config().get("gitProfileFile", "");
         if (profile && !path.isAbsolute(profile)) throw new Error("Kimono Git profile path must be absolute.");
+        const configFile = config().get("configFile", "");
+        if (configFile && !path.isAbsolute(configFile)) throw new Error("Kimono config path must be absolute.");
+        const corpusMode = config().get("corpusMode", "rag");
+        if (!["aikido", "rag"].includes(corpusMode)) throw new Error("Kimono corpusMode must be aikido or rag.");
         const env = {
           ...environment,
           ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}),
           HOME: storage, USERPROFILE: storage, TMPDIR: storage, TMP: storage, TEMP: storage,
           MCP_TRANSPORT: "stdio", AIKIDO_ROOT: root,
           KIMONO_CACHE_DIR: path.join(storage, "cache"),
+          KIMONO_CORPUS_MODE: corpusMode,
+          ...(configFile ? { KIMONO_CONFIG_FILE: configFile } : {}),
           ...(profile ? { KIMONO_GIT_PROFILE_FILE: profile } : {}),
         };
         // VS Code merges env: explicitly remove inherited transport, profile and Node options.
@@ -107,7 +113,7 @@ function register(vscode, context, native = nativeEnvironment) {
     vscode.workspace.onDidChangeWorkspaceFolders(refresh),
     vscode.workspace.onDidGrantWorkspaceTrust(refresh),
     context.secrets.onDidChange(event => { if (event.key === tokenKey) refresh(); }),
-    vscode.commands.registerCommand("kimono.configure", () => vscode.commands.executeCommand("workbench.action.openSettings", "@ext:tatami.kimono-mcp")),
+    vscode.commands.registerCommand("kimono.configure", () => vscode.commands.executeCommand("workbench.action.openSettings", `@ext:${context.extension.id}`)),
     vscode.commands.registerCommand("kimono.setToken", guarded(async () => {
       // Tokens are endpoint-scoped: changing the URL never reuses a credential.
       const url = remoteUrl(config().get("url", ""));

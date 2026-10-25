@@ -1,0 +1,73 @@
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import path from 'node:path';
+import { afterEach, expect, it, vi } from 'vitest';
+import { AikidoKnowledgeBase } from '../src/knowledge.js';
+import { corpusConfig } from '../src/corpus-config.js';
+import { runtimeFor } from '../src/runtime-tools.js';
+
+const scratch: string[] = [];
+afterEach(async () => {
+  vi.unstubAllEnvs();
+  await Promise.all(scratch.splice(0).map(directory => rm(directory, { recursive: true, force: true })));
+});
+
+it('searches native lexical and semantic generic code, including scoped snapshots without AI-KIDO entry points', async () => {
+  const parent = await mkdtemp(path.join(process.cwd(), '.local-runtime-rag-'));
+  scratch.push(parent);
+  vi.stubEnv('KIMONO_CACHE_DIR', path.join(parent, 'cache'));
+  const root = path.join(parent, 'repo');
+  await mkdir(path.join(root, 'src'), { recursive: true });
+  await mkdir(path.join(root, 'other'));
+  await writeFile(path.join(root, 'src/server.rs'), '// Secure authentication checks tokens before granting access.\nfn authenticate() {}\n');
+  await writeFile(path.join(root, 'other/app.tsx'), 'export const App = () => <main>Dashboard</main>;\n');
+  await writeFile(path.join(root, '.gitignore'), 'ignored/\n');
+  await writeFile(path.join(root, 'src/.gitignore'), 'generated.rs\n');
+  await mkdir(path.join(root, 'ignored'));
+  await mkdir(path.join(root, 'src/node_modules/pkg'), { recursive: true });
+  for (const file of ['ignored/secret.rs', 'src/generated.rs', 'src/node_modules/pkg/index.ts']) {
+    await writeFile(path.join(root, file), 'excluded_sentinel authentication authenticate');
+  }
+  const knowledge = new AikidoKnowledgeBase(root, false, corpusConfig());
+  await knowledge.initialize();
+  const runtime = runtimeFor(knowledge);
+  const updated = JSON.parse(await runtime.call('aikido_index', { operation: 'update', mode: 'all' }));
+  expect(updated.indexes.literal.changes.added).toEqual(['other/app.tsx', 'src/server.rs']);
+  expect(updated.indexes.semantic.changes.added).toEqual(['other/app.tsx', 'src/server.rs']);
+  const { snapshotId } = JSON.parse(await runtime.call('aikido_snapshot', { operation: 'begin', paths: ['src'] }));
+  try {
+    for (const mode of ['literal', 'text', 'semantic', 'hybrid']) {
+      const search = JSON.parse(await runtime.call('aikido_search', { snapshotId, mode,
+        query: mode === 'semantic' || mode === 'hybrid' ? 'secure authentication' : 'authenticate' }));
+      expect(search.status).not.toBe('not-ready');
+      expect(JSON.stringify(search)).toContain('src/server.rs');
+      expect(JSON.stringify(search)).not.toContain('other/app.tsx');
+      expect(JSON.stringify(search)).not.toMatch(/secret\.rs|generated\.rs|node_modules/);
+    }
+    for (const mode of ['literal', 'text', 'semantic', 'hybrid']) {
+      const hidden = JSON.parse(await runtime.call('aikido_search', { snapshotId, mode, query: 'excluded_sentinel' }));
+      expect(hidden.status).not.toBe('not-ready');
+      expect(JSON.stringify(hidden)).not.toMatch(/secret\.rs|generated\.rs|node_modules/);
+    }
+    const ranges = JSON.parse(await runtime.call('aikido_file', { snapshotId, operation: 'ranges',
+      ranges: [{ path: 'src/server.rs', startLine: 1, endLine: 2 }] }));
+    expect(JSON.stringify(ranges)).toContain('fn authenticate');
+  } finally { await runtime.call('aikido_snapshot', { operation: 'end', snapshotId }); }
+}, 60_000);
+
+it('bounds native lexical command arguments across large file catalogues without losing later matching files', async () => {
+  const parent = await mkdtemp(path.join(process.cwd(), '.local-runtime-rag-batch-'));
+  scratch.push(parent);
+  vi.stubEnv('KIMONO_CACHE_DIR', path.join(parent, 'cache'));
+  const root = path.join(parent, 'repo');
+  await mkdir(root);
+  for (let index = 0; index < 250; index++) {
+    await writeFile(path.join(root, `source-file-${String(index).padStart(4, '0')}-${'x'.repeat(80)}.go`),
+      index === 249 ? 'package target // unique_late_evidence' : 'package placeholder');
+  }
+  const knowledge = new AikidoKnowledgeBase(root, false, corpusConfig({ mode: 'rag' }));
+  await knowledge.initialize();
+  const { snapshotId } = JSON.parse(await runtimeFor(knowledge).call('aikido_snapshot', { operation: 'begin' }));
+  const result = JSON.parse(await runtimeFor(knowledge).call('aikido_search', { snapshotId, query: 'unique_late_evidence' }));
+  expect(JSON.stringify(result)).toContain('source-file-0249');
+  await runtimeFor(knowledge).call('aikido_snapshot', { operation: 'end', snapshotId });
+}, 30_000);

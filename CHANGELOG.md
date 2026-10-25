@@ -1,5 +1,46 @@
 # Changelog
 
+## 0.6.0 - 2026-10-25
+
+- Smaller exposed retrieval definitions (22.5% fewer serialized bytes across
+  snapshot/search/file, including batching). `aikido_search` and its `aikido`
+  alias accept 1–20 ordered `queries`, sharing filters/mode, one snapshot and
+  a total response budget; per-query errors/statuses and `nextQuery` remain
+  explicit. Combine hits into the existing 1–50 merged `aikido_file ranges`
+  batch. Updated initialization/client guidance and regression tests; no new
+  end-to-end model-token savings claimed.
+- Search now defaults to minimal `detail=compact`: paths and inclusive line-range
+  pairs, no excerpts/scores/repeated provenance. `locations` and `excerpts` remain
+  explicit diagnostics; failures/truncation stay visible. Snapshot line counts
+  are reused across searches. Added fixed Gemini 3.8 Flash benchmark config.
+- Replayable paired harness benchmark with frozen corpus hashes, Copilot CLI
+  adapter, configurable external-adapter protocol, real usage telemetry,
+  persisted evidence and quality gates, tool/MCP isolation audits, shared CLI
+  download caching, disk preflight and timeout-aware paired metrics.
+  The current batched-runtime pilot supersedes previous development campaigns;
+  old reports and private campaign evidence removed at the owner's request.
+- Generic local RAG is now the default, without AI-KIDO entry-point requirements;
+  explicitly select `aikido` to retain AI-KIDO discovery, private specs and
+  collaboration (migration required for 0.5.x AI-KIDO clients).
+- Root/nested gitignore exclusions apply to both modes and all retrieval/index
+  paths; dependency/build exclusions remain enforced without ignore files.
+- Broad source-language/extensionless-file coverage, validated host-only corpus
+  configuration, include/exclude globs, per-root/policy cache isolation and
+  explicit scan counts and bounded large-corpus budgets.
+- Scoped immutable research snapshots, configurable TTL/count/byte budgets,
+  streaming semantic requests, per-document fingerprinting, disk-staged lexical
+  updates and bounded native query argument batches for large repositories.
+- RAG is read-only for project files; collaboration publication and remote Git
+  retarget/sync remain AI-KIDO-only. Generic sources are evidence, not personas.
+- VS Code corpus settings and portable stdio launcher for other MCP clients;
+  local RAG guide with Copilot, Claude Code, Codex and Antigravity configuration,
+  token-frugal retrieval instructions and privacy/measurement limitations.
+- VSIX publisher identity is now `lcalmejane.kimono-mcp`, preparing the owner's
+  Marketplace namespace. Replace the older `tatami.kimono-mcp` VSIX manually
+  and re-enter remote credentials; GitHub publication does not publish Marketplace.
+- Separate reusable CLI commands from the executable entry point so bundling
+  cannot start the MCP twice; package provenance flags uncommitted sources.
+
 ## 0.5.0 - 2026-10-25
 
 - Standalone Kimono MCP VS Code extension, with native MCP registration, trusted

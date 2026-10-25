@@ -14,7 +14,7 @@ it('serves snapshot-pinned knowledge over stdio and rejects legacy mutations', a
   const transport = new StdioClientTransport({
     command: process.execPath, args: ['--import', 'tsx', 'src/index.ts'],
     env: {
-      PATH: process.env.PATH ?? '/usr/bin:/bin', AIKIDO_ROOT: root,
+      PATH: process.env.PATH ?? '/usr/bin:/bin', AIKIDO_ROOT: root, KIMONO_CORPUS_MODE: 'aikido',
       AIKIDO_WRITABLE: 'true', KIMONO_CACHE_DIR: path.join(parent, 'cache'),
       FGR_BIN: process.env.FGR_BIN ?? 'fgr',
     },

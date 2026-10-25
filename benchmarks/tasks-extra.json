@@ -1,0 +1,16 @@
+[
+  {
+    "id": "plan-ignore-refactor",
+    "kind": "refactor-plan",
+    "prompt": "Plan extracting ignore-rule evaluation from the directory scanner into a focused helper without changing eligible files. Identify affected code, nested negation and targeted refresh risks, and regression tests. Do not implement changes.",
+    "expectedPaths": ["src/knowledge.ts", "tests/corpus.test.ts", "tests/synchronization.test.ts"],
+    "rubric": ["Preserves rule ordering and ignored-parent semantics.", "Keeps safety exclusions non-overridable.", "Covers full refresh, targeted refresh and snapshots.", "Gives concrete migration and focused test steps."]
+  },
+  {
+    "id": "plan-cache-regression",
+    "kind": "bugfix-plan",
+    "prompt": "Investigate the risk that switching the default corpus mode changes old AI-KIDO cache identity. Explain the existing compatibility mechanism, then propose a regression test plan for AI-KIDO defaults, RAG defaults and custom policies. Identify implementation and tests; do not change files.",
+    "expectedPaths": ["src/search.ts", "src/corpus-config.ts", "tests/corpus.test.ts"],
+    "rubric": ["Identifies explicit AI-KIDO legacy comparison.", "Distinguishes old root-only identity from policy-derived identities.", "Explains cache reuse and isolation risks.", "Proposes concrete default/mode/policy regression assertions."]
+  }
+]

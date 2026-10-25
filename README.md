@@ -1,6 +1,62 @@
 # Kimono MCP Server
 
-Standalone MCP server for an AI-KIDO knowledge base, usable by tatami-core, VS Code, Claude Code and other MCP clients. Commands, agents/personas, skills, workflows, concepts, techniques, use cases and hard points are discovered from `AIKIDO_ROOT`, not a static catalogue.
+Standalone MCP server for **local project RAG by default**, usable by tatami-core,
+VS Code, Claude Code and other MCP clients. It indexes generic UTF-8 source code
+and documentation without requiring an AI-KIDO entry point.
+
+Select `KIMONO_CORPUS_MODE=aikido` (CLI `--corpus-mode aikido`, VS Code
+`kimono.corpusMode: "aikido"`) for AI-KIDO discovery, activation, private-spec
+exclusions and collaboration. Commands, agents/personas, skills and workflows
+are then discovered from `AIKIDO_ROOT`, not a static catalogue.
+RAG mode is read-only for project files; edits/Git remain with
+the client. Both modes use the same local lexical/semantic engines and compact
+MCP retrieval, not a hosted embedding API or an embedded LLM.
+
+In both modes, root and nested `.gitignore` rules apply automatically to the
+shared corpus used for discovery, snapshots and lexical/semantic search.
+Includes cannot override ignored paths. Dependencies/build outputs such as
+`node_modules`, `dist` and `build` stay excluded even without a `.gitignore`.
+**Migration from 0.5.x:** select `aikido` explicitly to retain AI-KIDO behavior;
+the presence of an AI-KIDO entry point does not change the default mode.
+
+See **[Local RAG usage / Usage RAG local](docs/local-rag.md)** for supported
+languages, host-controlled include/exclude rules, large-project budgets/scoped
+snapshots, and Copilot, Claude Code, Codex and Antigravity configurations.
+This can reduce unnecessary context sent to an assistant; it does not guarantee
+a token/billing reduction or force a client to use MCP. Retrieved passages can
+still be sent to the client's model provider even though indexing is local.
+
+For reproducible evidence rather than unmeasured savings claims, see the
+[paired harness benchmark](docs/harness-benchmark.md): frozen corpus, Copilot
+with/without MCP, real usage telemetry, persisted results and quality review gates.
+The [current fixed-model pilot](benchmarks/results/current.md) uses audited
+native-only baselines and the current batched retrieval runtime.
+Its planning pair measured **71.4% less cumulative input** and **52.0% less
+wall time** with Kimono. This is one exploratory pair, not a validated savings
+claim: human review is pending; the separate native research answer failed
+the JSON-format gate. No universal percentage or billing reduction is promised.
+
+## One knowledge base. Your team. Your agents.
+
+Kimono is more than a way to shorten a search response: it gives MCP clients
+a common retrieval interface over project knowledge that people can maintain.
+Use a shared HTTP service when several assistants need the same configured
+corpus; embedded stdio remains a dedicated local process per client.
+Snapshots pin each research session to a captured version, not a live,
+automatically synchronized conversation across agents.
+
+**The value proposition is shared, inspectable knowledge—not a guaranteed
+cheaper grep.** Retrieval overhead may be a reasonable trade-off for a team
+seeking a common knowledge layer. Single-agent RAG trials do not measure
+collaboration benefits or establish a fixed "collaboration tax".
+See the [current measurements and limitations](benchmarks/results/current.md).
+
+Default RAG provides read-only retrieval. Explicit AI-KIDO mode additionally
+supports versioned knowledge publication, comparison and conflict handling.
+Human users work through their editors and MCP clients; Kimono is not a
+shared chat, permission-management system or concurrent code editor.
+See the [shared-service and replica guide](docs/usage.en.md#explicit-knowledge-collaboration-modes)
+and [discover the AI-KIDO / Tatami ecosystem](https://ai-kido.fr).
 
 Kimono centralizes project knowledge. Clients edit their own files; shared
 knowledge revisions can be explicitly reconciled through `aikido_collaboration`
@@ -10,6 +66,7 @@ without writing the client workspace or requiring Git.
 
 - [VS Code: install the standalone GitHub VSIX (English / français)](vscode/README.md)
 - [Build and release the VS Code extension with GitHub CI](docs/vscode-distribution.md)
+- [Local RAG: generic projects, large repositories and MCP clients (EN/FR)](docs/local-rag.md)
 
 - [English: standalone, integration and concurrent clients](docs/usage.en.md)
 - [Français : standalone, intégration et clients concurrents](docs/usage.fr.md)
@@ -23,11 +80,18 @@ without writing the client workspace or requiring Git.
 | `aikido_snapshot` | `begin`, `end`; immutable multi-call corpus snapshot with expiry/resource limits |
 | `aikido_embed` | Generate a local text embedding with `usage=query` (default) or `document`; returns the numeric vector and model metadata without changing ROOT/indexes |
 | `aikido_root` | `status` for the configured knowledge ROOT |
-| `aikido_search` | Snapshot-scoped literal/regex/text/semantic/hybrid/vector search; pre-limit filters; default token-frugal `detail=locations` (files, hit lines, score, matched terms, no text), `detail=excerpts` for diagnostics; snapshot version/provenance |
+| `aikido_search` | Snapshot-scoped literal/regex/text/semantic/hybrid/vector search; default `detail=compact`: only paths, inclusive `[start,end]` ranges and snapshot ID, no code. `locations` adds metadata, `excerpts` adds text; both explicit diagnostics. |
 | `aikido_index` | `update` refreshes external indexes; non-blocking semantic `status` |
 | `aikido_git` | `infos`, anonymous read-only remote `sync` after explicit `retarget`, metadata-only `retarget` |
 | `aikido_collaboration` | Generic MCP-only `guidance`, `status`, three-way `compare`, revision-pinned `read`, and optimistic `publish` |
 | `aikido_file` | Snapshot-scoped read-only JSON `ranges` (batch of up to 50 line ranges, merged, one byte budget), `metadata`, `outline`, `read` (lines/section/full) |
+
+**Batch-first retrieval:** send `aikido_search` a `queries` array (1–20 strings,
+shared mode/filters, per-query errors and one response budget), then combine
+the useful hits into one `aikido_file operation=ranges` call. Single queries and
+vectors remain compatible. See [batch contracts and continuation](docs/retrieval.md#batch-searches-then-batch-reads).
+The three retrieval tool definitions are **22.5% smaller in serialized bytes**
+even with batching added; this is not a new model-token savings measurement.
 
 Kimono is a knowledge-only MCP: it never commits, pushes, merges, creates
 branches or changes a Git remote. The ROOT may be a dedicated directory without
@@ -60,9 +124,12 @@ profile headers and reconstructs this trusted header from its own credential sto
 For multi-call research, call `aikido_snapshot` with `{"operation":"begin"}`,
 pass its `snapshotId` to every `aikido` list/search/read/activate/execute and
 `aikido_search` / `aikido_file` call, then call `{"operation":"end",
-"snapshotId":"…"}`. A response reports the same ID, content `version` and
-`provenance`. Snapshots expire after 15 minutes; limits are 8 active snapshots,
-64 MiB per snapshot and 256 MiB total.
+"snapshotId":"…"}`. Begin reports content `version` and `provenance`;
+compact searches repeat only the ID. AI-KIDO defaults are 15 minutes, 8 active snapshots,
+64 MiB per snapshot and 256 MiB total. RAG defaults allow 256 MiB per snapshot
+and 512 MiB total. Hosts can configure bounded limits; `begin` also accepts
+`paths` to capture selected subtrees, and returns effective snapshot budgets.
+See [large-project RAG](docs/local-rag.md#grands-dépôts--large-repositories).
 
 Tatami Core may provide `KIMONO_PROJECT_POLICY_FILE`, a JSON manifest outside
 `AIKIDO_ROOT` containing nonsecret `projectId`, `gitUrl`, `gitMode`, `gitPolicy`,
@@ -288,7 +355,7 @@ the Apple GPU). Passages are sorted by length to minimise padding, grouped in
 batches and spread over parallel ONNX sessions: about 7.5 ms per 450-character
 passage with 4 CPUs (17 ms with one worker).
 
-Only discovered text documents enter a private search mirror. Symlinks, dependency/build/cache directories, `.env*`, nested `.gitignore` exclusions and files over 2 MiB are excluded. `prompts/spec/` (or `spec/` when ROOT is the prompts directory) requires `AIKIDO_INCLUDE_SPEC=true`. Excluded files never enter the fgr index.
+Only discovered text documents enter a private search mirror. Symlinks, dependency/build/cache directories, `.env*` and nested `.gitignore` exclusions are omitted. Per-file defaults are 2 MiB in AI-KIDO and 4 MiB in RAG; host configuration can change allowlists, filters and bounded budgets. In AI-KIDO mode, `prompts/spec/` (or `spec/` when ROOT is the prompts directory) requires `AIKIDO_INCLUDE_SPEC=true`. Excluded files never enter the fgr index. See [local RAG corpus policy](docs/local-rag.md#configuration-du-corpus--corpus-policy).
 
 The persistent cache lives **outside AIKIDO_ROOT**. This allows indexing a read-only standard base without changing it. Treat the cache as sensitive: it contains document copies. An image cannot ship a prebuilt index for a ROOT chosen later.
 
@@ -402,9 +469,10 @@ vice versa. Documents and queries stay local: no external inference API.
 The image downloads the pinned public model/tokenizer (~135 MB combined) and
 runtime at build time, verifying SHA-256. Runtime inference works offline.
 
-Results contain `engine`, `model`, `status`, `count`, `files`, snapshot `version`
-(`detail=excerpts` adds `chunks`/`embedded` statistics), and `results` grouped by file with `path`, hit line ranges and `score` (cosine
-similarity, higher is better, not a probability). Filtering by `kind` happens
+Default results contain only paths, inclusive line ranges and the snapshot ID.
+Request `detail=locations` for `engine`, `model`, status/counts, snapshot version
+and scores; `detail=excerpts` also returns text. Scores are cosine
+similarity (higher is better, not a probability). Filtering by `kind` happens
 before the result limit. There is no relevance threshold: unrelated queries can
 still produce nearest neighbors. Results are chunks grouped per file: one file
 lists each matched chunk as a `[start,end]` line range in `hits`.
@@ -415,15 +483,20 @@ before every MCP search/full-index call, and only re-embeds changed chunks. Targ
 persistent vector store lives alongside the literal index outside ROOT.
 The same exclusions apply, including private specs. Chunking bounds passages to
 500 Unicode characters with starting line numbers. It is not a reranker or an
-LLM answer generator. The current flat cosine index targets knowledge bases, not
-large document warehouses; each request accepts at most 64 MiB of discovered
-text. Requests load the model locally and verify its fingerprint; initial
+LLM answer generator. The current flat cosine index targets project corpora, not
+unbounded document warehouses. The former 64 MiB semantic request ceiling is
+replaced by the host's `maxCorpusBytes` budget (512 MiB by default); scoped
+snapshots and include/exclude policies are recommended for large repositories.
+JS requests are streamed to disk, but the native engine still retains text,
+chunks and vectors in memory. Requests load the model locally and verify its fingerprint; initial
 indexing takes longer than cached searches. Reserve at least 1 GiB of container
 memory initially and measure on your corpus; this is not a hard memory bound.
-Semantic subprocesses time out explicitly after ten minutes.
+Semantic searches time out after 60 seconds; index maintenance after one hour.
 For a sizeable base, pre-index using the CLI before exposing the server, or
 configure a sufficiently long MCP client request timeout for the first indexing
-call. The index is lazy to avoid blocking server startup.
+call. Semantic preparation starts in the background at startup; poll
+`aikido_index status` with `mode=semantic` until ready. A scoped snapshot builds
+its subset index separately on first semantic use.
 
 Measured on the standard AI-KIDO Git base in the local Linux arm64 Docker
 environment: **322 documents / 4,378 chunks**, initial indexing **~6 min 12 s**,
@@ -568,7 +641,7 @@ Stdio is the default transport. Example VS Code configuration:
       "type": "stdio",
       "command": "node",
       "args": ["/absolute/path/to/kimono-mcp-server/dist/index.js"],
-      "env": { "AIKIDO_ROOT": "/absolute/path/to/aikido" }
+      "env": { "AIKIDO_ROOT": "/absolute/path/to/aikido", "KIMONO_CORPUS_MODE": "aikido" }
     }
   }
 }
@@ -581,6 +654,7 @@ For Claude Code or another stdio client, use the same executable, arguments and 
 ```sh
 cp .env.example .env
 # Set AIKIDO_HOST_PARENT and AIKIDO_DIR.
+# Set KIMONO_CORPUS_MODE=aikido for the AI-KIDO workflows below (default: rag).
 # Set MCP_AUTH_TOKEN to a long random secret.
 docker compose up --build -d
 ```
@@ -699,11 +773,13 @@ MIT. See [LICENSE](LICENSE). Third-party dependencies retain their own licenses.
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `AIKIDO_ROOT` | required | Existing AI-KIDO root or absent/empty initialization target. |
+| `AIKIDO_ROOT` | required | Corpus root (legacy name retained): AI-KIDO knowledge, or generic project in RAG mode. |
+| `KIMONO_CORPUS_MODE` | `rag` | Generic local RAG by default; opt into `aikido` for AI-KIDO workflows. CLI `--corpus-mode`. |
+| `KIMONO_CONFIG_FILE` | unset | Absolute host-selected corpus JSON config; CLI `--config`. Never auto-discovered in projects. |
 | `AIKIDO_REPOSITORY` | official Git URL | Default source for CLI/MCP/Compose installation. |
 | `AIKIDO_REF` | `main` | Branch/tag for explicit installation. |
 | `AIKIDO_WRITABLE` | `false` | Legacy installer/library setting; never enables MCP mutation tools. |
-| `AIKIDO_INCLUDE_SPEC` | `false` | Explicitly expose private personal specs in discovery/indexing. |
+| `AIKIDO_INCLUDE_SPEC` | `false` | AI-KIDO-only opt-in to private personal specs; ordinary RAG `spec/` directories are eligible. |
 | `KIMONO_GIT_PROFILE_FILE` | unset | Private server-managed SSH/HTTPS profile outside ROOT; reread for Git commands, supports rotation without restart. |
 | `KIMONO_CACHE_DIR` | `~/.cache/kimono` | Cache parent outside ROOT; contains sensitive document copies. |
 | `FGR_BIN` | `fgr` | Path to the fast-grep executable. |

@@ -19,8 +19,9 @@ Keep the returned `snapshotId` for every `aikido` list/search/read/activate call
 and every `aikido_search` / `aikido_file` call, then close it with
 `{"operation":"end","snapshotId":"<returned-id>"}`. The immutable snapshot pins
 the corpus for literal, regex, semantic and file reads despite concurrent
-`sync` or external edits. Responses include `snapshotId`, `version` (SHA-256
-corpus fingerprint) and `provenance`. Snapshots expire after 15 minutes, with
+`sync` or external edits. Begin includes `snapshotId`, `version` (SHA-256
+corpus fingerprint) and `provenance`; compact searches repeat only the ID.
+Snapshots expire after 15 minutes, with
 at most 8 active snapshots and 256 MiB total; use a fresh snapshot after expiry
 or an unknown/stale-ID error.
 
@@ -28,7 +29,7 @@ or an unknown/stale-ID error.
 | --- | --- |
 | V3.1 by-path / by-id | `aikido` `list`, then `aikido_file` `metadata`; `file_id = SHA-256(relative UTF-8 path)[:12]` |
 | by-directory / by-type / alphabetical lookup | `pathPrefix`, `type`, `extension`, `kind`, filename/path `query` and pagination on `list` |
-| Search skill / plans `path`, `line` (no full code) | `aikido_search.results[].path` + `hits` (default `detail=locations`); text on demand with one `aikido_file` `ranges` batch |
+| Search skill / plans `path`, `line` (no full code) | `aikido_search.results[].path` + `ranges` (default `detail=compact`); text on demand with one `aikido_file` `ranges` batch |
 | Progressive disclosure of header/instructions/resources | Metadata/header once per file, then outline or a selected range |
 | Full instruction activation | Existing `aikido activate` / `execute`, prompts and full resource reads remain explicit |
 
@@ -36,12 +37,22 @@ The search engines remain **fast-grep** for literal/regex/text and
 **embsearch-core / ONNX** for local semantic queries/vectors. Use `text` for
 normalized whole terms and one-hop aliases parsed from project
 glossaries or vocabulary documents; use `hybrid` to run text and semantic
-branches in parallel and receive branch diagnostics plus reciprocal-rank
-fusion. The returned `queryPlan` includes vocabulary provenance. Repository
+branches in parallel with reciprocal-rank fusion. Explicit `detail=locations`
+or `excerpts` adds branch diagnostics and `queryPlan` vocabulary provenance.
+Compact output retains failures and vocabulary warnings. Repository
 vocabulary is untrusted data, not instructions or factual confidence.
 Structure indexing is navigation metadata, not a competing
 full-text/embedding algorithm. Semantic identity, cosine ranking and
 incremental vector caching are preserved.
+
+Generic project retrieval uses the same protocol, with RAG as the default
+(0.6.0+); select `KIMONO_CORPUS_MODE=aikido` explicitly for AI-KIDO behavior.
+Both modes honor root/nested `.gitignore` and built-in dependency exclusions.
+`aikido_snapshot begin` accepts
+optional ROOT-relative `paths` to capture only relevant files/subtrees.
+Snapshot limits are host-configurable; begin returns effective limits and scope.
+See [local RAG usage](local-rag.md) for corpus/language policy, large repositories
+and client setup. The 15-minute/8-snapshot/256-MiB values above are AI-KIDO defaults.
 
 Text retrieval follows the search-plan approach: filter the authorized files,
 retrieve bounded candidates, then rank passages rather than return the first
@@ -55,7 +66,8 @@ receive bounded boosts. Aliases contribute less
 than an original term; definition keywords only break ties on passages already
 matching a term or alias, never retrieve unrelated passages on their own.
 Repeated documents receive a ranking penalty to diversify the answer.
-`matchedTerms` and `scoreDetails` expose the lexical evidence, not a probability.
+With explicit diagnostics, `matchedTerms` and `scoreDetails` expose the lexical
+evidence, not a probability.
 
 Candidate collection is bounded to 4,000 lines (40 per file), with a concurrent
 1,000-line exact-phrase pass (10 per file) for multiword queries, merged only when
@@ -103,6 +115,90 @@ running rather than holding a search request until indexing completes.
 
 ### Compact JSON, not entire files
 
+#### Batch searches, then batch reads
+
+For independent questions, use **one** `aikido_search` call instead of one
+model/tool turn per query:
+
+```json
+{"snapshotId":"<returned-id>","mode":"text","queries":["gitignore exclusions","snapshot configuration","corpus limits"],"limit":5,"maxBytes":16384}
+```
+
+```json
+{"searches":[
+  {"results":[{"path":"src/knowledge.ts","ranges":[[152,174]]}]},
+  {"results":[{"path":"src/snapshots.ts","ranges":[[112,115]]}]},
+  {"results":[]}
+],"snapshotId":"<returned-id>"}
+```
+
+The example locations illustrate the shape, not stable source references.
+`queries` contains **1–20 strings**, each at most 8192 UTF-8 bytes.
+It is exclusive with `query`, `vector` and `embeddingModel`. The existing
+single-query/vector contracts remain supported. `aikido operation=search`
+supports the same batch form.
+
+All queries share mode, filters, `limit` (hits **per query**), detail and one
+snapshot. They execute sequentially inside the server, reusing snapshot indexes
+and immutable line counts; this reduces client round trips, not engine calls.
+There is no automatic text retrieval or dependency between batch queries.
+Wait for earlier evidence before issuing a genuinely dependent query.
+
+`searches[i]` corresponds to `queries[i]`, without repeating the query text.
+An empty `results:[]` is a successful no-match; a failed query has an explicit
+`error` instead. Other queries still run. Vocabulary warnings, `not-ready`,
+hybrid `partial` and failed-branch diagnostics remain visible per query.
+Compact responses carry the snapshot ID only once. With explicit
+`locations`/`excerpts`, shared version/provenance is returned once at the top.
+
+The **entire serialized batch** is bounded by `maxBytes`: default 16 KiB,
+minimum **4096 bytes**, maximum 256 KiB. A batch needs room for its envelope
+and a bounded individual search; single-query requests still accept 2048.
+When there is insufficient room for the next query, the response includes
+`truncated:true,nextQuery:<zero-based index>` and only a prefix of `searches`.
+Resume with `queries.slice(nextQuery)` using the same options and snapshot.
+Each query may also have its **own** `truncated:true` when hits exceed its
+limit/remaining budget: narrow that query or increase its limit/budget.
+`nextQuery` resumes omitted queries, not omitted hits within an executed query.
+
+Collect useful locations from **all** batch results and issue one read:
+
+```json
+{"operation":"ranges","snapshotId":"<returned-id>","ranges":[
+  {"path":"src/knowledge.ts","startLine":152,"endLine":174},
+  {"path":"src/snapshots.ts","startLine":112,"endLine":115}
+],"contextLines":1,"maxBytes":16384}
+```
+
+Reads already support **1–50 ranges across files**, merge overlapping/adjacent
+spans per file, load each requested file once and return exact `remaining`
+ranges if truncated. That existing format is unchanged: batching searches
+does not require switching tools or reading whole files.
+
+#### Smaller exposed definitions
+
+Descriptions are shortened and redundant schema branches are replaced with
+compact selectors. Runtime validation still rejects conflicting arguments;
+existing operations, filters, vectors, diagnostics and safety checks remain.
+Measured serialized tool-definition bytes (not model tokens), including
+descriptions, schemas and annotations:
+
+| Definition | Before | After |
+|---|---:|---:|
+| `aikido_snapshot` | 918 | 660 |
+| `aikido_search`, including the new `queries` API | 2,717 | 2,207 |
+| `aikido_file` | 2,199 | 1,652 |
+| **These three definitions combined** | **5,834** | **4,519 (−22.5%)** |
+| Eight runtime definitions, excluding legacy `aikido` alias | 12,023 | 9,252 (−23.0%) |
+
+The three-tool and eight-tool catalogs have regression thresholds of at least
+20% fewer serialized bytes than the pre-batch catalog. Initialization guidance
+also drops from 1,119 to 846 UTF-8 bytes (−24.4%), including the batch protocol,
+with a separate regression threshold. This is a measurable
+schema reduction, **not** by itself an end-to-end token/latency result.
+See the [current runtime pilot](../benchmarks/results/current.md) for actual measurements.
+Enable only the tools needed by a client to avoid unrelated definitions.
+
 Call `aikido`:
 
 ```json
@@ -129,14 +225,28 @@ blockquote metadata and blank lines are returned. Headers are bounded to
 `unknown-truncated-header` or `N/A`, **not a truth-validation verdict**.
 Use a targeted read to inspect a truncated header.
 
-Call `aikido_search` (default `detail=locations`, the token-frugal contract of
+Call `aikido_search` (default `detail=compact`, the token-frugal contract of
 the AI-KIDO search skill and plans: *where to look*, not the code itself):
 
 ```json
 {"snapshotId":"<returned-id>","query":"validate search plan structure","mode":"text","limit":10}
 ```
 
-Response structure (no text, no headers, no scoring details):
+Default response (no text, scores, counts or repeated provenance):
+
+```json
+{"results":[{"path":"src/knowledge.ts","ranges":[[152,160],[175,181]]}],"snapshotId":"<returned-id>"}
+```
+
+Ranges are inclusive, 1-based `[startLine,endLine]`, including single-line hits
+as `[n,n]`. Files retain relevance order; ranges are sorted within each file.
+`truncated:true` appears only when hits were omitted. Errors, non-ready/partial
+status, failed branches and query warnings remain explicit. The snapshot ID
+pins the corpus; version/provenance are available from snapshot begin, not
+repeated on each compact search. No code is returned until an explicit file read.
+Immutable snapshot line counts are cached to avoid rereading files on repeated searches.
+
+For the previous diagnostic structure, request `detail=locations` explicitly:
 
 ```json
 {
@@ -189,7 +299,7 @@ are reported per path in `errors` without failing the batch.
 `line`, `startLine`/`endLine`, `excerpt`, `excerptTruncated`, `score`,
 `scoreDetails`, `matchedTerms`, plus `queryPlan`, `ranking` and `branches`.
 Passing `contextLines` without `detail` selects it for backward compatibility;
-`detail=locations` with `contextLines` is rejected. A local consumer expecting
+`detail=compact` or `detail=locations` with `contextLines` is rejected. A local consumer expecting
 `matches` maps them from `results` (`path` + `hits`) and reads text with
 `ranges`. There is no second copy of the JSON in `structuredContent`.
 
@@ -275,7 +385,7 @@ MCP calls; keep any local fallback explicit and observable.
 
 1. Découvrir avec `aikido list` : métadonnées, en-tête brut, identifiant stable
    SHA-256 du chemin (12 caractères, compatible V3.1), filtres et pagination.
-2. Chercher avec `aikido_search` (par défaut `detail=locations`) : uniquement
+2. Chercher avec `aikido_search` (par défaut `detail=compact`) : uniquement
    les fichiers classés, leur nombre de lignes, le meilleur score, les lignes
    trouvées (`[début,fin]` pour un chunk sémantique) et les termes reconnus —
    aucun texte.

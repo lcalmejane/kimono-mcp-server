@@ -47,7 +47,9 @@ function fixture(options = {}) {
     },
   };
   const context = {
-    extensionPath: path.join(process.cwd(), "vscode"), extension: { packageJSON: { version: "0.4.1" } },
+    extensionPath: path.join(process.cwd(), "vscode"), extension: {
+      id: "lcalmejane.kimono-mcp", packageJSON: { version: "0.6.0" },
+    },
     globalStorageUri: uri(path.join(process.cwd(), ".local-runtime-vscode-test")),
     secrets: {
       get: async key => state.secrets.get(key),
@@ -75,18 +77,26 @@ test("provider uses per-folder roots, bundled Node, and extension-owned registra
   assert.ok(state.disposed >= 8);
 });
 
+test("settings command targets the installed extension identity", async () => {
+  const { state, context } = fixture();
+  context.extension.id = "another-publisher.kimono-mcp";
+  await state.commands.get("kimono.configure")();
+  assert.deepEqual(state.commandArgs, ["workbench.action.openSettings", "@ext:another-publisher.kimono-mcp"]);
+});
+
 test("embedded resolve isolates environment, cache and Git profile; configuration invalidates old definitions", async () => {
   const { state, context } = fixture({ gitProfileFile: path.join(process.cwd(), ".private-profile.json") });
   const [server] = await state.provider.provideMcpServerDefinitions();
   try {
     const resolved = await state.provider.resolveMcpServerDefinition(server, { isCancellationRequested: false });
     assert.equal(resolved.env.MCP_TRANSPORT, "stdio");
+    assert.equal(resolved.env.KIMONO_CORPUS_MODE, "rag");
     assert.equal(resolved.env.FGR_BIN, "/native/fgr");
     assert.equal(resolved.env.KIMONO_GIT_PROFILE_FILE, state.settings.gitProfileFile);
     assert.ok(resolved.env.KIMONO_CACHE_DIR.startsWith(context.globalStorageUri.fsPath));
     for (const key of Object.keys(process.env)) {
       if (!["PATH", "HOME", "USERPROFILE", "TMPDIR", "TMP", "TEMP", "SystemRoot", "MCP_TRANSPORT",
-        "AIKIDO_ROOT", "KIMONO_CACHE_DIR", "FGR_BIN", "KIMONO_GIT_PROFILE_FILE"].includes(key)) {
+        "AIKIDO_ROOT", "KIMONO_CORPUS_MODE", "KIMONO_CACHE_DIR", "FGR_BIN", "KIMONO_GIT_PROFILE_FILE"].includes(key)) {
         assert.equal(resolved.env[key], null);
       }
     }
@@ -146,4 +156,19 @@ test("cancelled and invalid token input never stores a credential", async () => 
   state.input = "invalid\nvalue";
   await assert.rejects(state.commands.get("kimono.setToken"), /without newlines/);
   assert.equal(state.secrets.size, 0);
+});
+
+test("embedded provider can explicitly select AI-KIDO instead of default RAG", async () => {
+  const { state, context } = fixture({ corpusMode: "aikido", configFile: path.join(process.cwd(), "corpus.json") });
+  const [server] = await state.provider.provideMcpServerDefinitions();
+  try {
+    await state.provider.resolveMcpServerDefinition(server, { isCancellationRequested: false });
+    assert.equal(server.env.KIMONO_CORPUS_MODE, "aikido");
+    assert.equal(server.env.KIMONO_CONFIG_FILE, state.settings.configFile);
+    state.settings.configFile = "relative.json";
+    const [invalid] = await state.provider.provideMcpServerDefinitions();
+    await assert.rejects(() => state.provider.resolveMcpServerDefinition(invalid, { isCancellationRequested: false }), /config path must be absolute/);
+  } finally {
+    await fs.rm(context.globalStorageUri.fsPath, { recursive: true, force: true });
+  }
 });

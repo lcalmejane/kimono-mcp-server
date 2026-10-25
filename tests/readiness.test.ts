@@ -1,3 +1,4 @@
+import { corpusConfig } from '../src/corpus-config.js';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -9,7 +10,7 @@ import { startHttpServer } from '../src/server.js';
 
 it('separates public liveness from authenticated readiness/status and rechecks missing ROOT', async () => {
   const parent = await mkdtemp(path.join(tmpdir(), 'kimono-readiness-'));
-  const knowledge = new AikidoKnowledgeBase(path.join(parent, 'root'));
+  const knowledge = new AikidoKnowledgeBase(path.join(parent, 'root'), false, corpusConfig({ mode: 'aikido' }));
   const instance = await startHttpServer(knowledge, { host: '127.0.0.1', port: 0, authToken: 'test-secret' });
   const url = `http://127.0.0.1:${instance.port}`;
   const headers = { authorization: 'Bearer test-secret' };
@@ -41,7 +42,7 @@ it('separates public liveness from authenticated readiness/status and rechecks m
 it('keeps accepted HTTP tool work while draining, exposes not-ready and refuses new sessions', async () => {
   const parent = await mkdtemp(path.join(tmpdir(), 'kimono-drain-'));
   await writeFile(path.join(parent, 'index.md'), '# AI-KIDO');
-  const knowledge = new AikidoKnowledgeBase(parent);
+  const knowledge = new AikidoKnowledgeBase(parent, false, corpusConfig({ mode: 'aikido' }));
   const instance = await startHttpServer(knowledge, { host: '127.0.0.1', port: 0, authToken: 'drain-secret' });
   const base = `http://127.0.0.1:${instance.port}`;
   const headers = { authorization: 'Bearer drain-secret' };
@@ -69,6 +70,7 @@ it('keeps accepted HTTP tool work while draining, exposes not-ready and refuses 
     finish?.();
     await client.close();
     await instance.close();
+    await knowledge.semanticIndex.idle();
     await rm(knowledge.searchIndex.directory, { recursive: true, force: true });
     await rm(parent, { recursive: true, force: true });
   }

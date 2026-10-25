@@ -14,6 +14,8 @@ push/PR. On **Actions → CI → Run workflow** or a `v*` tag it additionally:
    Node.js 24 executable and version-specific license in platform VSIX files.
 3. Exercises each packaged provider/Node/server with a real stdio MCP handshake,
    tool listing, ROOT status, lexical search and a 384-dimensional ONNX embedding.
+   It also verifies generic RAG without an entry point, scoped code retrieval and
+   the client-independent `stdio.cjs` launcher included in the bundle.
 4. Uploads `kimono-vscode-<target>` artifacts (VSIX + build provenance) and the
    existing native bundle artifacts, retained thirty days.
 
@@ -22,7 +24,7 @@ Manual runs **do not publish releases**. For a release:
 1. Update **both** server and extension versions in [`package.json`](../package.json)
    and [`vscode/package.json`](../vscode/package.json); update the lockfile and changelog.
 2. Commit and push the changes to this repository.
-3. Push the matching tag, for example `v0.5.0` for version `0.5.0`.
+3. Push the matching tag, for example `v0.6.0` for version `0.6.0`.
 4. Only after server tests, extension tests and all native/package smoke jobs pass,
    CI creates a draft release, attaches all `.vsix`, `.build.json`, native archives
    and `SHA256SUMS.txt`, then publishes it. Published immutable releases are not
@@ -30,9 +32,15 @@ Manual runs **do not publish releases**. For a release:
 
 No Marketplace account, PAT or manual upload is required. The release job alone
 has `contents: write` via `GITHUB_TOKEN`; other jobs have read-only permissions.
-Publishing to Marketplace/Open VSX is intentionally out of scope.
+This workflow does not publish to Marketplace/Open VSX. The owner selected
+`lcalmejane` as the future Marketplace publisher; 0.6.0 VSIX files already
+use the stable ID `lcalmejane.kimono-mcp`. Follow the
+[Marketplace publication brief](../vscode/fiche.md) to submit the verified
+GitHub release VSIX files later, without rebuilding under another identity.
+Marketplace credentials and listing approval remain separate prerequisites.
 
-Each `.build.json` records the source commit, version, host target, actual Node
+Each `.build.json` records the source commit, whether the checkout has uncommitted
+changes (`sourceDirty`), version, host target, actual Node
 version, npm lockfile SHA-256, VSIX SHA-256 and native asset manifest. Lockfiles
 and model/runtime downloads are pinned. Hosted runner/toolchain updates and ZIP
 timestamps mean this is traceable packaging, not a byte-identical build guarantee.

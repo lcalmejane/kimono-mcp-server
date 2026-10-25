@@ -1,3 +1,4 @@
+import { corpusConfig } from '../src/corpus-config.js';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -17,7 +18,7 @@ async function fixture() {
   process.env.KIMONO_CACHE_DIR = cache;
   await mkdir(path.join(root, 'prompts'), { recursive: true });
   await writeFile(path.join(root, 'prompts/index.md'), '# Project\nCaptured version');
-  const knowledge = new AikidoKnowledgeBase(root);
+  const knowledge = new AikidoKnowledgeBase(root, false, corpusConfig({ mode: 'aikido' }));
   await knowledge.initialize();
   return { root, knowledge };
 }
@@ -41,7 +42,7 @@ describe('explicit research snapshots', () => {
     const read = vi.spyOn(AikidoKnowledgeBase.prototype, 'read');
     let { snapshotId } = JSON.parse(await runtime.call('aikido_snapshot', { operation: 'begin' }));
     read.mockClear();
-    expect((await search(snapshotId, 'Captured')).count).toBe(1);
+    expect((await search(snapshotId, 'Captured')).results).toHaveLength(1);
     // Retrieval reads the hit once. A rebuild would read every document repeatedly.
     expect(read).toHaveBeenCalledTimes(1);
     await runtime.call('aikido_snapshot', { operation: 'end', snapshotId });
@@ -49,8 +50,8 @@ describe('explicit research snapshots', () => {
     await writeFile(path.join(root, 'prompts/index.md'), '# Project\nUnindexed version');
     ({ snapshotId } = JSON.parse(await runtime.call('aikido_snapshot', { operation: 'begin' })));
     await writeFile(path.join(root, 'prompts/index.md'), '# Project\nLater version');
-    expect((await search(snapshotId, 'Unindexed')).count).toBe(1);
-    expect((await search(snapshotId, 'Later')).count).toBe(0);
+    expect((await search(snapshotId, 'Unindexed')).results).toHaveLength(1);
+    expect((await search(snapshotId, 'Later')).results).toHaveLength(0);
     await runtime.call('aikido_snapshot', { operation: 'end', snapshotId });
     read.mockRestore();
   });
@@ -66,7 +67,7 @@ describe('explicit research snapshots', () => {
     });
 
     const corpus = path.join(knowledge.searchIndex.directory, 'snapshots', begun.snapshotId, 'corpus');
-    const snapshotCache = new AikidoKnowledgeBase(corpus).searchIndex.directory;
+    const snapshotCache = new AikidoKnowledgeBase(corpus, false, corpusConfig({ mode: 'aikido' })).searchIndex.directory;
     expect(snapshotCache).not.toContain(path.join('snapshots', begun.snapshotId, 'corpus'));
     expect(await readFile(path.join(corpus, 'prompts/index.md'), 'utf8')).toContain('Captured version');
 
@@ -109,7 +110,7 @@ describe('explicit research snapshots', () => {
     roots.push(otherRoot);
     await mkdir(otherRoot);
     await writeFile(path.join(otherRoot, 'index.md'), '# Other project');
-    const other = new AikidoKnowledgeBase(otherRoot);
+    const other = new AikidoKnowledgeBase(otherRoot, false, corpusConfig({ mode: 'aikido' }));
     await other.initialize();
     const first = runtimeFor(knowledge);
     const second = runtimeFor(other);

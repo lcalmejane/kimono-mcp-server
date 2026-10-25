@@ -130,7 +130,7 @@ export async function publishRemoteKnowledge(knowledge: AikidoKnowledgeBase, tar
     if (archiveInfo.size > MAX_ARCHIVE_BYTES) throw new Error(`Remote archive exceeds ${MAX_ARCHIVE_BYTES} bytes`);
     await mkdir(remoteRoot, { recursive: true, mode: 0o700 });
     const remoteFiles = await extractKnowledgeArchive(archive, remoteRoot);
-    const remoteKnowledge = new KnowledgeBase(remoteRoot);
+    const remoteKnowledge = new KnowledgeBase(remoteRoot, false, knowledge.config);
     await remoteKnowledge.initialize();
     const remoteHashes = await hashKnowledge(remoteKnowledge);
 
@@ -146,7 +146,7 @@ export async function publishRemoteKnowledge(knowledge: AikidoKnowledgeBase, tar
     await copyLocalUnpublishedKnowledge(knowledge, remoteKnowledge, remoteRoot, previousRemote);
     await mkdir(publishRoot, { recursive: true, mode: 0o700 });
     await copyDirectory(remoteRoot, publishRoot);
-    const nextKnowledge = new KnowledgeBase(publishRoot);
+    const nextKnowledge = new KnowledgeBase(publishRoot, false, knowledge.config);
     await nextKnowledge.initialize();
     nextFiles = await readManagedFiles(nextKnowledge);
     previousFiles = await readManagedFiles(knowledge);

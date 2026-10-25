@@ -1,3 +1,4 @@
+import { corpusConfig } from '../src/corpus-config.js';
 import { createHash } from 'node:crypto';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -8,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AikidoKnowledgeBase } from '../src/knowledge.js';
 import { parseGitStatus } from '../src/repository.js';
 import { createAikidoMcpServer } from '../src/server.js';
+import { RUNTIME_TOOLS } from '../src/runtime-tools.js';
 import * as processes from '../src/process.js';
 
 const temporaryDirectories: string[] = [];
@@ -18,7 +20,7 @@ async function makeKnowledgeBase(): Promise<AikidoKnowledgeBase> {
   await mkdir(path.join(root, 'prompts', 'hard_points', 'commands'), { recursive: true });
   await writeFile(path.join(root, 'prompts', 'index.md'), '# AI-KIDO');
   await writeFile(path.join(root, 'prompts', 'hard_points', 'commands', 'check-truth.md'), '# Check truth\nCheck truth tables.');
-  const knowledge = new AikidoKnowledgeBase(root);
+  const knowledge = new AikidoKnowledgeBase(root, false, corpusConfig({ mode: 'aikido' }));
   await knowledge.initialize();
   return knowledge;
 }
@@ -49,6 +51,12 @@ describe('AI-KIDO MCP surface', () => {
     try {
       const tools = await client.listTools();
       expect(tools.tools.map((tool) => tool.name)).toEqual(['aikido', 'aikido_snapshot', 'aikido_embed', 'aikido_root', 'aikido_search', 'aikido_index', 'aikido_git', 'aikido_collaboration', 'aikido_file']);
+      for (const name of ['aikido', 'aikido_search']) {
+        expect(tools.tools.find(tool => tool.name === name)?.inputSchema.properties?.detail)
+          .toMatchObject({ enum: ['compact', 'locations', 'excerpts'], default: 'compact' });
+        expect(tools.tools.find(tool => tool.name === name)?.inputSchema.properties?.queries)
+          .toMatchObject({ type: 'array', minItems: 1, maxItems: 20 });
+      }
       const begun = await client.callTool({ name: 'aikido_snapshot', arguments: { operation: 'begin' } });
       const snapshotId = JSON.parse((begun.content as Array<{ text: string }>)[0].text).snapshotId;
 
@@ -61,7 +69,18 @@ describe('AI-KIDO MCP surface', () => {
       expect(JSON.stringify(execution)).toContain('execute with client tools');
       const search = await client.callTool({ name: 'aikido_search', arguments: { query: 'truth', kind: 'command', snapshotId } });
       expect(search.isError, JSON.stringify(search)).not.toBe(true);
-      expect(search).toMatchObject({ content: [{ type: 'text', text: expect.stringContaining('"engine":"fast-grep"') }] });
+      expect(search).toMatchObject({ content: [{ type: 'text', text: expect.stringContaining('"results":') }] });
+      const alias = await client.callTool({ name: 'aikido', arguments: { operation: 'search', query: 'truth', kind: 'command', detail: 'compact', snapshotId } });
+      expect(alias.isError, JSON.stringify(alias)).not.toBe(true);
+      expect(alias.content).toEqual(search.content);
+      const batch = await client.callTool({ name: 'aikido_search', arguments: { queries: ['truth', 'absent'], snapshotId } });
+      const aliasBatch = await client.callTool({ name: 'aikido', arguments: { operation: 'search', queries: ['truth', 'absent'], snapshotId } });
+      expect(batch.isError).not.toBe(true);
+      expect(aliasBatch.content).toEqual(batch.content);
+      expect(JSON.parse((batch.content as Array<{ text: string }>)[0].text))
+        .toEqual({ snapshotId, searches: [{ results: [] }, { results: [] }] });
+      const malformedBatch = await client.callTool({ name: 'aikido_search', arguments: { queries: ['truth'], query: 'truth', snapshotId } });
+      expect(malformedBatch.isError).toBe(true);
       const stats = await client.callTool({ name: 'aikido_index', arguments: { operation: 'status', mode: 'semantic' } });
       expect(stats.isError).not.toBe(true);
       const root = await client.callTool({ name: 'aikido_root', arguments: { operation: 'status' } });
@@ -87,6 +106,14 @@ describe('AI-KIDO MCP surface', () => {
       await client.close();
       await server.close();
     }
+  });
+
+  it('reduces exposed retrieval definitions by at least 20% including the new batch API', () => {
+    const bytes = (tools: typeof RUNTIME_TOOLS) => Buffer.byteLength(JSON.stringify(tools));
+    const retrieval = RUNTIME_TOOLS.filter(tool => ['aikido_snapshot', 'aikido_search', 'aikido_file'].includes(tool.name));
+    // Baseline measured from the pre-batch v0.6.0 catalog, including descriptions/annotations.
+    expect(bytes(retrieval)).toBeLessThanOrEqual(Math.floor((918 + 2717 + 2199 + 4) * 0.8));
+    expect(bytes(RUNTIME_TOOLS)).toBeLessThanOrEqual(Math.floor((12023 + 9) * 0.8));
   });
 
   it('publishes MCP-only immutable knowledge revisions and detects three-way conflicts', async () => {

@@ -1,3 +1,4 @@
+import { corpusConfig } from '../src/corpus-config.js';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
@@ -21,7 +22,7 @@ async function fixture() {
   await git(root, 'init', '-b', 'main');
   await git(root, 'config', 'user.name', 'Kimono Test');
   await git(root, 'config', 'user.email', 'kimono@example.invalid');
-  const knowledge = new AikidoKnowledgeBase(root);
+  const knowledge = new AikidoKnowledgeBase(root, false, corpusConfig({ mode: 'aikido' }));
   caches.push(knowledge.searchIndex.directory);
   await knowledge.initialize();
   return { root, knowledge };
@@ -112,7 +113,7 @@ describe('scoped repository runtime', () => {
 
   it('keeps ROOT initialization outside the MCP and accepts metadata-only retargeting', async () => {
     const { root } = await fixture();
-    const knowledge = new AikidoKnowledgeBase(root);
+    const knowledge = new AikidoKnowledgeBase(root, false, corpusConfig({ mode: 'aikido' }));
     caches.push(knowledge.searchIndex.directory);
     await knowledge.initialize();
     const runtime = runtimeFor(knowledge);

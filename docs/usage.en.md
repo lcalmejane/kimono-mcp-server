@@ -4,6 +4,61 @@
 
 ## What Kimono provides
 
+### One knowledge base for your team and agents
+
+Kimono's value is not limited to token savings: different MCP clients can
+retrieve from a common, inspectable project corpus maintained by people.
+Choose a shared HTTP service for a common endpoint; independent stdio launches
+are separate local processes, not a shared server. Each research snapshot
+pins its own version; this does not synchronize conversations or code edits.
+Default RAG is read-only. Explicit AI-KIDO mode adds versioned knowledge
+comparison/publication and conflict handling, described below.
+
+The [current fixed-model pilot](../benchmarks/results/current.md) measures
+single-agent RAG tasks, with no collaboration tool exposed. A shared knowledge
+layer may be worth retrieval overhead to a team, but this is a value judgment,
+not a measured collaboration return. No fixed
+overhead rate, savings guarantee or human/team productivity gain is claimed.
+
+On the current planning pair, Kimono used 71.4% less cumulative input and
+52.0% less wall time. One repetition, human review pending; the separate
+native research answer failed the JSON-format gate. These are exploratory
+measurements, not established equivalent-quality savings.
+
+### Support FAQ: why can local MCP use more tokens than native tools?
+
+Local transport and indexing do not themselves invoke a language model.
+What counts is the material the client puts into model requests: tool
+definitions, server guidance, arguments/results and accumulated conversation.
+Native tools have definitions too; enabling MCP adds to that interface.
+
+Fewer response bytes need not mean fewer cumulative input tokens: definitions
+and earlier results can remain in context across model requests. Cache-read,
+uncached input and output must be reported separately; input is not a bill.
+The client's diagnostic `tool_tokens` is not an exact provider billing partition.
+See the [current trace-based diagnostics](../benchmarks/results/current.md).
+In this pilot, that diagnostic is 680 per request for native tools versus
+1,903 with Kimono. Model requests fell from 21 to 9 on research and 31 to 9
+on planning, while connection took 0.528/0.395 seconds. Lower cumulative
+usage can therefore coexist with a larger per-request tool description;
+the test does not isolate batching's causal contribution.
+This is a harness/task observation, not a fixed MCP charge. Limit enabled
+tools, batch relevant reads and use scoped snapshots where useful; compare
+real usage and quality before claiming savings.
+
+### Generic local RAG (v0.6.0)
+
+RAG is the default for source/docs projects, without an AI-KIDO entry point.
+Root/nested `.gitignore` rules apply automatically; dependencies such as
+`node_modules` remain excluded even without ignore rules.
+Select `KIMONO_CORPUS_MODE=aikido`, CLI `--corpus-mode aikido`, or extension
+setting `kimono.corpusMode: "aikido"` for AI-KIDO. RAG never publishes files and rejects
+collaboration/Git sync; those capabilities below belong to AI-KIDO mode.
+The [local RAG guide](local-rag.md) covers languages, include/exclude policy,
+configurable budgets/scoped snapshots and Copilot, Claude Code, Codex and
+Antigravity configuration. Indexing/embeddings are local; retrieved passages
+can still be sent by the chat client to its model provider.
+
 ### Knowledge-only Git guidance and remote sync
 
 The MCP exposes `aikido_git` operations `infos`, `sync` and `retarget`. A
@@ -65,14 +120,20 @@ For multi-call research, start with `aikido_snapshot {"operation":"begin"}`.
 Pass the returned `snapshotId` to all `aikido` list/search/read/activate/execute,
 `aikido_search` and `aikido_file` calls, then end it with
 `aikido_snapshot {"operation":"end","snapshotId":"…"}`. Results include the
-same ID, corpus `version` and `provenance`; snapshots expire after 15 minutes
-and are bounded to 8 active / 256 MiB total.
+same ID; begin supplies corpus `version` and `provenance`, omitted from compact
+search responses. AI-KIDO defaults are 15 minutes
+and 8 active / 256 MiB total. Hosts can configure bounded limits; `begin paths`
+captures selected subtrees. See the [RAG budgets](local-rag.md#grands-dépôts--large-repositories).
 
 For a low-token harness, use the [progressive JSON retrieval contract](retrieval.md):
-metadata/header discovery, search locations (files and hit lines, no text,
-the default), then the selected passages in one `aikido_file` `ranges` batch,
+batch independent questions in `aikido_search queries:[...]` (1–20 strings),
+then the selected passages from all queries in one `aikido_file` `ranges` batch
+(1–50 ranges, overlaps merged),
 and a Markdown section or full file only when needed. The MCP also publishes
-this protocol in its initialization `instructions` for any MCP client. Complete file reads remain
+this protocol in its initialization `instructions` for any MCP client. Batch
+search options are shared; one total byte budget (minimum 4096) covers ordered
+answers, per-query errors and `nextQuery` continuation. Reads return `remaining`
+when truncated. Single-query/vector operations remain available. Complete file reads remain
 explicit; follow pagination/truncation fields rather than requesting the corpus.
 
 ## Explicit knowledge collaboration modes

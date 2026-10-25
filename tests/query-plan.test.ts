@@ -1,3 +1,4 @@
+import { corpusConfig } from '../src/corpus-config.js';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -21,7 +22,7 @@ it('normalizes natural-language queries and expands repository glossary aliases 
     '|---|---|---|',
     '| **Base commune** | shared knowledge, dépôt partagé | Référentiel documentaire utilisé par tous les membres. |',
   ].join('\n'));
-  const knowledge = new AikidoKnowledgeBase(root);
+  const knowledge = new AikidoKnowledgeBase(root, false, corpusConfig({ mode: 'aikido' }));
   await knowledge.initialize();
 
   const plan = await knowledge.vocabulary.plan('Où trouver le dépôt partagé ?');
@@ -44,7 +45,7 @@ it('loads vocabulary only once for simultaneous searches and ignores glossary-ge
     '| Term | Aliases | Definition |', '|---|---|---|',
     '| Rules | règles, regles | Project constraints |',
   ].join('\n'));
-  const knowledge = new AikidoKnowledgeBase(root);
+  const knowledge = new AikidoKnowledgeBase(root, false, corpusConfig({ mode: 'aikido' }));
   await knowledge.initialize();
   const read = vi.spyOn(knowledge, 'read');
   const plans = await Promise.all(['regles', 'règles', 'rules'].map(query => knowledge.vocabulary.plan(query)));
@@ -65,7 +66,7 @@ it('never invents translations and uses whole terms with flexible phrase punctua
   const root = await mkdtemp(path.join(tmpdir(), 'kimono-vocabulary-empty-'));
   roots.push(root);
   await writeFile(path.join(root, 'index.md'), '# Rules');
-  const knowledge = new AikidoKnowledgeBase(root);
+  const knowledge = new AikidoKnowledgeBase(root, false, corpusConfig({ mode: 'aikido' }));
   await knowledge.initialize();
   const plan = await knowledge.vocabulary.plan('regles');
   expect(plan.expansions).toEqual([]);

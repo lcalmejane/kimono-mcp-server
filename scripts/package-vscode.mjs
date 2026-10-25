@@ -26,6 +26,7 @@ if ((await readdir(stage)).length) throw new Error(`Packaging directory must be 
 await Promise.all([
   cp(path.join(root, 'vscode/extension.cjs'), path.join(stage, 'extension.cjs')),
   cp(path.join(root, 'vscode/native.cjs'), path.join(stage, 'native.cjs')),
+  cp(path.join(root, 'vscode/stdio.cjs'), path.join(stage, 'stdio.cjs')),
   cp(path.join(root, 'LICENSE'), path.join(stage, 'LICENSE')),
   cp(path.join(root, 'THIRD_PARTY_NOTICES.md'), path.join(stage, 'THIRD_PARTY_NOTICES.md')),
   cp(path.join(root, 'vscode/README.md'), path.join(stage, 'README.md')),
@@ -56,6 +57,7 @@ const sha256 = async filename => createHash('sha256').update(await readFile(file
 await writeFile(output.replace(/\.vsix$/, '.build.json'), `${JSON.stringify({
   schemaVersion: 1, version: pkg.version, target,
   commit: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim(),
+  sourceDirty: execFileSync('git', ['status', '--porcelain'], { cwd: root, encoding: 'utf8' }).trim().length > 0,
   node: process.version,
   lockfileSha256: await sha256(path.join(root, 'package-lock.json')),
   vsixSha256: await sha256(output),

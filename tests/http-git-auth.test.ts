@@ -1,3 +1,4 @@
+import { corpusConfig } from '../src/corpus-config.js';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -14,7 +15,7 @@ it.each([false, true])('isolates authenticated HTTP credential contexts (trusted
   const root = path.join(parent, 'knowledge');
   await mkdir(root);
   await writeFile(path.join(root, 'index.md'), '# Shared knowledge');
-  const knowledge = new AikidoKnowledgeBase(root);
+  const knowledge = new AikidoKnowledgeBase(root, false, corpusConfig({ mode: 'aikido' }));
   await knowledge.initialize();
   const observed: Array<{ name: string; secret: string | null | undefined }> = [];
   const spy = vi.spyOn(runtimeFor(knowledge), 'call').mockImplementation(async (_name, input, context) => {

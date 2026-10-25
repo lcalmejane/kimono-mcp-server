@@ -1,3 +1,4 @@
+import { corpusConfig } from '../src/corpus-config.js';
 import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -6,7 +7,7 @@ import path from 'node:path';
 import { tmpdir } from 'node:os';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import { AikidoKnowledgeBase, fileId } from '../src/knowledge.js';
 import { createAikidoMcpServer } from '../src/server.js';
 import { Retrieval } from '../src/retrieval.js';
@@ -27,7 +28,7 @@ async function fixture() {
   await writeFile(path.join(root, 'prompts/index.md'), '# Index\n');
   await writeFile(path.join(root, docPath), doc);
   await writeFile(path.join(root, 'src/example.ts'), '// needle from source\n');
-  const knowledge = new AikidoKnowledgeBase(root);
+  const knowledge = new AikidoKnowledgeBase(root, false, corpusConfig({ mode: 'aikido' }));
   cleanup.push(knowledge.searchIndex.directory);
   await knowledge.initialize();
   return { root, knowledge, retrieval: new Retrieval(knowledge) };
@@ -120,7 +121,7 @@ it('supports a Memory Bank directory as ROOT without treating its hard points as
   const { root } = await fixture();
   await mkdir(path.join(root, 'prompts/spec'), { recursive: true });
   await writeFile(path.join(root, 'prompts/spec/private.md'), '# private');
-  const knowledge = new AikidoKnowledgeBase(path.join(root, 'prompts'));
+  const knowledge = new AikidoKnowledgeBase(path.join(root, 'prompts'), false, corpusConfig({ mode: 'aikido' }));
   const retrieval = new Retrieval(knowledge);
   const memory = JSON.parse(await retrieval.list({ scope: 'memory' }));
   expect(memory.total).toBe(2);
@@ -280,7 +281,7 @@ it('defaults search to token-frugal locations grouped by file, then serves passa
   await writeFile(path.join(root, docPath), lines.join('\n') + '\n');
   const runtime = runtimeFor(knowledge);
   const { snapshotId } = JSON.parse(await runtime.call('aikido_snapshot', { operation: 'begin' }));
-  const raw = await runtime.call('aikido_search', { snapshotId, query: 'needle', limit: 10 });
+  const raw = await runtime.call('aikido_search', { snapshotId, query: 'needle', limit: 10, detail: 'locations' });
   const located = JSON.parse(raw);
   expect(located).toMatchObject({ engine: 'fast-grep', count: 3, files: 2, truncated: false });
   expect(located.results).toEqual(expect.arrayContaining([
@@ -313,7 +314,7 @@ it('defaults search to token-frugal locations grouped by file, then serves passa
 
 it('reports semantic chunks as inclusive [start,end] locations without passage text', async () => {
   const { knowledge, retrieval } = await fixture();
-  const located = JSON.parse(await retrieval.search({}, [
+  const located = JSON.parse(await retrieval.search({ detail: 'locations' }, [
     { id: docPath, path: docPath, kind: 'knowledge', title: 'Design', line: 11, excerpt: '## Isolation\nKeep each agent scoped.\nneedle', score: 0.91 },
     { id: docPath, path: docPath, kind: 'knowledge', title: 'Design', line: 12, excerpt: 'Keep each agent scoped.', score: 0.5 },
   ], { engine: 'embsearch-core', model: 'm', status: 'ok', chunks: 9, queryPlan: { terms: ['needle'], expansions: [
@@ -325,6 +326,177 @@ it('reports semantic chunks as inclusive [start,end] locations without passage t
   expect(knowledge).toBeDefined();
 });
 
+it('batches independent searches on one pinned corpus and combines their hits into one read', async () => {
+  const { root, knowledge } = await fixture();
+  const runtime = runtimeFor(knowledge);
+  const { snapshotId } = JSON.parse(await runtime.call('aikido_snapshot', { operation: 'begin' }));
+  await writeFile(path.join(root, 'src/example.ts'), '// changed after capture\n');
+  const queries = ['needle', 'Docker', 'no-match'];
+  const result = JSON.parse(await runtime.call('aikido_search', { snapshotId, queries }));
+  expect(Object.keys(result).sort()).toEqual(['searches', 'snapshotId']);
+  expect(result.snapshotId).toBe(snapshotId);
+  expect(result.searches).toHaveLength(3);
+  for (const [index, query] of queries.entries()) {
+    const single = JSON.parse(await runtime.call('aikido_search', { snapshotId, query }));
+    delete single.snapshotId;
+    expect(result.searches[index]).toEqual(single);
+  }
+  expect(result.searches[2]).toEqual({ results: [] });
+  const ranges = result.searches.flatMap((search: { results: Array<{ path: string; ranges: number[][] }> }) =>
+    search.results.flatMap(file => file.ranges.map(([startLine, endLine]) => ({ path: file.path, startLine, endLine }))));
+  const sourceRead = vi.spyOn(AikidoKnowledgeBase.prototype, 'read');
+  let read: { passages: Array<{ path: string; startLine: number; endLine: number; content: string }>;
+    errors?: unknown; truncated: boolean };
+  try {
+    read = JSON.parse(await runtime.call('aikido_file', { snapshotId, operation: 'ranges', ranges: [...ranges, ...ranges] }));
+    expect(sourceRead.mock.calls.map(([file]) => file).sort()).toEqual([docPath, 'src/example.ts']);
+  } finally { sourceRead.mockRestore(); }
+  expect(read.passages.filter((passage: { path: string }) => passage.path === 'src/example.ts'))
+    .toEqual([{ path: 'src/example.ts', startLine: 1, endLine: 1, content: '// needle from source' }]);
+  expect(read.errors).toBeUndefined();
+  expect(read.truncated).toBe(false);
+  expect(result.searches.every((search: Record<string, unknown>) => search.snapshotId === undefined)).toBe(true);
+  const scoped = JSON.parse(await runtime.call('aikido_search', { snapshotId, queries, pathPrefix: 'src', limit: 1 }));
+  expect(scoped.searches[0].results.map((file: { path: string }) => file.path)).toEqual(['src/example.ts']);
+  expect(scoped.searches[1].results).toEqual([]);
+  await runtime.call('aikido_snapshot', { operation: 'end', snapshotId });
+  await expect(runtime.call('aikido_search', { snapshotId, queries })).rejects.toThrow('unknown or stale');
+});
+
+it('preserves per-query errors and warnings without preventing other searches', async () => {
+  const { knowledge } = await fixture();
+  const runtime = runtimeFor(knowledge);
+  const { snapshotId } = JSON.parse(await runtime.call('aikido_snapshot', { operation: 'begin' }));
+  const result = JSON.parse(await runtime.call('aikido_search', {
+    snapshotId, queries: ['needle', '[', 'Docker'], mode: 'regex',
+  }));
+  expect(result.searches[0].results.length).toBeGreaterThan(0);
+  expect(result.searches[1].error).toEqual(expect.any(String));
+  expect(result.searches[1].results).toBeUndefined();
+  expect(result.searches[2].results.length).toBeGreaterThan(0);
+  const invalid = JSON.parse(await runtime.call('aikido_search', { snapshotId, queries: [' ', 'x'.repeat(8193), 'needle'] }));
+  expect(invalid.searches[0].error).toContain('query must not be empty');
+  expect(invalid.searches[1].error).toContain('8192');
+  expect(invalid.searches[2].results.length).toBeGreaterThan(0);
+  const planned = JSON.parse(await runtime.call('aikido_search', { snapshotId, queries: ['needle', 'Docker'], mode: 'text' }));
+  expect(planned.searches.every((item: { warnings: string[] }) => item.warnings.length > 0)).toBe(true);
+  const diagnostics = JSON.parse(await runtime.call('aikido_search', { snapshotId, queries: ['needle'], detail: 'locations' }));
+  expect(diagnostics.version).toEqual(expect.any(String));
+  expect(diagnostics.searches[0].engine).toBe('fast-grep');
+  expect(diagnostics.searches[0].version).toBeUndefined();
+  for (const queries of [[], Array(21).fill('needle'), ['needle', 42], 'needle']) {
+    await expect(runtime.call('aikido_search', { snapshotId, queries })).rejects.toThrow('queries must contain 1-20 strings');
+  }
+  for (const field of ['query', 'vector', 'embeddingModel']) {
+    await expect(runtime.call('aikido_search', { snapshotId, queries: ['needle'], [field]: 'x' }))
+      .rejects.toThrow('queries cannot be combined');
+  }
+  await expect(runtime.call('aikido_search', { snapshotId, queries: ['needle'], maxBytes: 2048 })).rejects.toThrow('4096');
+  await runtime.call('aikido_snapshot', { operation: 'end', snapshotId });
+});
+
+it('bounds the entire search batch and exposes continuation without dropping query failures', async () => {
+  const { root, knowledge } = await fixture();
+  for (let index = 0; index < 50; index++) {
+    await writeFile(path.join(root, 'src', `${'long-path-'.repeat(8)}${index}.ts`), '// needle\n');
+  }
+  const runtime = runtimeFor(knowledge);
+  const { snapshotId } = JSON.parse(await runtime.call('aikido_snapshot', { operation: 'begin' }));
+  const queries = ['needle', 'Docker', 'no-match'];
+  const raw = await runtime.call('aikido_search', { snapshotId, queries, limit: 100, maxBytes: 4096 });
+  const batch = JSON.parse(raw);
+  expect(Buffer.byteLength(raw)).toBeLessThanOrEqual(4096);
+  expect(batch).toMatchObject({ truncated: true, nextQuery: 1 });
+  expect(batch.searches).toHaveLength(1);
+  expect(batch.searches[0].truncated).toBe(true);
+  const rest = JSON.parse(await runtime.call('aikido_search', { snapshotId, queries: queries.slice(batch.nextQuery), maxBytes: 4096 }));
+  expect(rest.searches).toHaveLength(2);
+  expect(rest.nextQuery).toBeUndefined();
+  expect(rest.searches[0].results[0].path).toBe(docPath);
+  await runtime.call('aikido_snapshot', { operation: 'end', snapshotId });
+});
+
+it('retains semantic unavailability errors and hybrid partial statuses for every query in a batch', async () => {
+  const { knowledge } = await fixture();
+  const status = vi.spyOn(knowledge.semanticIndex, 'status').mockReturnValue({ phase: 'running' });
+  const runtime = runtimeFor(knowledge);
+  const { snapshotId } = JSON.parse(await runtime.call('aikido_snapshot', { operation: 'begin' }));
+  try {
+    const semantic = JSON.parse(await runtime.call('aikido_search', { snapshotId, mode: 'semantic', queries: ['needle', 'Docker'] }));
+    expect(semantic.searches).toHaveLength(2);
+    for (const item of semantic.searches) {
+      expect(item.error).toContain('Semantic index is preparing');
+      expect(item.results).toBeUndefined();
+    }
+    const hybrid = JSON.parse(await runtime.call('aikido_search', { snapshotId, mode: 'hybrid', queries: ['needle', 'Docker'] }));
+    for (const item of hybrid.searches) {
+      expect(item.status).toBe('partial');
+      expect(item.results.length).toBeGreaterThan(0);
+      expect(item.branches).toEqual([expect.objectContaining({ mode: 'semantic', status: 'not-ready', error: expect.any(String) })]);
+    }
+  } finally {
+    status.mockRestore();
+    await runtime.call('aikido_snapshot', { operation: 'end', snapshotId });
+  }
+});
+
+it('defaults to minimal paths/ranges, preserves ranking and failures, and reduces serialized bytes by at least 50%', async () => {
+  const { knowledge } = await fixture();
+  const retrieval = new Retrieval(knowledge, { snapshotId: 'snapshot', version: 'v'.repeat(64), provenance: { root: '/private/root', fingerprint: 'f'.repeat(64) } });
+  const matches = [
+    { id: docPath, path: docPath, kind: 'knowledge' as const, title: 'Design', line: 11, excerpt: '## Isolation\nKeep each agent scoped.\nneedle', score: 0.91, matchedTerms: ['needle'] },
+    { id: docPath, path: docPath, kind: 'knowledge' as const, title: 'Design', line: 12, excerpt: 'Keep each agent scoped.', score: 0.5 },
+  ];
+  const extra = { engine: 'embsearch-core', model: 'multilingual-model', queryPlan: { terms: ['needle'], expansions: [], warnings: [] } };
+  const raw = await retrieval.search({}, matches, extra);
+  const verbose = await retrieval.search({ detail: 'locations' }, matches, extra);
+  expect(JSON.parse(raw)).toEqual({ results: [{ path: docPath, ranges: [[11, 13]] }], snapshotId: 'snapshot' });
+  expect(Buffer.byteLength(raw)).toBeLessThanOrEqual(Buffer.byteLength(verbose) * 0.5);
+  expect(raw).not.toMatch(/excerpt|score|terms|provenance|version|scoped|engine/);
+  expect(JSON.parse(await retrieval.search({}, [], { status: 'not-ready', error: 'poll index status' }))).toEqual({
+    status: 'not-ready', error: 'poll index status', results: [], snapshotId: 'snapshot',
+  });
+  expect(JSON.parse(await retrieval.search({}, matches, { status: 'partial',
+    branches: [{ mode: 'text', status: 'ok' }, { mode: 'semantic', status: 'error', error: 'unavailable' }] }))).toMatchObject({
+    status: 'partial', branches: [{ mode: 'semantic', status: 'error', error: 'unavailable' }],
+  });
+  expect(JSON.parse(await retrieval.search({ limit: 1 }, [...matches, { ...matches[0], line: 18, excerpt: 'last' }], extra)).truncated).toBe(true);
+  await expect(retrieval.search({ detail: 'compact', contextLines: 1 }, matches, extra)).rejects.toThrow('contextLines');
+});
+
+it('keeps compact searches snapshot-pinned without repeated provenance and retrieves code only on demand', async () => {
+  const { knowledge } = await fixture();
+  const runtime = runtimeFor(knowledge);
+  const { snapshotId } = JSON.parse(await runtime.call('aikido_snapshot', { operation: 'begin' }));
+  try {
+    const raw = await runtime.call('aikido_search', { snapshotId, query: 'needle', pathPrefix: docPath });
+    expect(JSON.parse(raw)).toEqual({ results: [{ path: docPath, ranges: [[13, 13]] }], snapshotId });
+    expect(raw).not.toMatch(/version|provenance|excerpt|content/);
+    const read = JSON.parse(await runtime.call('aikido_file', { snapshotId, operation: 'ranges',
+      ranges: [{ path: docPath, startLine: 13, endLine: 13 }] }));
+    expect(read.passages[0].content).toContain('needle');
+  } finally { await runtime.call('aikido_snapshot', { operation: 'end', snapshotId }); }
+});
+
+it('reuses line counts only for immutable corpora, while mutable search revalidates lengths', async () => {
+  const { root } = await fixture();
+  const immutable = new AikidoKnowledgeBase(root, true, corpusConfig({ mode: 'aikido' }));
+  await immutable.initialize();
+  const read = vi.spyOn(immutable, 'read');
+  const retrieval = new Retrieval(immutable);
+  const matches = [{ id: docPath, path: docPath, kind: 'knowledge' as const, title: 'Design', line: 13, excerpt: 'needle' }];
+  await retrieval.search({}, matches, {});
+  await retrieval.search({}, matches, {});
+  expect(read).toHaveBeenCalledTimes(1);
+  const mutable = new AikidoKnowledgeBase(root, false, corpusConfig({ mode: 'aikido' }));
+  await mutable.initialize();
+  const mutableRead = vi.spyOn(mutable, 'read');
+  const live = new Retrieval(mutable);
+  await live.search({}, matches, {});
+  await live.search({}, matches, {});
+  expect(mutableRead).toHaveBeenCalledTimes(2);
+});
+
 it('publishes the token-frugal search protocol to any MCP client at initialization', async () => {
   const { knowledge } = await fixture();
   const server = createAikidoMcpServer(knowledge);
@@ -332,7 +504,9 @@ it('publishes the token-frugal search protocol to any MCP client at initializati
   const [a, b] = InMemoryTransport.createLinkedPair();
   await server.connect(b); await client.connect(a);
   try {
-    expect(client.getInstructions()).toMatch(/detail=locations[\s\S]*ONE aikido_file operation=ranges/);
+    expect(client.getInstructions()).toMatch(/detail=compact[\s\S]*ONE aikido_file operation=ranges/);
+    expect(client.getInstructions()).toMatch(/queries:[\s\S]*nextQuery/);
+    expect(Buffer.byteLength(client.getInstructions()!)).toBeLessThanOrEqual(Math.floor(1119 * 0.8));
     const tools = (await client.listTools()).tools;
     expect(tools.find(tool => tool.name === 'aikido_file')?.inputSchema.properties).toHaveProperty('ranges');
     expect(tools.find(tool => tool.name === 'aikido_search')?.inputSchema.properties).toHaveProperty('detail');

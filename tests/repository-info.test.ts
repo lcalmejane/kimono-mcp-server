@@ -1,3 +1,4 @@
+import { corpusConfig } from '../src/corpus-config.js';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
@@ -37,7 +38,7 @@ async function fixture() {
     if (args[0] === 'fgr-test') return { stdout: '', stderr: '', exitCode: 0 };
     return realRun(...args);
   });
-  const knowledge = new AikidoKnowledgeBase(root);
+  const knowledge = new AikidoKnowledgeBase(root, false, corpusConfig({ mode: 'aikido' }));
   await knowledge.initialize();
   const runtime = runtimeFor(knowledge);
   const call = async (input: Record<string, unknown>) => JSON.parse(await runtime.call('aikido_git', input));
@@ -56,7 +57,7 @@ describe('repository infos and explicit synchronization', () => {
     const synced = await call({ operation: 'infos' });
     expect(synced.indexes.literal).toMatchObject({ lastIndexedSha: initial.repository.head, freshness: 'fresh' });
     expect(synced.indexes.semantic.freshness).toBe('unknown');
-    const restarted = new AikidoKnowledgeBase(root);
+    const restarted = new AikidoKnowledgeBase(root, false, corpusConfig({ mode: 'aikido' }));
     await restarted.initialize();
     expect((await indexInfos(restarted)).indexes.literal).toMatchObject({ freshness: 'fresh' });
     await writeFile(path.join(root, 'index.md'), 'external edit, same HEAD');

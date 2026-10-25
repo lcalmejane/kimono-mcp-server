@@ -1,3 +1,4 @@
+import { corpusConfig } from '../src/corpus-config.js';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -16,7 +17,7 @@ async function makeKnowledgeBase(): Promise<AikidoKnowledgeBase> {
   await writeFile(path.join(root, 'prompts', 'hard_points', 'commands', 'check-truth.md'), '# Check truth\nValidate truth tables.');
   await writeFile(path.join(root, 'prompts', 'gen', 'concepts', 'architecture.md'), '# Architecture\nSystem design and boundaries.');
   await writeFile(path.join(root, 'prompts', 'spec', 'sources', 'ignored.md'), 'Must not be indexed.');
-  return new AikidoKnowledgeBase(root);
+  return new AikidoKnowledgeBase(root, false, corpusConfig({ mode: 'aikido' }));
 }
 
 afterEach(async () => {
@@ -53,6 +54,6 @@ describe('AikidoKnowledgeBase', () => {
   it('requires an AI-KIDO entry point', async () => {
     const root = await mkdtemp(path.join(tmpdir(), 'kimono-invalid-'));
     temporaryDirectories.push(root);
-    await expect(new AikidoKnowledgeBase(root).initialize()).rejects.toThrow('No AI-KIDO entry point found');
+    await expect(new AikidoKnowledgeBase(root, false, corpusConfig({ mode: 'aikido' })).initialize()).rejects.toThrow('No AI-KIDO entry point found');
   });
 });

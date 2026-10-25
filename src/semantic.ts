@@ -1,10 +1,11 @@
-import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, open, readFile, rm, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { tmpdir } from 'node:os';
 import type { AikidoKnowledgeBase, KnowledgeKind, SearchMatch } from './knowledge.js';
 import { runProcess } from './process.js';
 import { within, type ChangeReport } from './synchronization.js';
-import { corpusFingerprint, indexInfos, trackIndex } from './index-basis.js';
+import { indexInfos, trackIndex } from './index-basis.js';
 
 export interface SemanticResult {
   engine: 'embsearch-core';
@@ -192,22 +193,26 @@ export class SemanticIndex {
     if (!options.refreshed) await this.knowledge.refresh(options.syncPaths);
     const parent = this.knowledge.searchIndex.directory;
     await mkdir(parent, { recursive: true, mode: 0o700 });
-    const documents = [];
-    let bytes = 0;
-    for (const entry of this.knowledge.list()) {
-      if (!within(entry.path, options.syncPaths)) continue;
-      const { content } = await this.knowledge.read(entry.id);
-      bytes += Buffer.byteLength(content);
-      if (bytes > 64 * 1024 * 1024) throw new Error('Semantic corpus exceeds the supported 64 MiB text budget; use a narrower ROOT.');
-      documents.push({ path: entry.path, kind: entry.kind, content });
+    const knowledge = this.knowledge;
+    async function* documents() {
+      const fingerprint = createHash('sha256');
+      let bytes = 0;
+      for (const entry of knowledge.list().sort((a, b) => a.path.localeCompare(b.path))) {
+        if (!within(entry.path, options.syncPaths)) continue;
+        const { content } = await knowledge.read(entry.id);
+        bytes += Buffer.byteLength(content);
+        if (bytes > knowledge.config.maxCorpusBytes) throw new Error('Semantic corpus exceeds maxCorpusBytes; narrow include/exclude in the host config.');
+        fingerprint.update(JSON.stringify([entry.path, entry.kind, content]));
+        yield { path: entry.path, kind: entry.kind, content };
+      }
+      observed?.(fingerprint.digest('hex'));
     }
-    observed?.(corpusFingerprint(documents));
     const raw = await invokeSemantic({
-      operation, model, cache: path.join(parent, 'semantic'), documents, ...options,
+      operation, model, cache: path.join(parent, 'semantic'), ...options,
     }, parent, this.knowledge.root, (progress) => {
       this.state.progress = { completed: progress.completed, total: progress.total };
       if (progress.stage) this.state.stage = progress.stage;
-    }, operation === 'search' ? 60_000 : 3_600_000);
+    }, operation === 'search' ? 60_000 : 3_600_000, documents());
     if (!record(raw) || raw.engine !== 'embsearch-core' || typeof raw.model !== 'string'
       || typeof raw.version !== 'string' || typeof raw.chunks !== 'number'
       || !Number.isSafeInteger(raw.chunks) || raw.chunks < 0 || typeof raw.embedded !== 'number'
@@ -235,11 +240,23 @@ async function invokeSemantic(
   payload: Record<string, unknown>, parent: string, cwd: string,
   progress?: (value: { completed: number; total: number; stage?: string }) => void,
   timeout = 60_000,
+  documents?: AsyncIterable<{ path: string; kind: string; content: string }>,
 ): Promise<unknown> {
   const temporary = await mkdtemp(path.join(parent, 'semantic-request-'));
   try {
     const request = path.join(temporary, 'request.json');
-    await writeFile(request, JSON.stringify(payload), { mode: 0o600 });
+    if (documents) {
+      const handle = await open(request, 'wx', 0o600);
+      try {
+        await handle.writeFile(`${JSON.stringify(payload).slice(0, -1)},"documents":[`);
+        let first = true;
+        for await (const document of documents) {
+          await handle.writeFile(`${first ? '' : ','}${JSON.stringify(document)}`);
+          first = false;
+        }
+        await handle.writeFile(']}');
+      } finally { await handle.close(); }
+    } else await writeFile(request, JSON.stringify(payload), { mode: 0o600 });
     let buffered = '';
     const response = await runProcess(process.env.KIMONO_SEMANTIC_BIN ?? 'kimono-semantic',
       [request], cwd, [0], timeout, (chunk) => {

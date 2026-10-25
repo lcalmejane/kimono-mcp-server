@@ -1,15 +1,11 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { lstat, mkdir, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { AikidoKnowledgeBase } from './knowledge.js';
 import { AikidoKnowledgeBase as KnowledgeBase } from './knowledge.js';
-import { corpusFingerprint, sourceSnapshot } from './index-basis.js';
+import { sourceSnapshot } from './index-basis.js';
 import { readRemoteSourceMetadata } from './project-policy.js';
-
-const MAX_SNAPSHOTS = 8;
-const MAX_SNAPSHOT_BYTES = 64 * 1024 * 1024;
-const MAX_TOTAL_BYTES = 256 * 1024 * 1024;
-const SNAPSHOT_TTL_MS = 15 * 60 * 1000;
+import { synchronizationPaths, within } from './synchronization.js';
 
 interface SnapshotManifest {
   snapshotId: string;
@@ -42,6 +38,7 @@ export interface KnowledgeSnapshot {
   readonly knowledge: AikidoKnowledgeBase;
   readonly bytes: number;
   readonly documents: number;
+  readonly paths?: string[];
   uses: number;
   closing: boolean;
 }
@@ -50,23 +47,34 @@ export class SnapshotManager {
   private readonly snapshots = new Map<string, KnowledgeSnapshot>();
   private readonly snapshotsRoot: string;
   private readonly cacheRoot: string;
+  private pending: Promise<unknown> = Promise.resolve();
 
   constructor(private readonly source: AikidoKnowledgeBase) {
     this.cacheRoot = path.dirname(source.searchIndex.directory);
     this.snapshotsRoot = path.join(source.searchIndex.directory, 'snapshots');
   }
 
-  async begin(): Promise<Record<string, unknown>> {
+  async begin(paths?: string[]): Promise<Record<string, unknown>> {
+    const scopes = synchronizationPaths(paths);
+    const action = this.pending.then(() => this.capture(scopes));
+    this.pending = action.then(() => undefined, () => undefined);
+    return action;
+  }
+
+  private async capture(paths?: string[]): Promise<Record<string, unknown>> {
+    const limits = this.source.config;
     await this.collectExpired();
-    if (this.snapshots.size >= MAX_SNAPSHOTS) throw new Error(`Snapshot limit reached (maximum ${MAX_SNAPSHOTS}); end an unused snapshot`);
+    if (this.snapshots.size >= limits.maxSnapshots) throw new Error(`Snapshot limit reached (maximum ${limits.maxSnapshots}); end an unused snapshot`);
 
     await this.source.refresh();
-    const before = await sourceSnapshot(this.source);
-    const entries = this.source.list();
+    const before = await sourceSnapshot(this.source, paths);
+    const entries = this.source.list().filter(entry => within(entry.path, paths)).sort((a, b) => a.path.localeCompare(b.path));
     const id = randomUUID();
     const directory = path.join(this.snapshotsRoot, id);
     const corpusRoot = path.join(directory, 'corpus');
     let bytes = 0;
+    let snapshotCache: string | undefined;
+    const inUseBytes = [...this.snapshots.values()].reduce((total, item) => total + item.bytes, 0);
     try {
       await mkdir(corpusRoot, { recursive: true, mode: 0o700 });
       const canonicalCache = await realpath(this.cacheRoot);
@@ -77,32 +85,34 @@ export class SnapshotManager {
       const canonicalCorpus = await realpath(corpusRoot);
       if (!isWithin(canonicalSnapshotRoot, canonicalCorpus)) throw new Error('Snapshot corpus escaped its cache directory');
 
-      const documents: Array<{ path: string; kind: string; content: string }> = [];
+      const fingerprint = createHash('sha256');
       for (const entry of entries) {
         const { content } = await this.source.read(entry.path);
         bytes += Buffer.byteLength(content);
-        if (bytes > MAX_SNAPSHOT_BYTES) throw new Error(`Snapshot exceeds the ${MAX_SNAPSHOT_BYTES} byte corpus limit`);
+        if (bytes > limits.snapshotMaxBytes) throw new Error(`Snapshot exceeds the ${limits.snapshotMaxBytes} byte corpus limit; use begin paths or raise snapshotMaxBytes`);
+        if (inUseBytes + bytes > limits.snapshotsTotalBytes) throw new Error(`Active snapshots exceed the ${limits.snapshotsTotalBytes} byte total limit`);
         const destination = path.resolve(canonicalCorpus, entry.path);
         if (!isWithin(canonicalCorpus, destination)) throw new Error(`Unsafe snapshot document path: ${entry.path}`);
         await mkdir(path.dirname(destination), { recursive: true, mode: 0o700 });
         await writeFile(destination, content, { mode: 0o600, flag: 'wx' });
-        documents.push({ path: entry.path, kind: entry.kind, content });
+        fingerprint.update(JSON.stringify([entry.path, entry.kind, content]));
       }
 
-      const version = corpusFingerprint(documents);
-      const after = await sourceSnapshot(this.source);
+      const version = fingerprint.digest('hex');
+      const after = await sourceSnapshot(this.source, paths);
       if (JSON.stringify(before) !== JSON.stringify(after) || before.corpusFingerprint !== version) {
         throw new Error('Knowledge base changed while the snapshot was being captured; retry');
       }
-      const remoteSource = await readRemoteSourceMetadata(this.source.searchIndex.directory);
+      const remoteSource = paths ? null : await readRemoteSourceMetadata(this.source.searchIndex.directory);
       const indexedSource = remoteSource?.corpusFingerprint === version
         ? { ...remoteSource, corpusFingerprint: version }
         : null;
 
-      const knowledge = new KnowledgeBase(corpusRoot, true);
+      const knowledge = new KnowledgeBase(corpusRoot, true, this.source.config, this.source.isMemoryRoot);
+      snapshotCache = knowledge.searchIndex.directory;
       await knowledge.initialize();
       await knowledge.semanticIndex.seedFrom(this.source.semanticIndex, version);
-      const expiresAt = Date.now() + SNAPSHOT_TTL_MS;
+      const expiresAt = Date.now() + limits.snapshotTtlMs;
       const snapshot: KnowledgeSnapshot = {
         snapshotId: id,
         version,
@@ -118,17 +128,17 @@ export class SnapshotManager {
         },
         knowledge,
         bytes,
-        documents: documents.length,
+        documents: entries.length,
+        ...(paths ? { paths } : {}),
         uses: 0,
         closing: false,
       };
-      const inUseBytes = [...this.snapshots.values()].reduce((total, item) => total + item.bytes, 0);
-      if (inUseBytes + bytes > MAX_TOTAL_BYTES) throw new Error(`Active snapshots exceed the ${MAX_TOTAL_BYTES} byte total limit`);
-      const manifest: SnapshotManifest = { snapshotId: id, version, expiresAt, bytes, documents: documents.length };
+      const manifest: SnapshotManifest = { snapshotId: id, version, expiresAt, bytes, documents: entries.length };
       await writeFile(path.join(directory, 'snapshot.json'), JSON.stringify(manifest), { mode: 0o600, flag: 'wx' });
       this.snapshots.set(id, snapshot);
       return this.describe(snapshot);
     } catch (error) {
+      if (snapshotCache) await this.removeArtifacts(directory, snapshotCache);
       await rm(directory, { recursive: true, force: true });
       throw error;
     }
@@ -176,6 +186,13 @@ export class SnapshotManager {
       capturedAt: snapshot.capturedAt,
       documents: snapshot.documents,
       bytes: snapshot.bytes,
+      paths: snapshot.paths ?? null,
+      limits: {
+        maxBytes: this.source.config.snapshotMaxBytes,
+        totalBytes: this.source.config.snapshotsTotalBytes,
+        maxSnapshots: this.source.config.maxSnapshots,
+        ttlMs: this.source.config.snapshotTtlMs,
+      },
       provenance: snapshot.provenance,
     };
   }
@@ -201,7 +218,7 @@ export class SnapshotManager {
         const raw: unknown = JSON.parse(await readFile(path.join(directory, 'snapshot.json'), 'utf8'));
         if (!isManifest(raw)) continue;
         if (raw.expiresAt <= Date.now() || !this.snapshots.has(raw.snapshotId)) {
-          const indexDirectory = new KnowledgeBase(path.join(directory, 'corpus')).searchIndex.directory;
+          const indexDirectory = new KnowledgeBase(path.join(directory, 'corpus'), true, this.source.config).searchIndex.directory;
           await this.removeArtifacts(directory, indexDirectory);
         }
       } catch (error) {

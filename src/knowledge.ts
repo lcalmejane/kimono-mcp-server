@@ -1,4 +1,4 @@
-import { readdir, readFile, realpath, stat } from 'node:fs/promises';
+import { open, readdir, readFile, realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import ignore, { type Ignore } from 'ignore';
@@ -6,6 +6,7 @@ import { FastGrepIndex } from './search.js';
 import { SemanticIndex } from './semantic.js';
 import { within } from './synchronization.js';
 import { ProjectVocabulary } from './query-plan.js';
+import { AIKIDO_EXTENSIONS, loadCorpusConfig, type CorpusConfig } from './corpus-config.js';
 
 export type KnowledgeKind = 'command' | 'agent' | 'skill' | 'workflow' | 'knowledge';
 
@@ -21,12 +22,9 @@ export interface SearchMatch extends KnowledgeEntry {
   line: number;
 }
 
-const TEXT_EXTENSIONS = new Set([
-  '.md', '.mdx', '.mdc', '.txt', '.json', '.yaml', '.yml', '.toml', '.js', '.mjs', '.cjs', '.sh', '.py', '.ts', '.xml',
-]);
 const EXCLUDED_DIRECTORIES = new Set(['.git', '.ssh', 'node_modules', 'dist', 'build', 'coverage', '.venv', '__pycache__', '.next', '.nuxt', '.cache', '.nyc_output', 'temp', 'credentials', 'secrets']);
-const MAX_FILE_BYTES = 2 * 1024 * 1024;
-const KNOWLEDGE_EXTENSIONS = TEXT_EXTENSIONS;
+const RAG_EXCLUDED_DIRECTORIES = new Set(['target', 'vendor', '.gradle', '.terraform', '.idea', '.tox', '.mypy_cache', '.pytest_cache', '.turbo']);
+const KNOWLEDGE_EXTENSIONS = new Set(AIKIDO_EXTENSIONS);
 
 export class AikidoKnowledgeBase {
   readonly root: string;
@@ -37,8 +35,11 @@ export class AikidoKnowledgeBase {
   private memoryRoot = false;
   private entries: KnowledgeEntry[] = [];
   private byId = new Map<string, KnowledgeEntry>();
+  private sizes = new Map<string, number>();
+  private scanStats = { files: 0, bytes: 0, oversized: 0, binary: 0 };
 
-  constructor(root: string, readonly immutable = false) {
+  constructor(root: string, readonly immutable = false, readonly config: Readonly<CorpusConfig> = loadCorpusConfig(),
+    private readonly snapshotMemoryRoot?: boolean) {
     this.root = path.resolve(root);
     this.searchIndex = new FastGrepIndex(this);
     this.semanticIndex = new SemanticIndex(this);
@@ -47,6 +48,11 @@ export class AikidoKnowledgeBase {
 
   get isInitialized(): boolean { return this.initialized; }
   get isMemoryRoot(): boolean { return this.memoryRoot; }
+  get corpusStatus() { return { mode: this.config.mode, ...this.scanStats, config: this.config }; }
+
+  acceptsFile(file: string): boolean {
+    return this.config.extensions.includes(path.posix.extname(file).toLowerCase()) || this.config.filenames.includes(path.posix.basename(file));
+  }
 
   async initialize(): Promise<void> {
     const rootInfo = await stat(this.root).catch((error: unknown) => {
@@ -64,11 +70,13 @@ export class AikidoKnowledgeBase {
         return false;
       }
     }));
-    if (!indexes.some(Boolean)) {
+    if (!indexes.some(Boolean) && this.config.mode === 'aikido' && !this.immutable) {
       throw new Error(`No AI-KIDO entry point found in ${this.root} (expected prompts/index.md or index.md)`);
     }
 
-    this.memoryRoot = !indexes[0];
+    this.memoryRoot = this.snapshotMemoryRoot ?? (this.config.mode === 'aikido' && !indexes[0]);
+    this.scanStats = { files: 0, bytes: 0, oversized: 0, binary: 0 };
+    this.sizes.clear();
     this.entries = await this.scanDirectory(realRoot, '');
     this.byId = new Map();
     for (const entry of this.entries) {
@@ -85,10 +93,16 @@ export class AikidoKnowledgeBase {
     if (!paths) await this.initialize();
     else {
       this.requireInitialized();
+      this.scanStats = { files: 0, bytes: 0, oversized: 0, binary: 0 };
+      for (const file of this.sizes.keys()) if (within(file, paths)) this.sizes.delete(file);
       const selected = await this.scanDirectory(await realpath(this.root), '', [], paths);
       this.entries = [...this.entries.filter(entry => !within(entry.path, paths)), ...selected]
         .sort((a, b) => a.path.localeCompare(b.path));
       this.byId = new Map(this.entries.flatMap(entry => [[entry.path, entry], [fileId(entry.path), entry]]));
+      const bytes = [...this.sizes.values()].reduce((total, size) => total + size, 0);
+      this.enforceLimits(this.entries.length, bytes);
+      this.scanStats.files = this.entries.length;
+      this.scanStats.bytes = bytes;
     }
     return this.entries.length;
   }
@@ -115,10 +129,16 @@ export class AikidoKnowledgeBase {
       throw new Error(`Refusing to read a path outside AIKIDO_ROOT: ${idOrPath}`);
     }
     const info = await stat(fileReal);
-    if (!info.isFile() || info.size > MAX_FILE_BYTES) {
-      throw new Error(`AI-KIDO document is not a readable text file (maximum ${MAX_FILE_BYTES} bytes): ${idOrPath}`);
+    if (!info.isFile() || info.size > this.config.maxFileBytes) {
+      throw new Error(`Document is not a readable text file (maximum ${this.config.maxFileBytes} bytes): ${idOrPath}`);
     }
-    return { entry, content: await readFile(fileReal, 'utf8'), modified: info.mtime.toISOString() };
+    const bytes = await readFile(fileReal);
+    if (bytes.length > this.config.maxFileBytes) throw new Error(`Document exceeds maxFileBytes: ${idOrPath}`);
+    if (bytes.includes(0)) throw new Error(`Binary content is not supported: ${idOrPath}`);
+    let content: string;
+    try { content = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes); }
+    catch (error) { throw new Error(`Document must be UTF-8 text: ${idOrPath}`, { cause: error }); }
+    return { entry, content, modified: info.mtime.toISOString() };
   }
 
   async search(query: string, kind?: KnowledgeKind, limit = 25): Promise<SearchMatch[]> {
@@ -152,19 +172,35 @@ export class AikidoKnowledgeBase {
         else if (decision.unignored) ignored = false;
       }
       if (ignored) continue;
+      if (this.config.exclude.some(pattern => path.posix.matchesGlob(relativePath, pattern) ||
+        child.isDirectory() && path.posix.matchesGlob(`${relativePath}/`, pattern))) continue;
       if (child.isDirectory()) {
         if (EXCLUDED_DIRECTORIES.has(child.name)) continue;
-        if (process.env.AIKIDO_INCLUDE_SPEC !== 'true' && (relativePath === 'prompts/spec' || relativePath === 'spec')) continue;
-        result.push(...await this.scanDirectory(realRoot, relativePath, rules, scopes));
-      } else if (child.isFile() && TEXT_EXTENSIONS.has(path.extname(child.name).toLowerCase())) {
+        if (this.config.mode === 'rag' && RAG_EXCLUDED_DIRECTORIES.has(child.name)) continue;
+        if (this.config.mode === 'aikido' && process.env.AIKIDO_INCLUDE_SPEC !== 'true' && (relativePath === 'prompts/spec' || relativePath === 'spec')) continue;
+        for (const entry of await this.scanDirectory(realRoot, relativePath, rules, scopes)) result.push(entry);
+      } else if (child.isFile() && this.acceptsFile(relativePath)) {
         if (!within(relativePath, scopes)) continue;
+        if (this.config.include.length && !this.config.include.some(pattern => path.posix.matchesGlob(relativePath, pattern))) continue;
         const fullPath = path.join(realRoot, relativePath);
         const info = await stat(fullPath);
-        if (info.size > MAX_FILE_BYTES) continue;
+        if (info.size > this.config.maxFileBytes) { this.scanStats.oversized++; continue; }
+        const handle = await open(fullPath, 'r');
+        let binary: boolean;
+        try {
+          const sample = Buffer.alloc(Math.min(info.size, 8192));
+          const { bytesRead } = await handle.read(sample, 0, sample.length, 0);
+          binary = sample.subarray(0, bytesRead).includes(0);
+        } finally { await handle.close(); }
+        if (binary) { this.scanStats.binary++; continue; }
+        this.scanStats.files++;
+        this.scanStats.bytes += info.size;
+        this.enforceLimits(this.scanStats.files, this.scanStats.bytes);
+        this.sizes.set(relativePath, info.size);
         result.push({
           id: relativePath,
           path: relativePath,
-          kind: classify(relativePath),
+          kind: this.config.mode === 'rag' ? 'knowledge' : classify(relativePath),
           title: titleFromPath(relativePath),
         });
       }
@@ -175,6 +211,12 @@ export class AikidoKnowledgeBase {
 
   private requireInitialized(): void {
     if (!this.initialized) throw new Error('AI-KIDO knowledge base is not initialized');
+  }
+
+  private enforceLimits(files: number, bytes: number): void {
+    if (files > this.config.maxFiles || bytes > this.config.maxCorpusBytes) {
+      throw new Error(`Corpus limit exceeded (${files} files, ${bytes} bytes); narrow include/exclude or raise maxFiles/maxCorpusBytes in the host config`);
+    }
   }
 }
 
