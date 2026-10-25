@@ -1,8 +1,8 @@
 {
   "name": "kimono-rag-mcp",
-  "displayName": "Kimono RAG MCP by AI-KIDO",
-  "description": "Local project RAG and AI-KIDO MCP with embedded lexical and semantic search.",
-  "version": "0.6.4",
+  "displayName": "Kimono RAG MCP",
+  "description": "Local RAG for code and documentation with lexical and semantic search over MCP.",
+  "version": "0.6.5",
   "publisher": "ai-kido",
   "license": "MIT",
   "repository": {
@@ -11,7 +11,7 @@
   },
   "engines": { "vscode": "^1.106.0" },
   "categories": ["AI", "Machine Learning", "Other"],
-  "keywords": ["mcp", "rag", "copilot", "semantic search", "ai-kido"],
+  "keywords": ["mcp", "rag", "semantic search", "code search", "local indexing"],
   "icon": "media/icon.png",
   "galleryBanner": { "color": "#0f1220", "theme": "dark" },
   "main": "./extension.cjs",
@@ -60,7 +60,7 @@
           "enum": ["rag", "aikido"],
           "default": "rag",
           "scope": "machine",
-          "description": "RAG (default) indexes generic UTF-8 source/docs read-only. Select AI-KIDO explicitly for knowledge discovery with an index entry point. Both modes respect .gitignore and dependency/build exclusions."
+          "description": "RAG (default) indexes source code and documentation locally. Select aikido only for a compatible knowledge base with an index entry point. Both modes respect .gitignore and dependency/build exclusions."
         },
         "kimono.configFile": {
           "type": "string",

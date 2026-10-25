@@ -1,8 +1,24 @@
-# Standalone VS Code distribution
+# VS Code distribution
 
-The extension lives in [`vscode/`](../vscode/) and is built **only from this
-repository**. It does not consume Core or Agent sources, and needs no
-cross-repository token. [Installation and integration (EN/FR)](../vscode/README.md).
+[Version française](vscode-distribution.fr.md) · [Project README](../README.md)
+
+The extension source is in [`vscode/`](../vscode/). Its platform VSIX files are
+built by GitHub Actions. See the [installation guide](../vscode/README.md).
+
+## Marketplace text
+
+The text shown in the Marketplace comes from the extension package:
+
+- `displayName`, `description` and `keywords` come from
+  [`vscode/package.json`](../vscode/package.json).
+- The Marketplace overview is the `README.md` inside the VSIX. The packaging
+  script copies [`vscode/README.md`](../vscode/README.md) into the package root.
+- [`vscode/fiche.md`](../vscode/fiche.md) is an editorial reference; it is not
+  included in the VSIX and does not update the Marketplace page by itself.
+
+The publish workflow uploads an existing release VSIX; it does not rebuild it.
+Marketplace text changes therefore require a new package version, a new GitHub
+release and a Marketplace publication.
 
 ## CI and release
 
@@ -28,7 +44,7 @@ Manual runs **do not publish releases**. For a release:
 1. Update **both** server and extension versions in [`package.json`](../package.json)
    and [`vscode/package.json`](../vscode/package.json); update the lockfile and changelog.
 2. Commit and push the changes to this repository.
-3. Push the matching tag, for example `v0.6.1` for version `0.6.1`.
+3. Push the matching tag, for example `v1.2.3` for version `1.2.3`.
 4. Only after server tests, extension tests and all native/package smoke jobs pass,
    CI creates a draft release, attaches all `.vsix`, `.build.json`, native archives
    and `SHA256SUMS.txt`, then publishes it. Published immutable releases are not
@@ -50,7 +66,7 @@ dispatching it:
    `VSCE_PAT`. Never put the token in the repository, workflow inputs or chat.
 3. Review the publisher profile and Marketplace listing/package content.
 4. In **Actions → Publish VS Code Marketplace → Run workflow**, select the
-   intended immutable release tag (default `v0.6.4`) and explicitly check the
+   intended immutable release tag and explicitly check the
    confirmation that the publisher/listing has been reviewed.
 
 The workflow checks the tag against both package versions, requires an existing
@@ -66,12 +82,9 @@ stored logins, not GitHub Actions credentials.
 The required confirmation checkbox is the final human approval; once the
 workflow starts publishing, there is no later Marketplace confirmation step.
 Do not dispatch until the listing is approved.
-The new `v0.6.4` release will contain targets `darwin-arm64`, `linux-arm64`,
+The release contains targets `darwin-arm64`, `linux-arm64`,
 `linux-x64` and `win32-x64` under the extension ID `ai-kido.kimono-rag-mcp`.
 Marketplace credentials and listing approval remain separate prerequisites.
-
-See the [Marketplace publication brief](../vscode/fiche.md) for proposed public
-metadata, copy and the remaining owner review checklist.
 
 Each `.build.json` records the source commit, whether the checkout has uncommitted
 changes (`sourceDirty`), version, host target, actual Node

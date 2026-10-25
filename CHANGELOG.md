@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.5 - 2026-10-25
+
+- Clarify installation paths for Marketplace-compatible IDEs, Docker and
+  native MCP stdio clients in English and French user documentation.
+- Document the published GHCR image, version tags and its use as a remote HTTP
+  MCP server for GitHub Copilot cloud agent.
+- Refresh user-facing RAG, AI-KIDO and measured benchmark descriptions.
+
 ## 0.6.4 - 2026-10-25
 
 - Set the VS Code Marketplace display name to `Kimono RAG MCP by AI-KIDO`
