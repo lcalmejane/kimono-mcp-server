@@ -6,6 +6,7 @@ import { AikidoKnowledgeBase as KnowledgeBase } from './knowledge.js';
 import { sourceSnapshot } from './index-basis.js';
 import { readRemoteSourceMetadata } from './project-policy.js';
 import { synchronizationPaths, within } from './synchronization.js';
+import { clearSearchCache } from './search-cache.js';
 
 interface SnapshotManifest {
   snapshotId: string;
@@ -238,6 +239,7 @@ export class SnapshotManager {
   private async dispose(snapshot: KnowledgeSnapshot): Promise<void> {
     if (this.snapshots.get(snapshot.snapshotId) !== snapshot) return;
     this.snapshots.delete(snapshot.snapshotId);
+    clearSearchCache(snapshot.knowledge);
     await this.removeArtifacts(path.join(this.snapshotsRoot, snapshot.snapshotId), snapshot.knowledge.searchIndex.directory);
   }
 

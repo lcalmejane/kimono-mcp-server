@@ -30,6 +30,12 @@ la session du serveur. Voir les [paramètres du moteur et de la mémoire](docs/l
 
 ## Choisir comment utiliser Kimono
 
+Pour identifier le serveur en cours, appeler `aikido_root` avec
+`{"operation":"status"}`. Le champ `server` contient le `name` et la `version`
+du paquet Kimono, distincts de la version du moteur d'embedding et de l'empreinte
+du corpus. La réponse d'initialisation MCP et les endpoints HTTP authentifiés
+`/statusz` et `/readyz` donnent la même identité serveur.
+
 | Utilisation | Adaptée à | Installation |
 | --- | --- | --- |
 | **Extension IDE — recommandée** | VS Code et IDE compatibles avec les extensions du Visual Studio Marketplace | Installer Kimono RAG MCP depuis le [Marketplace](https://marketplace.visualstudio.com/items?itemName=ai-kido.kimono-rag-mcp). L'extension inclut le runtime et les moteurs de recherche. |

@@ -5,6 +5,9 @@ import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AikidoKnowledgeBase } from '../src/knowledge.js';
 import { runtimeFor } from '../src/runtime-tools.js';
+import { FastGrepIndex } from '../src/search.js';
+import { snapshotsFor } from '../src/snapshots.js';
+import { searchCacheFor } from '../src/search-cache.js';
 
 const roots: string[] = [];
 const caches: string[] = [];
@@ -32,6 +35,33 @@ afterEach(async () => {
 });
 
 describe('explicit research snapshots', () => {
+  it('shares raw search results across formats, isolates parameters and clears on snapshot end', async () => {
+    const { knowledge } = await fixture();
+    const runtime = runtimeFor(knowledge);
+    const { snapshotId } = JSON.parse(await runtime.call('aikido_snapshot', { operation: 'begin' }));
+    const calls = vi.spyOn(FastGrepIndex.prototype, 'search');
+    try {
+      const input = { snapshotId, query: 'Captured', mode: 'literal' };
+      const responses = await Promise.all([
+        runtime.call('aikido_search', { ...input, detail: 'compact' }),
+        runtime.call('aikido_search', { ...input, detail: 'excerpts', contextLines: 0 }),
+      ]);
+      expect(calls).toHaveBeenCalledTimes(1);
+      expect(JSON.parse(responses[0]).results).toHaveLength(1);
+      expect(responses[1]).toContain('Captured version');
+      await runtime.call('aikido_search', { ...input, limit: 1 });
+      await runtime.call('aikido_search', { ...input, pathPrefix: 'prompts/index.md' });
+      expect(calls).toHaveBeenCalledTimes(3);
+      const cache = await snapshotsFor(knowledge).withSnapshot(snapshotId, async snapshot => searchCacheFor(snapshot.knowledge));
+      await runtime.call('aikido_snapshot', { operation: 'end', snapshotId });
+      const compute = vi.fn(async () => ({ results: [], metadata: {} }));
+      await cache.search('closed', compute);
+      await cache.search('closed', compute);
+      expect(compute).toHaveBeenCalledTimes(2);
+      await expect(runtime.call('aikido_search', input)).rejects.toThrow('unknown or stale');
+    } finally { calls.mockRestore(); }
+  });
+
   it('builds a literal index on captured paths and never searches the mutable source or copied absolute paths', async () => {
     const { root, knowledge } = await fixture();
     await knowledge.searchIndex.synchronize();
@@ -97,11 +127,19 @@ describe('explicit research snapshots', () => {
       operation: 'read', path: 'prompts/index.md', snapshotId: 'not-a-snapshot',
     })).rejects.toThrow('snapshotId must be a UUID');
     const { snapshotId } = JSON.parse(await runtime.call('aikido_snapshot', { operation: 'begin' }));
+    const cache = await snapshotsFor(knowledge).withSnapshot(snapshotId, async snapshot => searchCacheFor(snapshot.knowledge));
+    const compute = vi.fn(async () => ({ results: [], metadata: {} }));
+    await cache.search('expire', compute);
+    await cache.search('expire', compute);
+    expect(compute).toHaveBeenCalledTimes(1);
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(Date.now() + 15 * 60 * 1000 + 1);
     await expect(runtime.call('aikido_file', {
       operation: 'read', path: 'prompts/index.md', snapshotId,
     })).rejects.toThrow('expired');
+    await cache.search('expire', compute);
+    await cache.search('expire', compute);
+    expect(compute).toHaveBeenCalledTimes(3);
   });
 
   it('keeps different knowledge roots isolated when they share the same cache parent', async () => {

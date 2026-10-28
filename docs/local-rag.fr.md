@@ -155,9 +155,11 @@ temps mesurés.
 | Variable d'environnement | Défaut | Signification |
 | --- | --- | --- |
 | `KIMONO_SEMANTIC_DEVICE` | `auto` | Comparer puis sélectionner, ou imposer `cpu`, `cuda` ou `coreml`. |
-| `KIMONO_SEMANTIC_WORKERS` | `1` | Sessions CPU du modèle (1–32) ; les fournisseurs accélérés utilisent une session. |
-| `KIMONO_SEMANTIC_THREADS` | `auto` | 1–2 threads par session selon les CPU disponibles ; réglage explicite 1–32. |
-| `KIMONO_SEMANTIC_BATCH` | `8` | Passages par lot (1–256). |
+| `KIMONO_SEMANTIC_CPU_PERCENT` | `80` | Budget CPU automatique par processus, 1–100 % des CPU disponibles, quotas visibles du conteneur compris. |
+| `KIMONO_SEMANTIC_MEMORY_PERCENT` | `80` | Budget estimatif par processus, 1–100 % de la RAM actuellement disponible sur l'hôte/dans le conteneur. |
+| `KIMONO_SEMANTIC_WORKERS` | `auto` | Sessions CPU : partie entière du budget CPU / threads, réduite selon la mémoire, minimum 1 et maximum 32. Une session pour les accélérateurs. |
+| `KIMONO_SEMANTIC_THREADS` | `auto` | Un thread d'inférence pour privilégier les sessions indépendantes ; réglage explicite 1–32. |
+| `KIMONO_SEMANTIC_BATCH` | `auto` | Passages par lot (1–256), selon la mémoire restant après estimation des sessions du modèle. |
 
 CUDA nécessite un runtime ONNX contenant ce fournisseur et des pilotes GPU
 compatibles ; les bundles Linux/Windows standards contiennent un runtime CPU.
@@ -180,9 +182,21 @@ qu'après succès. Le hachage du modèle et la sérialisation de l'état sont
 effectués en flux, sans copie sérialisée complète. La progression native expose
 `batchMs`, affiché comme durée du dernier lot.
 
-Une session du modèle est conservée par défaut, au lieu de créer automatiquement
-jusqu'à quatre copies. Augmenter explicitement les workers CPU augmente la
-mémoire du modèle. Le modèle et l'index en mémoire restent présents pendant le
+Le dimensionnement est recalculé avant chaque opération native ; le cache du
+fournisseur ne fige pas les budgets CPU/mémoire. Les valeurs workers/threads/lot
+explicites restent possibles ; un nombre explicite de workers ou une taille
+de lot qui ne tient pas dans le budget RAM estimé provoque une erreur, sans
+réduction silencieuse. Un réglage CPU explicite peut dépasser le pourcentage
+automatique. Le minimum est un CPU même si 80 % s'arrondit à zéro.
+L'estimation des sessions inclut poids, tokenizer et marge ; celle des lots
+inclut états cachés et attention à la limite de tokens du modèle.
+`runtime.resources` expose CPU/RAM disponibles, pourcentages, budgets et mémoire
+estimée des sessions/lots. Ces estimations ne sont ni des limites OS strictes,
+ni une mesure de VRAM GPU : les autres allocations, l'index croissant et les
+processus concurrents peuvent nécessiter davantage de mémoire. Les budgets
+sont indépendants par processus, sans ordonnanceur commun à l'hôte.
+Augmenter les workers CPU augmente la mémoire du modèle.
+Le modèle et l'index en mémoire restent présents pendant le
 traitement natif ; la taille de l'index augmente avec le nombre de passages.
 La fin du processus natif libère sa mémoire.
 

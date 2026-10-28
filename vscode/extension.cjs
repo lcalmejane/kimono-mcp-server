@@ -55,6 +55,16 @@ function register(vscode, context, native = nativeEnvironment) {
     if (!["aikido", "rag"].includes(corpusMode)) throw new Error("Kimono corpusMode must be aikido or rag.");
     const device = config().get("semanticDevice", "auto");
     if (!["auto", "cpu", "cuda", "coreml"].includes(device)) throw new Error("Kimono semanticDevice must be auto, cpu, cuda or coreml.");
+    const semanticEnvironment = {};
+    for (const [key, variable, fallback, minimum, maximum] of [
+      ["semanticWorkers", "WORKERS", 0, 0, 32], ["semanticThreads", "THREADS", 0, 0, 32],
+      ["semanticBatch", "BATCH", 0, 0, 256], ["semanticCpuPercent", "CPU_PERCENT", 80, 1, 100],
+      ["semanticMemoryPercent", "MEMORY_PERCENT", 80, 1, 100],
+    ]) {
+      const value = config().get(key, fallback);
+      if (!Number.isInteger(value) || value < minimum || value > maximum) throw new Error(`Invalid Kimono ${key} setting.`);
+      semanticEnvironment[`KIMONO_SEMANTIC_${variable}`] = value === 0 ? "auto" : String(value);
+    }
     const logLevel = config().get("logLevel", "error");
     if (!["error", "debug"].includes(logLevel)) throw new Error("Kimono logLevel must be error or debug.");
     return {
@@ -68,6 +78,7 @@ function register(vscode, context, native = nativeEnvironment) {
         KIMONO_STATUS_FILE: selected.statusFile,
         KIMONO_CORPUS_MODE: corpusMode,
         KIMONO_SEMANTIC_DEVICE: device,
+        ...semanticEnvironment,
         KIMONO_LOG_LEVEL: logLevel,
         ...(configFile ? { KIMONO_CONFIG_FILE: configFile } : {}),
         ...(profile ? { KIMONO_GIT_PROFILE_FILE: profile } : {}),

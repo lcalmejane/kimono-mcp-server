@@ -143,9 +143,11 @@ settings. The management panel displays the selected provider and timings.
 | Environment variable | Default | Meaning |
 | --- | --- | --- |
 | `KIMONO_SEMANTIC_DEVICE` | `auto` | Benchmark and select, or explicitly select `cpu`, `cuda` or `coreml`. |
-| `KIMONO_SEMANTIC_WORKERS` | `1` | CPU model sessions (1–32); explicit accelerator providers use one session. |
-| `KIMONO_SEMANTIC_THREADS` | `auto` | 1–2 threads per session, bounded by available CPUs; explicit range 1–32. |
-| `KIMONO_SEMANTIC_BATCH` | `8` | Passages per batch (1–256). |
+| `KIMONO_SEMANTIC_CPU_PERCENT` | `80` | Per-process automatic CPU budget, 1–100% of available CPUs, respecting visible container quotas. |
+| `KIMONO_SEMANTIC_MEMORY_PERCENT` | `80` | Per-process planning budget, 1–100% of currently available host/container RAM. |
+| `KIMONO_SEMANTIC_WORKERS` | `auto` | CPU sessions: floor(CPU budget / threads), reduced to fit memory, minimum one and maximum 32. Accelerators use one session. |
+| `KIMONO_SEMANTIC_THREADS` | `auto` | One inference thread, favoring parallel independent sessions; explicit range 1–32. |
+| `KIMONO_SEMANTIC_BATCH` | `auto` | Passages per batch (1–256), sized from memory remaining after model-session estimates. |
 
 CUDA requires a compatible ONNX runtime containing its CUDA provider and GPU
 drivers; the standard Linux/Windows bundles contain a CPU runtime. CoreML is
@@ -166,8 +168,18 @@ previous generation is removed only after success. Model hashing and state seria
 streamed instead of allocating full serialized copies. Native progress includes
 `batchMs`, displayed as the last batch duration.
 
-One model session is kept by default instead of automatically creating up to
-four copies. Increasing CPU workers explicitly increases model memory. The
+Resource sizing runs before each native operation; cached provider selection
+does not freeze the CPU/memory sizing. Explicit worker/thread/batch values remain
+supported; an explicit worker or batch request that cannot fit the estimated RAM
+budget fails rather than silently shrinking it. Explicit CPU parallelism can
+exceed the automatic CPU percentage. At least one CPU is used even if 80% rounds
+below one. Model-session estimates account for weights, tokenizer and overhead;
+batch estimates account for hidden states and attention at the model token cap.
+`runtime.resources` reports available CPUs/RAM, percentages, budgets and estimated
+session/batch memory. These estimates are not hard OS memory limits or measured
+GPU VRAM usage: other allocations, the growing index and concurrent processes
+can require more memory. Percentages apply independently to each process, not
+to a shared host scheduler. Increasing CPU workers increases model memory. The
 model and in-memory index remain resident while the helper runs; index storage
 still grows with the number of passages. Native helper exit releases its process
 memory.

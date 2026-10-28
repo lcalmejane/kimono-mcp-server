@@ -1,5 +1,7 @@
 use embsearch_core::{Database, Embedder, Metric, OnnxEmbedder};
 mod device;
+mod resources;
+use resources::Runtime;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
@@ -14,26 +16,6 @@ use std::time::Instant;
 
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
 
-fn bounded_setting(name: &str, value: Option<&str>, default: usize, max: usize) -> Result<usize> {
-    match value
-        .map(str::trim)
-        .filter(|value| !value.is_empty() && *value != "auto")
-    {
-        None => Ok(default),
-        Some(value) => match value.parse::<usize>() {
-            Ok(value) if (1..=max).contains(&value) => Ok(value),
-            _ => Err(format!("{name} must be auto or an integer between 1 and {max}").into()),
-        },
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-struct Runtime {
-    workers: usize,
-    threads: usize,
-    batch: usize,
-}
-
 fn requested_device(value: Option<&str>) -> Result<&str> {
     let value = value.unwrap_or("auto");
     match value {
@@ -42,45 +24,9 @@ fn requested_device(value: Option<&str>) -> Result<&str> {
     }
 }
 
-// available_parallelism honours cgroup CPU quotas, so Docker `cpus:` limits apply.
-fn runtime_settings(available: usize, var: impl Fn(&str) -> Option<String>) -> Result<Runtime> {
-    let available = available.max(1);
-    // One session by default avoids duplicating model weights across automatic workers.
-    let workers = bounded_setting(
-        "KIMONO_SEMANTIC_WORKERS",
-        var("KIMONO_SEMANTIC_WORKERS").as_deref(),
-        1,
-        32,
-    )?;
-    let threads = bounded_setting(
-        "KIMONO_SEMANTIC_THREADS",
-        var("KIMONO_SEMANTIC_THREADS").as_deref(),
-        (available / workers).clamp(1, 2),
-        32,
-    )?;
-    let batch = bounded_setting(
-        "KIMONO_SEMANTIC_BATCH",
-        var("KIMONO_SEMANTIC_BATCH").as_deref(),
-        8,
-        256,
-    )?;
-    Ok(Runtime {
-        workers,
-        threads,
-        batch,
-    })
-}
-
-fn configure_runtime(device: &str) -> Result<Runtime> {
-    let mut runtime = runtime_settings(
-        std::thread::available_parallelism().map_or(1, |count| count.get()),
-        |name| std::env::var(name).ok(),
-    )?;
+fn configure_runtime(model: &Path, device: &str) -> Result<Runtime> {
+    let runtime = resources::detect(model, device)?;
     let providers = device::providers(device)?;
-    if device != "cpu" {
-        // Multiple model sessions contend for one accelerator and duplicate device allocations.
-        runtime.workers = 1;
-    }
     // ONNX Runtime parallelises poorly inside one small-model run; throughput
     // comes from independent sessions (workers), each with a small intra pool.
     let options = ort::environment::GlobalThreadPoolOptions::default()
@@ -394,6 +340,7 @@ impl<E: Embedder> Embedder for SharedEmbedder<E> {
 fn runtime_info(runtime: Runtime, selection: &device::Selection) -> serde_json::Value {
     serde_json::json!({
         "workers": runtime.workers, "threads": runtime.threads, "batch": runtime.batch,
+        "resources": runtime.resources,
         "executionProvider": selection.execution_provider,
         "gpuExecutionVerified": selection.gpu_execution_verified,
         "benchmarks": selection.benchmarks,
@@ -774,7 +721,7 @@ fn main() {
             if requested_device(Some(&device))? == "auto" {
                 return Err("Benchmark requires an explicit provider".into());
             }
-            let runtime = configure_runtime(&device)?;
+            let runtime = configure_runtime(Path::new(&model), &device)?;
             println!(
                 "{}",
                 serde_json::to_string(&device::benchmark(Path::new(&model), runtime, &device)?)?
@@ -783,7 +730,7 @@ fn main() {
         }
         let request: Request = serde_json::from_reader(BufReader::new(fs::File::open(path)?))?;
         let selection = device::select(&request.model)?;
-        let runtime = configure_runtime(&selection.execution_provider)?;
+        let runtime = configure_runtime(&request.model, &selection.execution_provider)?;
         eprintln!(
             "KIMONO_PROGRESS {}",
             serde_json::json!({
@@ -804,69 +751,6 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[test]
-    fn runtime_settings_are_bounded_and_validate_explicit_values() {
-        assert_eq!(bounded_setting("threads", None, 2, 32).unwrap(), 2);
-        assert_eq!(bounded_setting("threads", Some("auto"), 2, 32).unwrap(), 2);
-        for value in [1, 2, 8, 32] {
-            assert_eq!(
-                bounded_setting("threads", Some(&value.to_string()), 2, 32).unwrap(),
-                value
-            );
-        }
-        for value in ["0", "33", "-1", "many", "1.5"] {
-            assert!(bounded_setting("threads", Some(value), 2, 32).is_err());
-        }
-        let none = |_: &str| None;
-        assert_eq!(
-            runtime_settings(2, none).unwrap(),
-            Runtime {
-                workers: 1,
-                threads: 2,
-                batch: 8
-            }
-        );
-        assert_eq!(
-            runtime_settings(14, none).unwrap(),
-            Runtime {
-                workers: 1,
-                threads: 2,
-                batch: 8
-            }
-        );
-        assert_eq!(
-            runtime_settings(1, none).unwrap(),
-            Runtime {
-                workers: 1,
-                threads: 1,
-                batch: 8
-            }
-        );
-        let explicit = |name: &str| {
-            Some(
-                match name {
-                    "KIMONO_SEMANTIC_WORKERS" => "3",
-                    "KIMONO_SEMANTIC_THREADS" => "2",
-                    _ => "64",
-                }
-                .to_string(),
-            )
-        };
-        assert_eq!(
-            runtime_settings(14, explicit).unwrap(),
-            Runtime {
-                workers: 3,
-                threads: 2,
-                batch: 64
-            }
-        );
-        assert!(
-            runtime_settings(4, |name: &str| (name == "KIMONO_SEMANTIC_BATCH")
-                .then(|| "257".to_string()))
-            .is_err()
-        );
-    }
-
     #[test]
     fn chunks_are_bounded_and_keep_source_lines() {
         let result = chunks(vec![Document {
@@ -922,6 +806,7 @@ mod tests {
             workers: 3,
             threads: 1,
             batch: 2,
+            ..Runtime::default()
         };
         let primary = MockEmbedder::new(8);
         let mut received = BTreeMap::new();
@@ -993,6 +878,7 @@ mod tests {
             workers: 2,
             threads: 1,
             batch: 4,
+            ..Runtime::default()
         };
         embed_parallel(
             &*shared,

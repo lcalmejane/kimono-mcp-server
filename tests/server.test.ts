@@ -1,6 +1,6 @@
 import { corpusConfig } from '../src/corpus-config.js';
 import { createHash } from 'node:crypto';
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -49,6 +49,9 @@ describe('AI-KIDO MCP surface', () => {
     await client.connect(clientTransport);
 
     try {
+      const metadata = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
+      const serverInfo = { name: metadata.name, version: metadata.version };
+      expect(client.getServerVersion()).toEqual(serverInfo);
       const tools = await client.listTools();
       expect(tools.tools.map((tool) => tool.name)).toEqual(['aikido', 'aikido_snapshot', 'aikido_embed', 'aikido_root', 'aikido_search', 'aikido_index', 'aikido_git', 'aikido_collaboration', 'aikido_file']);
       for (const name of ['aikido', 'aikido_search']) {
@@ -85,6 +88,8 @@ describe('AI-KIDO MCP surface', () => {
       expect(stats.isError).not.toBe(true);
       const root = await client.callTool({ name: 'aikido_root', arguments: { operation: 'status' } });
       expect(root).toMatchObject({ content: [{ type: 'text', text: expect.stringContaining('"initialized":true') }] });
+      expect(root.isError).not.toBe(true);
+      expect(JSON.parse((root.content as Array<{ text: string }>)[0].text).server).toEqual(serverInfo);
       const invalid = await client.callTool({ name: 'aikido_git', arguments: { operation: 'run', args: ['--version'] } });
       expect(invalid.isError).toBe(true);
 

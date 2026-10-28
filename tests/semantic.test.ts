@@ -142,6 +142,8 @@ it('reuses one measured provider selection across concurrent roots and exposes r
   const realRunProcess = processes.runProcess;
   const devices: Array<string | undefined> = [];
   const runtime = { executionProvider: 'cpu', gpuExecutionVerified: false, workers: 1, threads: 2, batch: 8,
+    resources: { availableCpus: 4, cpuPercent: 80, cpuBudget: 3, availableMemoryBytes: 4_000_000_000,
+      memoryPercent: 80, memoryBudgetBytes: 3_200_000_000, estimatedMemoryBytes: 1_000_000_000 },
     benchmarks: [{ executionProvider: 'cpu', medianMs: 20, error: null },
       { executionProvider: 'coreml', medianMs: 200, error: null }] };
   const run = vi.spyOn(processes, 'runProcess').mockImplementation(async (executable, args, cwd, exitCodes, timeout, onStderr, environment) => {
@@ -149,7 +151,10 @@ it('reuses one measured provider selection across concurrent roots and exposes r
       return realRunProcess(executable, args, cwd, exitCodes, timeout, onStderr, environment);
     }
     devices.push(environment?.KIMONO_SEMANTIC_DEVICE);
-    const report = { ...runtime, benchmarks: environment?.KIMONO_SEMANTIC_DEVICE === 'cpu' ? [] : runtime.benchmarks };
+    const report = { ...runtime,
+      resources: { ...runtime.resources, availableMemoryBytes: devices.length === 2 ? 3_000_000_000 : 4_000_000_000,
+        memoryBudgetBytes: devices.length === 2 ? 2_400_000_000 : 3_200_000_000 },
+      benchmarks: environment?.KIMONO_SEMANTIC_DEVICE === 'cpu' ? [] : runtime.benchmarks };
     await new Promise(resolve => setTimeout(resolve, 20));
     onStderr?.(`KIMONO_PROGRESS ${JSON.stringify({ phase: 'runtime_configured', completed: 0, total: 0, runtime: report })}\n`);
     onStderr?.('KIMONO_PROGRESS {"phase":"document_embedding","completed":2,"total":2,"batchMs":40}\n');
@@ -161,8 +166,26 @@ it('reuses one measured provider selection across concurrent roots and exposes r
   try {
     const results = await Promise.all([first.semanticIndex.run('update'), second.semanticIndex.run('update')]);
     expect(devices).toEqual(['auto', 'cpu']);
-    expect(results.map(result => result.runtime)).toEqual([runtime, runtime]);
-    expect(first.semanticIndex.status()).toMatchObject({ runtime, batchMs: 40, progress: { completed: 2, total: 2 } });
+    expect(results.map(result => result.runtime)).toEqual(expect.arrayContaining([runtime, { ...runtime, resources: {
+      ...runtime.resources, availableMemoryBytes: 3_000_000_000, memoryBudgetBytes: 2_400_000_000,
+    } }]));
+    expect(first.semanticIndex.status()).toMatchObject({ runtime: results[0].runtime, batchMs: 40, progress: { completed: 2, total: 2 } });
+  } finally { run.mockRestore(); vi.unstubAllEnvs(); }
+});
+
+it('rejects invalid resource-budget telemetry', async () => {
+  const knowledge = await fixture();
+  vi.stubEnv('KIMONO_MODEL_DIR', path.join(knowledge.root, 'test-model'));
+  vi.stubEnv('KIMONO_SEMANTIC_DEVICE', 'cpu');
+  const realRunProcess = processes.runProcess;
+  const run = vi.spyOn(processes, 'runProcess').mockImplementation(async (executable, ...args) =>
+    executable !== (process.env.KIMONO_SEMANTIC_BIN ?? 'kimono-semantic')
+      ? realRunProcess(executable, ...args)
+      : { stdout: JSON.stringify({ runtime: { executionProvider: 'cpu', gpuExecutionVerified: false,
+        workers: 1, threads: 1, batch: 1, benchmarks: [], resources: { cpuPercent: 101 } } }), stderr: '', exitCode: 0 });
+  try {
+    await expect(knowledge.semanticIndex.run('update')).rejects.toThrow('Invalid semantic resource budget');
+    expect(knowledge.semanticIndex.status().phase).toBe('error');
   } finally { run.mockRestore(); vi.unstubAllEnvs(); }
 });
 
@@ -301,6 +324,14 @@ describe.skipIf(!process.env.KIMONO_MODEL_DIR)('real multilingual ONNX semantic 
       const info = JSON.parse(infoResponse.content[0].text);
       expect(info).toMatchObject({ engine: 'embsearch-core', version: '0.3.4', dimensions: 384,
         normalized: true, maxTokens: 512, pooling: 'mean', queryPrefix: 'query: ', documentPrefix: 'passage: ' });
+      const percentage = (value: string | undefined) => !value || value === 'auto' ? 80 : Number(value);
+      const resources = info.runtime.resources;
+      expect(resources.cpuPercent).toBe(percentage(process.env.KIMONO_SEMANTIC_CPU_PERCENT));
+      expect(resources.memoryPercent).toBe(percentage(process.env.KIMONO_SEMANTIC_MEMORY_PERCENT));
+      expect(resources.cpuBudget).toBe(Math.max(1, Math.floor(resources.availableCpus * resources.cpuPercent / 100)));
+      expect(resources.memoryBudgetBytes).toBe(Math.floor(resources.availableMemoryBytes * resources.memoryPercent / 100));
+      expect(resources.estimatedMemoryBytes).toBeGreaterThan(0);
+      expect(resources.estimatedMemoryBytes).toBeLessThanOrEqual(resources.memoryBudgetBytes);
       expect(info.vector).toBeUndefined();
       for (const file of ['model.onnx', 'tokenizer.json', 'model.json']) {
         const bytes = await readFile(path.join(process.env.KIMONO_MODEL_DIR!, file));

@@ -13,6 +13,11 @@ export interface SemanticRuntime {
   executionProvider: 'cpu' | 'cuda' | 'coreml';
   gpuExecutionVerified: boolean;
   workers: number; threads: number; batch: number;
+  resources?: {
+    availableCpus: number; cpuPercent: number; cpuBudget: number;
+    availableMemoryBytes: number; memoryPercent: number;
+    memoryBudgetBytes: number; estimatedMemoryBytes: number;
+  };
   benchmarks: Array<{ executionProvider: string; medianMs: number | null; error: string | null }>;
 }
 
@@ -397,7 +402,8 @@ async function invokeSemantic(
   const temporary = await mkdtemp(path.join(parent, 'semantic-request-'));
   let finishSelection: ((value: SemanticRuntime | undefined) => void) | undefined;
   const key = JSON.stringify([payload.model, ...['KIMONO_SEMANTIC_BIN', 'ORT_DYLIB_PATH',
-    'KIMONO_SEMANTIC_WORKERS', 'KIMONO_SEMANTIC_THREADS', 'KIMONO_SEMANTIC_BATCH'].map(name => process.env[name])]);
+    'KIMONO_SEMANTIC_WORKERS', 'KIMONO_SEMANTIC_THREADS', 'KIMONO_SEMANTIC_BATCH',
+    'KIMONO_SEMANTIC_CPU_PERCENT', 'KIMONO_SEMANTIC_MEMORY_PERCENT'].map(name => process.env[name])]);
   try {
     const request = path.join(temporary, 'request.json');
     if (documents) {
@@ -486,9 +492,25 @@ function readRuntime(value: unknown): SemanticRuntime | undefined {
       || (item.medianMs === null) === (item.error === null)) throw new Error('Invalid semantic device benchmark');
     return { executionProvider: String(item.executionProvider), medianMs: item.medianMs, error: item.error };
   });
+  let resources: SemanticRuntime['resources'];
+  if (value.resources !== undefined) {
+    const raw = value.resources;
+    const keys = ['availableCpus', 'cpuPercent', 'cpuBudget', 'availableMemoryBytes',
+      'memoryPercent', 'memoryBudgetBytes', 'estimatedMemoryBytes'];
+    if (!record(raw) || !keys.every(key => typeof raw[key] === 'number' && Number.isSafeInteger(raw[key]) && raw[key] > 0)
+      || Number(raw.cpuPercent) > 100 || Number(raw.memoryPercent) > 100
+      || Number(raw.estimatedMemoryBytes) > Number(raw.memoryBudgetBytes)
+      || Number(raw.memoryBudgetBytes) > Number(raw.availableMemoryBytes)) throw new Error('Invalid semantic resource budget');
+    resources = {
+      availableCpus: Number(raw.availableCpus), cpuPercent: Number(raw.cpuPercent), cpuBudget: Number(raw.cpuBudget),
+      availableMemoryBytes: Number(raw.availableMemoryBytes), memoryPercent: Number(raw.memoryPercent),
+      memoryBudgetBytes: Number(raw.memoryBudgetBytes), estimatedMemoryBytes: Number(raw.estimatedMemoryBytes),
+    };
+  }
   return { executionProvider: value.executionProvider as SemanticRuntime['executionProvider'],
     gpuExecutionVerified: value.gpuExecutionVerified, workers: Number(value.workers),
-    threads: Number(value.threads), batch: Number(value.batch), benchmarks };
+    threads: Number(value.threads), batch: Number(value.batch), benchmarks,
+    ...(resources ? { resources } : {}) };
 }
 
 function record(value: unknown): value is Record<string, unknown> {

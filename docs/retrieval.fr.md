@@ -154,3 +154,16 @@ ne récupérer le texte complet que pour les passages sélectionnés. Regrouper 
 requêtes et lectures indépendantes réduit les allers-retours. Les résultats
 observés en entrée Copilot et temps écoulé figurent dans le
 [benchmark actuel](../benchmarks/results/current.md).
+
+### Cache des recherches par snapshot
+
+Chaque snapshot immuable possède un cache mémoire borné à 128 entrées et 8 Mio
+de clés/résultats sérialisés, avec éviction des moins récemment utilisées.
+Les recherches identiques en cours partagent un calcul. La clé inclut requête
+ou vecteur, mode, modèle, filtres, limite et enrichissement ; les résultats
+bruts sont réutilisés entre formats de réponse et budgets de sortie.
+Erreurs, résultats partiels et états non prêts ne sont pas conservés.
+Si les calculs en cours occupent la capacité, les requêtes distinctes
+supplémentaires s'exécutent sans cache : ce n'est pas un pool de concurrence.
+La fermeture ou la destruction d'un snapshot expiré vide son cache après les
+appels actifs, sans TTL supplémentaire par résultat ni stockage disque.

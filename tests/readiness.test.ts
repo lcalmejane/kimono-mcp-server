@@ -1,5 +1,5 @@
 import { corpusConfig } from '../src/corpus-config.js';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, it, vi } from 'vitest';
@@ -26,8 +26,12 @@ it('separates public liveness from authenticated readiness/status and rechecks m
     await knowledge.initialize();
     const ready = await fetch(`${url}/readyz`, { headers });
     expect(ready.status).toBe(200);
+    const metadata = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
+    const serverInfo = { name: metadata.name, version: metadata.version };
     expect(await ready.json()).toMatchObject({ ready: true, stopping: false, mode: 'aikido',
+      server: serverInfo,
       root: { initialized: true, available: true }, semantic: { phase: 'unknown' } });
+    expect(await (await fetch(`${url}/statusz`, { headers })).json()).toMatchObject({ server: serverInfo });
     expect((await fetch(`${url}/statusz`, { headers, method: 'POST' })).status).toBe(405);
     await rm(path.join(knowledge.root, 'index.md'));
     expect((await fetch(`${url}/readyz`, { headers })).status).toBe(503);

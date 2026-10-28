@@ -1,5 +1,6 @@
 import { randomUUID, timingSafeEqual } from 'node:crypto';
 import { debug } from './diagnostics.js';
+import { SERVER_INFO } from './server-info.js';
 import { createServer as createHttpServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
@@ -28,8 +29,6 @@ import {
   type GitCredentialResolver,
 } from './git-profile.js';
 
-const SERVER_NAME = 'kimono-mcp-server';
-const SERVER_VERSION = '0.6.0';
 export interface AikidoServerOptions {
   resolveGitProfile?: GitCredentialResolver;
   trustedGitProfileHeader?: boolean;
@@ -74,7 +73,7 @@ export function createAikidoMcpServer(
   options: AikidoServerOptions = {},
 ): Server {
   const server = new Server(
-    { name: SERVER_NAME, version: SERVER_VERSION },
+    SERVER_INFO,
     { capabilities: { tools: {}, resources: { subscribe: false, listChanged: false }, prompts: {}, completions: {} },
       instructions: SEARCH_INSTRUCTIONS },
   );
@@ -277,7 +276,7 @@ export async function startStdioServer(knowledge: AikidoKnowledgeBase, options: 
     await server.close();
     removeSignals();
   }, () => undefined));
-  debug(`${SERVER_NAME} ready on stdio (${knowledge.isInitialized ? knowledge.list().length : 0} documents)`);
+  debug(`${SERVER_INFO.name} ready on stdio (${knowledge.isInitialized ? knowledge.list().length : 0} documents)`);
 }
 
 export async function startHttpServer(
@@ -319,7 +318,7 @@ export async function startHttpServer(
     removeSignals();
   }, () => httpServer.closeAllConnections());
   const removeSignals = shutdownSignals(close);
-  debug(`${SERVER_NAME} listening on http://${options.host}:${options.port}/mcp`);
+  debug(`${SERVER_INFO.name} listening on http://${options.host}:${options.port}/mcp`);
   const address = httpServer.address();
   return { port: typeof address === 'object' && address ? address.port : options.port, close };
 }
@@ -386,6 +385,7 @@ async function handleHttpRequest(
     const ready = !lifecycle.stopping && knowledge.isInitialized && rootAvailable;
     response.writeHead(pathname === '/readyz' && !ready ? 503 : 200,
       { 'content-type': 'application/json', 'cache-control': 'no-store' }).end(JSON.stringify({
+      server: SERVER_INFO,
       ready, stopping: lifecycle.stopping, mode: knowledge.config.mode,
       root: { initialized: knowledge.isInitialized, available: rootAvailable, error: rootError },
       semantic: knowledge.semanticIndex.status(),

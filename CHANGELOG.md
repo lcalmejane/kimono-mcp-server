@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.8.0 - 2026-10-28
+
+- Cache raw search results per immutable snapshot in bounded memory (128 entries,
+  8 MiB), sharing identical in-flight computations across response formats.
+  Discard failures/partial results and clear cached results on snapshot disposal.
+
+- Auto-size CPU model workers and embedding batches using configurable
+  per-process CPU/RAM planning budgets (80% by default), respecting visible
+  container limits. Expose budgets and memory estimates in runtime status,
+  retain explicit overrides and wire the settings through IDE/Compose hosts.
+
+- Report the package name and version through `aikido_root` status and
+  authenticated HTTP status/readiness responses. Use the same package metadata
+  for MCP initialization instead of the stale hard-coded server version.
+
 ## 0.7.1 - 2026-10-28
 
 - Fix the packaged VSIX integration test for quiet production diagnostics: MCP

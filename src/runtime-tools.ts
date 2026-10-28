@@ -15,6 +15,8 @@ import { publishRemoteKnowledge, remoteSyncChanges } from './remote-sync.js';
 import { readGitProfileFile, type GitCredentialResolver, type GitReadProfile } from './git-profile.js';
 import { KnowledgeCollaboration } from './collaboration.js';
 import { plannedSearch } from './planned-search.js';
+import { SERVER_INFO } from './server-info.js';
+import { searchCacheFor, type SearchResult } from './search-cache.js';
 
 export interface RuntimeRequestContext {
   gitProfile?: GitReadProfile | null;
@@ -72,7 +74,7 @@ export const RUNTIME_TOOLS: Tool[] = [
   },
   {
     name: 'aikido_root',
-    description: 'Inspect ROOT, corpus policy and readiness; Git optional.',
+    description: 'Inspect server name/version, ROOT, corpus policy and readiness; Git optional.',
     inputSchema: {
       type: 'object', additionalProperties: false, required: ['operation'],
       properties: {
@@ -281,6 +283,7 @@ class RuntimeTools {
         const policy = await readProjectPolicy(this.knowledge.root);
         const retarget = await readRetargetMetadata(this.knowledge.searchIndex.directory);
         return JSON.stringify({
+          server: SERVER_INFO,
           root: this.knowledge.root, initialized: this.knowledge.isInitialized,
           corpus: this.knowledge.corpusStatus,
           policy,
@@ -304,12 +307,22 @@ class RuntimeTools {
       const filter = selection(input, this.knowledge.isMemoryRoot);
       integer(input, 'contextLines', 2, 0, 20);
       integer(input, 'maxBytes', 16384, 2048, 262144);
+      const cachedSearch = async (compute: () => Promise<SearchResult>): Promise<string> => {
+        const key = JSON.stringify([mode, input.query, input.vector, input.embeddingModel, kind, limit,
+          input.enrich !== false, input.scope, input.pathPrefix, input.type, input.extension,
+          mode === 'semantic' || mode === 'hybrid' ? process.env.KIMONO_MODEL_DIR : undefined]);
+        const result = this.knowledge.immutable && !semanticAvailability
+          ? await searchCacheFor(this.knowledge).search(key, compute) : await compute();
+        return this.retrieval.search(input, result.results, result.metadata);
+      };
       const semanticSearch = async (options: { query?: string; vector?: number[]; embeddingModel?: string }) => {
-        await this.knowledge.refresh();
-        const paths = this.knowledge.list(kind).filter(filter).map(entry => entry.path);
-        const result = await this.knowledge.semanticIndex.run('search', { ...options, paths, kind, limit: limit + 1 });
-        const { results, count: _count, ...metadata } = result;
-        return this.retrieval.search(input, results, metadata);
+        return cachedSearch(async () => {
+          await this.knowledge.refresh();
+          const paths = this.knowledge.list(kind).filter(filter).map(entry => entry.path);
+          const result = await this.knowledge.semanticIndex.run('search', { ...options, paths, kind, limit: limit + 1 });
+          const { results, count: _count, ...metadata } = result;
+          return { results, metadata };
+        });
       };
       if (input.vector !== undefined) {
         if (mode !== 'semantic') throw new Error('vector requires mode=semantic');
@@ -331,14 +344,17 @@ class RuntimeTools {
       const query = text(input, 'query', true)!;
       if (Buffer.byteLength(query) > 8192) throw new Error('query must be at most 8192 UTF-8 bytes');
       if (mode === 'text' || mode === 'semantic' || mode === 'hybrid') {
-        const plan = await this.knowledge.vocabulary.plan(query, input.enrich !== false);
-        const result = await plannedSearch(this.knowledge, plan, mode, kind, filter, limit + 1, semanticAvailability);
-        return this.retrieval.search(input, result.results, result.metadata);
+        return cachedSearch(async () => {
+          const plan = await this.knowledge.vocabulary.plan(query, input.enrich !== false);
+          return plannedSearch(this.knowledge, plan, mode, kind, filter, limit + 1, semanticAvailability);
+        });
       }
-      await this.knowledge.refresh();
-      const scoped = ['scope', 'pathPrefix', 'type', 'extension'].some(key => input[key] !== undefined);
-      const results = await this.knowledge.searchIndex.search(query, kind, limit + 1, mode === 'regex', scoped ? filter : undefined);
-      return this.retrieval.search(input, results, { engine: 'fast-grep' });
+      return cachedSearch(async () => {
+        await this.knowledge.refresh();
+        const scoped = ['scope', 'pathPrefix', 'type', 'extension'].some(key => input[key] !== undefined);
+        const results = await this.knowledge.searchIndex.search(query, kind, limit + 1, mode === 'regex', scoped ? filter : undefined);
+        return { results, metadata: { engine: 'fast-grep' } };
+      });
     }
     if (name === 'aikido_index') {
       const operation = text(input, 'operation', true);

@@ -81,6 +81,10 @@ test("provider uses per-folder roots, bundled Node, and extension-owned registra
   assert.equal(servers[0].env.KIMONO_CORPUS_MODE, "rag");
   assert.equal(servers[0].env.MCP_TRANSPORT, "stdio");
   assert.equal(servers[0].env.KIMONO_LOG_LEVEL, "error");
+  assert.equal(servers[0].env.KIMONO_SEMANTIC_WORKERS, "auto");
+  assert.equal(servers[0].env.KIMONO_SEMANTIC_BATCH, "auto");
+  assert.equal(servers[0].env.KIMONO_SEMANTIC_CPU_PERCENT, "80");
+  assert.equal(servers[0].env.KIMONO_SEMANTIC_MEMORY_PERCENT, "80");
   assert.equal(servers[0].cwd.fsPath, process.cwd());
   assert.equal(servers[1].env.AIKIDO_ROOT, path.join(process.cwd(), "tests"));
   for (const disposable of disposables) disposable.dispose();
@@ -100,6 +104,22 @@ test("embedded device selection is passed through the isolated environment and v
   assert.equal(server.env.KIMONO_SEMANTIC_DEVICE, "coreml");
   state.settings.semanticDevice = "gpu";
   await assert.rejects(state.provider.provideMcpServerDefinitions(), /semanticDevice/);
+});
+
+test("embedded resource budgets and overrides are passed and validated", async () => {
+  const { state } = fixture({ semanticCpuPercent: 60, semanticMemoryPercent: 70, semanticWorkers: 3, semanticBatch: 16 });
+  const [server] = await state.provider.provideMcpServerDefinitions();
+  assert.equal(server.env.KIMONO_SEMANTIC_CPU_PERCENT, "60");
+  assert.equal(server.env.KIMONO_SEMANTIC_MEMORY_PERCENT, "70");
+  assert.equal(server.env.KIMONO_SEMANTIC_WORKERS, "3");
+  assert.equal(server.env.KIMONO_SEMANTIC_BATCH, "16");
+  for (const [key, value] of [["semanticCpuPercent", 0], ["semanticMemoryPercent", 101],
+    ["semanticWorkers", 33], ["semanticBatch", 257], ["semanticThreads", 1.5]]) {
+    const previous = state.settings[key];
+    state.settings[key] = value;
+    await assert.rejects(state.provider.provideMcpServerDefinitions(), new RegExp(key));
+    state.settings[key] = previous;
+  }
 });
 
 test("debug diagnostics are explicit and invalid log levels fail", async () => {

@@ -27,6 +27,12 @@ session. See [runtime selection and memory settings](docs/local-rag.md#embedding
 
 ## Choose how to use Kimono
 
+To identify the running server, call `aikido_root` with
+`{"operation":"status"}`. Its `server` field contains Kimono's package `name`
+and `version`, distinct from the embedding engine version and corpus fingerprint.
+The MCP initialization response and authenticated HTTP `/statusz` and `/readyz`
+endpoints report the same server identity.
+
 | Use | Best for | Setup |
 | --- | --- | --- |
 | **IDE extension — recommended** | VS Code and IDEs that support Visual Studio Marketplace extensions | Install from the [Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=ai-kido.kimono-rag-mcp). The extension includes the runtime and search engines. |

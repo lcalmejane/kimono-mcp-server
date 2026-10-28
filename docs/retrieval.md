@@ -144,3 +144,15 @@ Clients should check MCP `isError`, parse the JSON result, preserve
 full text only for selected passages. Batch independent queries and reads to
 reduce tool round trips. The observed Copilot input and elapsed-time results
 are listed in the [current benchmark](../benchmarks/results/current.md).
+
+### Snapshot search cache
+
+Each immutable snapshot owns a memory-only search cache, bounded to 128 entries
+and 8 MiB of serialized keys/results with least-recently-used eviction.
+Identical in-flight searches share one computation. Keys include query/vector,
+mode, model, filters, limit and enrichment; raw results are reused across response
+formats and output byte budgets. Errors, not-ready and partial results are not
+retained. When capacity is occupied by pending work, additional distinct requests
+run uncached rather than evicting that work. This is not a concurrency pool.
+Ending or disposing an expired snapshot clears the cache after active calls
+finish; no additional per-result TTL or disk storage is used.

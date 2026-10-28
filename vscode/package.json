@@ -2,7 +2,7 @@
   "name": "kimono-rag-mcp",
   "displayName": "Kimono RAG MCP",
   "description": "Local RAG for code and documentation with lexical and semantic search over MCP.",
-  "version": "0.7.1",
+  "version": "0.8.0",
   "publisher": "ai-kido",
   "license": "MIT",
   "repository": {
@@ -68,6 +68,26 @@
           "default": "auto",
           "scope": "machine",
           "description": "Auto benchmarks CPU and available CUDA/CoreML providers once per local server session and selects the fastest measured embedding provider. Explicit providers fail if unavailable. An ONNX runtime with the requested provider is required."
+        },
+        "kimono.semanticCpuPercent": {
+          "type": "integer", "minimum": 1, "maximum": 100, "default": 80, "scope": "machine",
+          "description": "Per-process automatic CPU budget, respecting the host/container CPU allocation. Not a hard CPU utilization limit."
+        },
+        "kimono.semanticMemoryPercent": {
+          "type": "integer", "minimum": 1, "maximum": 100, "default": 80, "scope": "machine",
+          "description": "Percentage of currently available host/container RAM used to plan model sessions and batches. Estimates are not a hard memory limit or a GPU VRAM budget."
+        },
+        "kimono.semanticWorkers": {
+          "type": "integer", "minimum": 0, "maximum": 32, "default": 0, "scope": "machine",
+          "description": "Parallel CPU model sessions. 0 = size to CPU and memory budgets. Accelerators use one session."
+        },
+        "kimono.semanticThreads": {
+          "type": "integer", "minimum": 0, "maximum": 32, "default": 0, "scope": "machine",
+          "description": "ONNX inference threads. 0 = one thread per CPU session, using independent workers for parallelism."
+        },
+        "kimono.semanticBatch": {
+          "type": "integer", "minimum": 0, "maximum": 256, "default": 0, "scope": "machine",
+          "description": "Passages per embedding batch. 0 = size to available RAM after accounting for model sessions."
         },
         "kimono.corpusMode": {
           "type": "string",
