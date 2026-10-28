@@ -155,7 +155,9 @@ try {
   assert.ok(!externalStatus.isError, JSON.stringify(externalStatus));
   assert.equal(JSON.parse(externalStatus.content.find(item => item.type === 'text').text).corpus.mode, 'rag');
   await externalClient.close();
-  assert.equal((diagnostics.match(/ready on stdio/g) ?? []).length, 3, diagnostics);
+  // Three successful MCP sessions prove readiness; production (error level) stays quiet and bounded.
+  assert.doesNotMatch(diagnostics, /ready on stdio/, diagnostics);
+  assert.ok(diagnostics.length < 64 * 1024, `stderr grew to ${diagnostics.length} characters`);
   assert.doesNotMatch(diagnostics, /locked by another writer|Semantic index preparation failed/, diagnostics);
   console.log('Packaged VSIX passed: AI-KIDO tools/ROOT/384D embedding and generic RAG without entry point, scoped snapshot, lexical and semantic code retrieval.');
 } catch (error) {
@@ -163,5 +165,6 @@ try {
   throw error;
 } finally {
   if (transport) await transport.close();
-  await rm(scratch, { recursive: true, force: true });
+  // Windows can briefly keep exited child executables locked.
+  await rm(scratch, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
 }

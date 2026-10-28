@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.7.1 - 2026-10-28
+
+- Fix the packaged VSIX integration test for quiet production diagnostics: MCP
+  sessions prove readiness, stderr must not contain startup messages and stays
+  bounded; retry Windows cleanup of briefly locked executables. Version 0.7.0
+  was tagged but not released because this check failed.
+
 ## 0.7.0 - 2026-10-28
 
 - Default to error-only stderr diagnostics with no internal trace files; keep
