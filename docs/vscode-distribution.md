@@ -49,39 +49,49 @@ Manual runs **do not publish releases**. For a release:
    CI creates a draft release, attaches all `.vsix`, `.build.json`, native archives
    and `SHA256SUMS.txt`, then publishes it. Published immutable releases are not
    overwritten; fix failures before publishing, or use a new version/tag.
+5. After release publication succeeds, CI calls the reusable Marketplace workflow
+   with that exact tag and the repository's `VSCE_PAT` secret.
 
 The GitHub release job needs no Marketplace account or PAT and has
 `contents: write` via `GITHUB_TOKEN`; the other CI jobs have read-only
-permissions. The tag-triggered CI publishes GitHub Releases only, never to
-Marketplace or Open VSX.
+permissions. Marketplace publishing requires the credential described below.
+Open VSX is not published automatically.
 
-Marketplace publication is a separate, explicitly manual operation using the
+## Marketplace publication and recovery
+
+Marketplace publication runs automatically after a successful tagged release using the
 [Publish VS Code Marketplace workflow](../.github/workflows/publish-marketplace.yml).
-It can only be dispatched from `main`, is never triggered by a tag, and
-publishes the four platform VSIX files from an existing GitHub release. Before
-dispatching it:
+It uploads the four platform VSIX files from the published release without
+rebuilding them. The CI calls it directly: a release created with `GITHUB_TOKEN`
+does not need to trigger a second workflow event. Before pushing a release tag:
 
 1. Create or verify the Marketplace publisher ID `ai-kido`.
 2. Add a publisher-authorized VSCE Personal Access Token as repository secret
    `VSCE_PAT`. Never put the token in the repository, workflow inputs or chat.
 3. Review the publisher profile and Marketplace listing/package content.
-4. In **Actions → Publish VS Code Marketplace → Run workflow**, select the
-   intended immutable release tag and explicitly check the
-   confirmation that the publisher/listing has been reviewed.
+4. Treat pushing the version tag as approval to publish that package to both
+   GitHub Releases and the Marketplace.
+
+For recovery, use **Actions → Publish VS Code Marketplace → Run workflow** on
+`main`, enter the existing immutable release tag and check the listing-review
+confirmation. No new version or rebuild is needed to retry accepted packages.
+PRs, ordinary branch pushes and manual CI builds do not publish to Marketplace.
 
 The workflow checks the tag against both package versions, requires an existing
 published non-prerelease GitHub release, downloads and verifies its
 `SHA256SUMS.txt`, and confirms all four VSIX targets before invoking `vsce`.
-It publishes targets sequentially and confirms each one appears in Marketplace
-version metadata before moving on. `--skip-duplicate` makes retries continue
-past targets already accepted by the Marketplace; if a target is not indexed
-within five minutes, the workflow fails rather than reporting a false success.
+It uploads all four targets before checking Marketplace visibility, so indexing
+delays on one platform do not block the others. `--skip-duplicate` makes retries
+continue past targets already accepted. Publication runs are serialized and a
+new run never cancels an active publication. Visibility checks retry up to sixty
+times with twenty-second waits, including failed lookups. If visibility is still
+unconfirmed, the workflow fails explicitly; uploaded packages remain published
+and the same tag can be retried manually.
 VSCE validates `VSCE_PAT` and publisher rights when executing the publish
 command; `vsce ls-publishers` is intentionally not used because it lists locally
 stored logins, not GitHub Actions credentials.
-The required confirmation checkbox is the final human approval; once the
-workflow starts publishing, there is no later Marketplace confirmation step.
-Do not dispatch until the listing is approved.
+For manual recovery, the confirmation checkbox authorizes publication.
+There is no later Marketplace confirmation step.
 The release contains targets `darwin-arm64`, `linux-arm64`,
 `linux-x64` and `win32-x64` under the extension ID `ai-kido.kimono-rag-mcp`.
 Marketplace credentials and listing approval remain separate prerequisites.

@@ -48,35 +48,49 @@ Une exécution manuelle ne crée pas de release. Pour publier une release :
 4. Après réussite des tests serveur, extension, construction native et
    empaquetage, la CI crée une release brouillon, ajoute les VSIX, fichiers
    `.build.json`, archives natives et `SHA256SUMS.txt`, puis publie la release.
+5. Après publication de la release, la CI appelle directement le workflow
+   Marketplace réutilisable avec ce même tag et le secret de dépôt `VSCE_PAT`.
 
 Les releases publiées sont immuables. Une correction nécessite une nouvelle
-version et un nouveau tag. La CI par tag publie uniquement une GitHub Release,
-pas sur le Visual Studio Marketplace ni Open VSX. Elle utilise `GITHUB_TOKEN`
+version et un nouveau tag. La création de release utilise `GITHUB_TOKEN`
 avec `contents: write` ; les autres jobs ont des permissions en lecture seule.
+La publication Marketplace nécessite le secret décrit ci-dessous.
+Open VSX n'est pas publié automatiquement.
 
 ## Publication Marketplace
 
-La publication Marketplace est une action distincte et manuelle avec le
+La publication Marketplace est automatique après réussite de la release par tag, avec le
 workflow [Publish VS Code Marketplace](../.github/workflows/publish-marketplace.yml).
-Elle doit être lancée depuis `main` et publie les VSIX d'une GitHub Release
-existante. Avant de démarrer :
+Il envoie les quatre VSIX de la release publiée, sans les reconstruire.
+L'appel direct depuis la CI évite de dépendre d'un nouvel événement de release
+créée par `GITHUB_TOKEN`. Avant de pousser un tag de release :
 
 1. Vérifier l'identifiant du publisher Marketplace : `ai-kido`.
 2. Ajouter un Personal Access Token VSCE autorisé par ce publisher comme secret
    de dépôt `VSCE_PAT`. Ne jamais placer ce jeton dans le dépôt, les paramètres
    du workflow ou une conversation.
 3. Vérifier le profil du publisher, la fiche Marketplace et le contenu du paquet.
-4. Dans **Actions → Publish VS Code Marketplace → Run workflow**, sélectionner
-   le tag voulu et confirmer explicitement la vérification de la fiche.
+4. Considérer le push du tag de version comme l'autorisation de publier le paquet
+   sur GitHub Releases et sur le Marketplace.
+
+Pour une reprise, lancer **Actions → Publish VS Code Marketplace → Run workflow**
+depuis `main`, saisir le tag de release existant et confirmer la vérification
+de la fiche. Aucune nouvelle version ni reconstruction n'est nécessaire.
+Les PR, push ordinaires de branche et exécutions manuelles de la CI ne publient
+pas sur le Marketplace.
 
 Le workflow vérifie que le tag correspond aux versions des paquets, que la
 release GitHub publiée n'est pas une préversion, que `SHA256SUMS.txt` est valide
-et que les quatre cibles VSIX sont présentes. Il publie les cibles l'une après
-l'autre et vérifie leur apparition dans les métadonnées Marketplace. Les
-relances ignorent les versions déjà acceptées ; si une cible n'est pas indexée
-dans les cinq minutes, le workflow échoue explicitement. La case de confirmation
-est l'approbation humaine finale : le workflow ne demande pas de confirmation
-Marketplace supplémentaire pendant la publication.
+et que les quatre cibles VSIX sont présentes. Il envoie les quatre paquets avant
+de vérifier leur visibilité : le délai d'indexation d'une plateforme ne bloque
+plus les suivantes. Les relances ignorent les versions déjà acceptées.
+Les publications sont sérialisées ; une nouvelle exécution n'annule jamais une
+publication en cours. La visibilité est vérifiée jusqu'à soixante fois, avec
+vingt secondes d'attente et reprise des requêtes en échec.
+Si elle n'est toujours pas confirmée, le workflow échoue explicitement ; les
+paquets acceptés restent publiés et le même tag peut être relancé manuellement.
+Pour une reprise manuelle, la case de confirmation autorise la publication :
+aucune confirmation Marketplace supplémentaire n'est demandée.
 
 ## Provenance et reproductibilité
 

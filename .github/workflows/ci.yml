@@ -123,3 +123,12 @@ jobs:
               --notes "Standalone Kimono MCP VS Code extensions and native bundles. Installation: https://github.com/${GITHUB_REPOSITORY}/blob/${GITHUB_REF_NAME}/vscode/README.md"
           gh release upload "$GITHUB_REF_NAME" kimono-native-*.tar.gz kimono-rag-mcp-*.vsix kimono-rag-mcp-*.build.json SHA256SUMS.txt --clobber
           gh release edit "$GITHUB_REF_NAME" --draft=false
+
+  marketplace:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: release
+    uses: ./.github/workflows/publish-marketplace.yml
+    with:
+      release_tag: ${{ github.ref_name }}
+    secrets:
+      VSCE_PAT: ${{ secrets.VSCE_PAT }}

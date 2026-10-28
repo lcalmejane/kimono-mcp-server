@@ -1,13 +1,21 @@
 name: Publish VS Code Marketplace
 
 on:
+  workflow_call:
+    inputs:
+      release_tag:
+        description: Published release tag produced by the calling CI
+        required: true
+        type: string
+    secrets:
+      VSCE_PAT:
+        required: true
   workflow_dispatch:
     inputs:
       release_tag:
         description: Existing GitHub release tag to publish
         required: true
         type: string
-        default: v0.6.4
       publish_confirmed:
         description: I reviewed the publisher/listing and authorize publishing this release
         required: true
@@ -17,9 +25,15 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: kimono-marketplace
+  cancel-in-progress: false
+
 jobs:
   prepare:
-    if: github.ref == 'refs/heads/main' && inputs.publish_confirmed
+    if: >-
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.publish_confirmed) ||
+      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && inputs.release_tag == github.ref_name)
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.release.outputs.version }}
@@ -87,9 +101,9 @@ jobs:
           retention-days: 1
 
   publish:
-    if: github.ref == 'refs/heads/main' && inputs.publish_confirmed
     needs: prepare
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
         with:
@@ -125,8 +139,12 @@ jobs:
           VERSION: ${{ needs.prepare.outputs.version }}
         run: |
           set -euo pipefail
-          for attempt in $(seq 1 30); do
-            listing="$(npx --no-install vsce show "$EXTENSION_ID" --json)"
+          for attempt in $(seq 1 60); do
+            if ! listing="$(npx --no-install vsce show "$EXTENSION_ID" --json)"; then
+              echo "::warning::Marketplace lookup failed (attempt $attempt/60); retrying."
+              sleep 20
+              continue
+            fi
             missing=()
             for target in darwin-arm64 linux-arm64 linux-x64 win32-x64; do
               if jq -e --arg version "$VERSION" --arg target "$target" \
@@ -140,7 +158,8 @@ jobs:
             if [[ "${#missing[@]}" -eq 0 ]]; then
               exit 0
             fi
-            sleep 10
+            echo "Marketplace visibility pending (attempt $attempt/60): ${missing[*]}"
+            sleep 20
           done
-          echo "Publication completed, but Marketplace visibility is still pending for: ${missing[*]}" >&2
+          echo "::error::All VSIX uploads were accepted, but visibility could not be confirmed within the retry window. Rerun this workflow with the same release_tag; accepted targets are skipped." >&2
           exit 1
