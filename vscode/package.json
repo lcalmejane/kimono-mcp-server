@@ -2,7 +2,7 @@
   "name": "kimono-rag-mcp",
   "displayName": "Kimono RAG MCP",
   "description": "Local RAG for code and documentation with lexical and semantic search over MCP.",
-  "version": "0.6.6",
+  "version": "0.7.0",
   "publisher": "ai-kido",
   "license": "MIT",
   "repository": {
@@ -55,6 +55,20 @@
     "configuration": {
       "title": "Kimono MCP",
       "properties": {
+        "kimono.logLevel": {
+          "type": "string",
+          "enum": ["error", "debug"],
+          "default": "error",
+          "scope": "machine",
+          "description": "Errors only by default, without trace files. Debug enables detailed stderr diagnostics; native diagnostics are rate-limited per operation. The host controls log retention."
+        },
+        "kimono.semanticDevice": {
+          "type": "string",
+          "enum": ["auto", "cpu", "cuda", "coreml"],
+          "default": "auto",
+          "scope": "machine",
+          "description": "Auto benchmarks CPU and available CUDA/CoreML providers once per local server session and selects the fastest measured embedding provider. Explicit providers fail if unavailable. An ONNX runtime with the requested provider is required."
+        },
         "kimono.corpusMode": {
           "type": "string",
           "enum": ["rag", "aikido"],

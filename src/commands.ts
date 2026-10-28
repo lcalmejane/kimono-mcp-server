@@ -3,6 +3,7 @@ import { AikidoKnowledgeBase } from './knowledge.js';
 import { startHttpServer, startStdioServer } from './server.js';
 import { AIKIDO_REPOSITORY, installAikido } from './repository.js';
 import { runtimeFor } from './runtime-tools.js';
+import { debugEnabled } from './diagnostics.js';
 export { installAikido } from './repository.js';
 
 interface ParsedArgs {
@@ -11,6 +12,7 @@ interface ParsedArgs {
 }
 
 export async function main(argv = process.argv.slice(2)): Promise<void> {
+  debugEnabled();
   const { command, options } = parseArgs(argv);
   if (options.has('corpus-mode')) process.env.KIMONO_CORPUS_MODE = options.get('corpus-mode');
   if (options.has('config')) process.env.KIMONO_CONFIG_FILE = options.get('config');

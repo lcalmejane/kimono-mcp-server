@@ -1,4 +1,5 @@
 import { randomUUID, timingSafeEqual } from 'node:crypto';
+import { debug } from './diagnostics.js';
 import { createServer as createHttpServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
@@ -276,7 +277,7 @@ export async function startStdioServer(knowledge: AikidoKnowledgeBase, options: 
     await server.close();
     removeSignals();
   }, () => undefined));
-  console.error(`${SERVER_NAME} ready on stdio (${knowledge.isInitialized ? knowledge.list().length : 0} documents)`);
+  debug(`${SERVER_NAME} ready on stdio (${knowledge.isInitialized ? knowledge.list().length : 0} documents)`);
 }
 
 export async function startHttpServer(
@@ -318,7 +319,7 @@ export async function startHttpServer(
     removeSignals();
   }, () => httpServer.closeAllConnections());
   const removeSignals = shutdownSignals(close);
-  console.error(`${SERVER_NAME} listening on http://${options.host}:${options.port}/mcp`);
+  debug(`${SERVER_NAME} listening on http://${options.host}:${options.port}/mcp`);
   const address = httpServer.address();
   return { port: typeof address === 'object' && address ? address.port : options.port, close };
 }

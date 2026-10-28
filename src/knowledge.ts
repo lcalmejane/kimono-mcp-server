@@ -9,6 +9,7 @@ import { within } from './synchronization.js';
 import { ProjectVocabulary } from './query-plan.js';
 import { AIKIDO_EXTENSIONS, loadCorpusConfig, type CorpusConfig } from './corpus-config.js';
 import { documentSignatureValid, extractDocument, isExtractedDocument } from './documents.js';
+import { debug, debugEnabled } from './diagnostics.js';
 
 export type KnowledgeKind = 'command' | 'agent' | 'skill' | 'workflow' | 'knowledge';
 
@@ -35,6 +36,7 @@ export interface SearchMatch extends KnowledgeEntry {
 
 // Each ignored document is traced once per process to keep long-lived servers quiet.
 const reportedSkips = new Set<string>();
+const reportedSkipReasons = new Set<string>();
 
 const EXCLUDED_DIRECTORIES = new Set(['.git', '.ssh', 'node_modules', 'dist', 'build', 'coverage', '.venv', '__pycache__', '.next', '.nuxt', '.cache', '.nyc_output', 'temp', 'credentials', 'secrets']);
 const RAG_EXCLUDED_DIRECTORIES = new Set(['target', 'vendor', '.gradle', '.terraform', '.idea', '.tox', '.mypy_cache', '.pytest_cache', '.turbo']);
@@ -76,11 +78,16 @@ export class AikidoKnowledgeBase {
   /** Records unavailable content while keeping its filesystem metadata searchable. */
   private skip(file: string, reason: string): void {
     this.skipped.set(file, reason);
+    if (!reportedSkipReasons.has(reason) && reportedSkipReasons.size < 32) {
+      reportedSkipReasons.add(reason);
+      console.error(`Kimono: content unavailable (${reason.slice(0, 1024)}); affected files remain searchable through metadata; see corpus status for paths`);
+    }
+    if (!debugEnabled()) return;
     const key = `${this.root}\0${file}\0${reason}`;
     if (reportedSkips.has(key)) return;
     if (reportedSkips.size > 10_000) reportedSkips.clear();
     reportedSkips.add(key);
-    console.error(`Kimono: content unavailable; file metadata retained (${reason}): ${file}`);
+    debug(`Kimono: content unavailable; file metadata retained (${reason}): ${file}`);
   }
 
   /**

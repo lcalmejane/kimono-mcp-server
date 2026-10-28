@@ -6,6 +6,13 @@ const { compareRuns, parseSearchBench, runSearchBench, validateRanking } = requi
 
 const located = (path, hits, score) => ({ path, lines: 20, hits, ...(score === undefined ? {} : { score }) });
 
+test("search bench preserves metadata-only status for unreadable document contents", async () => {
+  const result = await runSearchBench(async name => name === "aikido_snapshot" ? { snapshotId: "s" } : {
+    results: [{ path: "image.png", ranges: [[1, 7]], contentStatus: "metadata-only" }],
+  }, { query: "image", modes: ["literal"] });
+  assert.equal(result.runs[0].results[0].contentStatus, "metadata-only");
+});
+
 test("search bench runs every mode on one snapshot and compares documents", async () => {
   const calls = [];
   const result = await runSearchBench(async (name, input) => {

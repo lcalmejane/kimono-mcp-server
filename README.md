@@ -20,6 +20,11 @@ locally and read selected line ranges. See the [benchmark results](benchmarks/re
 Indexing and embeddings run locally; the client may send retrieved passages
 to its configured model provider.
 
+Semantic indexing uses bounded vector batches and balanced short/long batch
+scheduling. On first model use, Kimono benchmarks the CPU and available
+CUDA/CoreML providers, then reuses the fastest measured provider for that server
+session. See [runtime selection and memory settings](docs/local-rag.md#embedding-runtime-and-memory).
+
 ## Choose how to use Kimono
 
 | Use | Best for | Setup |

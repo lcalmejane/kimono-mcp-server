@@ -1,5 +1,5 @@
 import { corpusConfig } from '../src/corpus-config.js';
-import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -119,6 +119,8 @@ it('publishes live file, token and chunk counters with ETA to a status file shar
       files: { completed: files, total: files }, embedded: { completed: 4, total: 4 } });
     const shared = JSON.parse(await readFile(knowledge.semanticIndex.statusFile, 'utf8'));
     expect(shared).toMatchObject({ phase: 'ready', chunks: 4, pid: process.pid });
+    const statusName = path.basename(knowledge.semanticIndex.statusFile);
+    expect((await readdir(path.dirname(knowledge.semanticIndex.statusFile))).filter(name => name.startsWith(statusName))).toEqual([statusName]);
 
     // Another process on the same ROOT sees the live state of the writer.
     const observer = new AikidoKnowledgeBase(knowledge.root, false, corpusConfig({ mode: 'aikido' }));
@@ -131,6 +133,52 @@ it('publishes live file, token and chunk counters with ETA to a status file shar
     if (originalModel === undefined) delete process.env.KIMONO_MODEL_DIR;
     else process.env.KIMONO_MODEL_DIR = originalModel;
   }
+});
+
+it('reuses one measured provider selection across concurrent roots and exposes runtime and batch timing', async () => {
+  const first = await fixture(), second = await fixture();
+  vi.stubEnv('KIMONO_MODEL_DIR', path.join(first.root, 'test-model'));
+  vi.stubEnv('KIMONO_SEMANTIC_DEVICE', 'auto');
+  const realRunProcess = processes.runProcess;
+  const devices: Array<string | undefined> = [];
+  const runtime = { executionProvider: 'cpu', gpuExecutionVerified: false, workers: 1, threads: 2, batch: 8,
+    benchmarks: [{ executionProvider: 'cpu', medianMs: 20, error: null },
+      { executionProvider: 'coreml', medianMs: 200, error: null }] };
+  const run = vi.spyOn(processes, 'runProcess').mockImplementation(async (executable, args, cwd, exitCodes, timeout, onStderr, environment) => {
+    if (executable !== (process.env.KIMONO_SEMANTIC_BIN ?? 'kimono-semantic')) {
+      return realRunProcess(executable, args, cwd, exitCodes, timeout, onStderr, environment);
+    }
+    devices.push(environment?.KIMONO_SEMANTIC_DEVICE);
+    const report = { ...runtime, benchmarks: environment?.KIMONO_SEMANTIC_DEVICE === 'cpu' ? [] : runtime.benchmarks };
+    await new Promise(resolve => setTimeout(resolve, 20));
+    onStderr?.(`KIMONO_PROGRESS ${JSON.stringify({ phase: 'runtime_configured', completed: 0, total: 0, runtime: report })}\n`);
+    onStderr?.('KIMONO_PROGRESS {"phase":"document_embedding","completed":2,"total":2,"batchMs":40}\n');
+    onStderr?.('KIMONO_PROGRESS {"phase":"document_embedding","completed":1,"total":2,"batchMs":99}\n');
+    return { stdout: JSON.stringify({ engine: 'embsearch-core', version: '0.3.4', model: 'test-model',
+      chunks: 2, embedded: 2, count: 0, results: [], runtime: report,
+      changes: { added: [], modified: [], deleted: [] } }), stderr: '', exitCode: 0 };
+  });
+  try {
+    const results = await Promise.all([first.semanticIndex.run('update'), second.semanticIndex.run('update')]);
+    expect(devices).toEqual(['auto', 'cpu']);
+    expect(results.map(result => result.runtime)).toEqual([runtime, runtime]);
+    expect(first.semanticIndex.status()).toMatchObject({ runtime, batchMs: 40, progress: { completed: 2, total: 2 } });
+  } finally { run.mockRestore(); vi.unstubAllEnvs(); }
+});
+
+it('rejects malformed runtime telemetry instead of reporting a successful GPU selection', async () => {
+  const knowledge = await fixture();
+  vi.stubEnv('KIMONO_MODEL_DIR', path.join(knowledge.root, 'test-model'));
+  vi.stubEnv('KIMONO_SEMANTIC_DEVICE', 'cpu');
+  const realRunProcess = processes.runProcess;
+  const run = vi.spyOn(processes, 'runProcess').mockImplementation(async (executable, ...args) =>
+    executable !== (process.env.KIMONO_SEMANTIC_BIN ?? 'kimono-semantic')
+      ? realRunProcess(executable, ...args)
+      : { stdout: JSON.stringify({ runtime: { executionProvider: 'cuda', gpuExecutionVerified: 'yes' } }), stderr: '', exitCode: 0 });
+  try {
+    await expect(knowledge.semanticIndex.run('update')).rejects.toThrow('Invalid semantic runtime response');
+    expect(knowledge.semanticIndex.status().phase).toBe('error');
+  } finally { run.mockRestore(); vi.unstubAllEnvs(); }
 });
 
 it('waits for another live indexer and reclaims a lock left by a dead process', async () => {

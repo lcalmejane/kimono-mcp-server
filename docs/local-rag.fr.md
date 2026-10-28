@@ -133,6 +133,123 @@ d'implémentation `maxDepth` mesure 454 796 → 130 244 tokens d'entrée cumulé
 (−71,4 %) et 175,224 → 84,034 secondes (−52,0 %). Voir les
 [résultats du benchmark](../benchmarks/results/current.md).
 
+## Moteur d'embedding et mémoire
+
+Par défaut, `KIMONO_SEMANTIC_DEVICE=auto` compare le CPU et chaque fournisseur
+CUDA/CoreML disponible au premier usage du modèle par le serveur. Chaque test
+s'exécute dans un processus séparé : même modèle local, échauffement avec des
+lots courts et longs, puis trois essais identiques courts/longs. Le temps médian
+de vectorisation le plus bas détermine le choix. Les processus de test se
+terminent avant l'indexation et libèrent leurs sessions de modèle. Un test en
+échec ou expiré est signalé explicitement et exclu ; si aucun ne réussit,
+l'opération échoue. Chaque test dispose d'un délai maximal de 30 secondes.
+
+Le choix et les mesures sont réutilisés en mémoire pour les opérations et les
+snapshots suivants du même processus serveur Kimono. Redémarrer le serveur pour
+refaire la mesure après un changement de matériel, de runtime ou de modèle au
+même chemin. `aikido_index`, `aikido_embed`, les informations du modèle et le
+statut partagé exposent `runtime.executionProvider`, `runtime.benchmarks` et les
+paramètres workers/threads/lot. Le panneau affiche le fournisseur choisi et les
+temps mesurés.
+
+| Variable d'environnement | Défaut | Signification |
+| --- | --- | --- |
+| `KIMONO_SEMANTIC_DEVICE` | `auto` | Comparer puis sélectionner, ou imposer `cpu`, `cuda` ou `coreml`. |
+| `KIMONO_SEMANTIC_WORKERS` | `1` | Sessions CPU du modèle (1–32) ; les fournisseurs accélérés utilisent une session. |
+| `KIMONO_SEMANTIC_THREADS` | `auto` | 1–2 threads par session selon les CPU disponibles ; réglage explicite 1–32. |
+| `KIMONO_SEMANTIC_BATCH` | `8` | Passages par lot (1–256). |
+
+CUDA nécessite un runtime ONNX contenant ce fournisseur et des pilotes GPU
+compatibles ; les bundles Linux/Windows standards contiennent un runtime CPU.
+CoreML est testé lorsqu'il est disponible dans le runtime macOS, avec les unités
+CPU/GPU activées. Si un fournisseur imposé ne peut pas être enregistré,
+l'opération échoue au lieu de basculer silencieusement sur le CPU. Un fournisseur
+enregistré et son chronométrage ne prouvent pas l'exécution matérielle sur GPU :
+`gpuExecutionVerified` reste à `false`.
+
+L'extension autonome expose `kimono.semanticDevice` ; Tatami Agent expose
+`tatami.kimono.semanticDevice`. La valeur par défaut des deux est `auto`.
+
+Les lots triés par longueur alternent travail court et long pour éviter une fin
+d'indexation systématiquement plus lente. Une file de résultats bornée applique
+une contre-pression et chaque lot vectorisé est inséré directement dans l'index
+en mémoire, puis libéré : aucun fichier temporaire de vecteurs n'est écrit et le
+disque ne grossit pas pendant l'embedding. La nouvelle génération est écrite une
+seule fois à la fin puis publiée atomiquement ; l'ancienne n'est supprimée
+qu'après succès. Le hachage du modèle et la sérialisation de l'état sont
+effectués en flux, sans copie sérialisée complète. La progression native expose
+`batchMs`, affiché comme durée du dernier lot.
+
+Une session du modèle est conservée par défaut, au lieu de créer automatiquement
+jusqu'à quatre copies. Augmenter explicitement les workers CPU augmente la
+mémoire du modèle. Le modèle et l'index en mémoire restent présents pendant le
+traitement natif ; la taille de l'index augmente avec le nombre de passages.
+La fin du processus natif libère sa mémoire.
+
+## Diagnostics en production : aucun historique interne de traces
+
+Kimono n'installe pas d'exporteur de télémétrie, ne conserve pas de traces de
+profilage/benchmark et ne crée pas de fichiers de logs.
+`KIMONO_LOG_LEVEL=error` est la valeur par défaut, production comprise. Les
+détails par fichier et les messages de démarrage nécessitent `debug` ; les
+avertissements de contenu indisponible sont limités à 32 raisons distinctes par
+processus serveur. Les chemins concernés et compteurs restent dans le statut
+du corpus. Activer explicitement `KIMONO_LOG_LEVEL=debug` pour le développement
+ou le diagnostic ; l'extension autonome expose `kimono.logLevel`.
+
+La progression native est un pipe interne pour le panneau, pas un journal
+persistant. En mode normal, ces événements ne sont pas retransmis sur stderr
+du serveur. Les diagnostics natifs sont bornés par opération à 20 lignes de
+4 096 caractères plus un résumé d'omission ; debug peut ajouter 20 lignes de
+progression. Seule une fin de stderr de 64 K caractères est retenue en mémoire
+pour les échecs. Les erreurs restent visibles ; stdout reste réservé aux
+résultats MCP/CLI.
+
+Le statut sémantique courant est remplacé atomiquement, au plus toutes les
+500 ms pendant la progression, avec mises à jour forcées des phases/fins.
+Aucun historique n'est ajouté. Index, snapshots et temporaires d'extraction sont des
+données de fonctionnement, pas des
+archives d'observabilité. Les temporaires de requête et d'extraction sont
+nettoyés en fin normale ou sur erreur ; un arrêt forcé du processus ou de
+la machine peut laisser du travail temporaire.
+
+Le service Compose fourni utilise le pilote Docker `local` avec rotation
+(`max-size: 5m`, `max-file: 2`), soit environ 10 Mo par conteneur avant
+compression/surcharge du pilote, pas un log JSON illimité. Recréer les conteneurs
+existants pour appliquer ce réglage. Docker, VS Code ou un autre hôte MCP gère
+la conservation extérieure à Kimono ; `docker run` exige ses propres options.
+
+Pour **zéro conservation de logs Docker**, utiliser une surcharge Compose
+(Compose 2.24.4+) :
+
+```yaml
+services:
+  kimono-mcp-server:
+    logging: !override
+      driver: none
+```
+
+Pour un **flux extérieur paramétrable**, remplacer ce bloc, par exemple :
+
+```yaml
+services:
+  kimono-mcp-server:
+    logging: !override
+      driver: syslog
+      options:
+        syslog-address: "${KIMONO_SYSLOG_ADDRESS:?Définir un endpoint syslog extérieur}"
+        syslog-format: rfc5424
+        mode: non-blocking
+        max-buffer-size: "1m"
+        cache-disabled: "true"
+```
+
+L'opérateur fournit l'endpoint et applique la surcharge avec `docker compose
+-f docker-compose.yml -f <surcharge>.yml up -d`. Aucune destination distante n'est
+activée automatiquement. `non-blocking` borne le tampon et peut perdre des logs
+si le collecteur ne suit pas ; `cache-disabled` désactive le cache local Docker
+de double journalisation. Ne pas rediriger stderr vers un fichier sans rotation.
+
 ## Installer et connecter
 
 ### VS Code et IDE compatibles

@@ -27,7 +27,7 @@
       modeLabels: { literal: "Exact text", text: "Enriched text", regex: "Regex", semantic: "Semantic", hybrid: "Hybrid" },
       snapshot: "Snapshot {version} · {documents} documents", performance: "Performance per mode",
       columns: ["Mode", "Status", "Latency", "Hits", "Documents", "MCP response", "Engine"], validationColumns: ["Recall", "Precision", "First relevant"],
-      notReady: "Index preparing", partial: "Partial", ok: "OK", error: "Error",
+      notReady: "Index preparing", partial: "Partial", ok: "OK", error: "Error", metadataOnly: "File metadata only",
       bytesTitle: "Exact compact MCP search response, without source text or automatic file reads",
       comparison: "Comparison", pair: "{modes}: {shared} shared documents · Jaccard {jaccard} · {top}", sameTop: "same top document", differentTop: "different top documents",
       only: "Only in {mode}: {paths}", fused: "Fused ranking (RRF)", fusedIntro: "Reciprocal rank fusion of successful modes: a document found by several modes ranks higher.",
@@ -52,7 +52,7 @@
       modeLabels: { literal: "Texte exact", text: "Texte enrichi", regex: "Regex", semantic: "Sémantique", hybrid: "Hybride" },
       snapshot: "Snapshot {version} · {documents} documents", performance: "Performance par mode",
       columns: ["Mode", "Statut", "Latence", "Passages", "Documents", "Réponse MCP", "Moteur"], validationColumns: ["Rappel", "Précision", "1er pertinent"],
-      notReady: "Index en préparation", partial: "Partiel", ok: "OK", error: "Erreur",
+      notReady: "Index en préparation", partial: "Partiel", ok: "OK", error: "Erreur", metadataOnly: "Métadonnées du fichier uniquement",
       bytesTitle: "Réponse MCP compacte exacte, sans texte source ni lecture automatique de fichiers",
       comparison: "Comparaison", pair: "{modes} : {shared} documents communs · Jaccard {jaccard} · {top}", sameTop: "même premier document", differentTop: "premiers documents différents",
       only: "Uniquement en {mode} : {paths}", fused: "Classement fusionné (RRF)", fusedIntro: "Fusion par rang réciproque des modes réussis : un document trouvé par plusieurs modes remonte.",
@@ -313,6 +313,7 @@
           const entry = node("li", undefined, list);
           const lines = hit.startLine ? (hit.endLine && hit.endLine !== hit.startLine ? `${hit.startLine}-${hit.endLine}` : String(hit.startLine)) : String(hit.line ?? "");
           node("strong", `${hit.path}:${lines}${hit.score === null || hit.score === undefined ? "" : ` · score ${hit.score}`}`, entry);
+          if (hit.contentStatus === "metadata-only") node("span", ` · ${t("metadataOnly")}`, entry);
         }
       }
       for (const item of value.runs.filter(entry => entry.ok && entry.payload !== undefined)) {

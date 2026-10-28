@@ -32,6 +32,20 @@ async function fixture(options: Record<string, unknown> = {}) {
   return { root, parent, knowledge, write };
 }
 
+it('retains metadata for many unsupported files without per-file production log growth', async () => {
+  vi.stubEnv('KIMONO_LOG_LEVEL', 'error');
+  const output = vi.spyOn(console, 'error').mockImplementation(() => {});
+  const { root, knowledge, write } = await fixture({ mode: 'rag' });
+  await Promise.all(Array.from({ length: 100 }, (_, index) => write(`opaque-${index}.unknown`, Buffer.from([0, 1, 2]))));
+  await knowledge.initialize();
+  await knowledge.refresh();
+  expect(knowledge.corpusStatus.metadataOnly).toBe(100);
+  expect(output.mock.calls.length).toBeLessThanOrEqual(1);
+  expect(output.mock.calls.flat().join('\n')).not.toContain('opaque-');
+  expect((await readdir(root)).length).toBe(100);
+  expect(knowledge.corpusStatus.skippedFiles.length).toBe(50);
+});
+
 function archive(parts: Record<string, string>, deflate = true): Buffer {
   const local: Buffer[] = [];
   const central: Buffer[] = [];
@@ -245,6 +259,7 @@ it('sends extracted text and original paths to the semantic engine, never ZIP by
 });
 
 it('records failed extraction by filename, respects ignore rules and keeps valid documents available', async () => {
+  vi.stubEnv('KIMONO_LOG_LEVEL', 'debug');
   const { knowledge, write } = await fixture();
   await write('.gitignore', 'ignored.xlsx\n');
   await write('ignored.xlsx', workbook());

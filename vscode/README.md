@@ -68,10 +68,16 @@ The default mode is `rag`; the open workspace folder is the default project:
 | `kimono.mode` | `embedded` | Select `remote` to connect to an existing HTTP MCP server, or `disabled` to stop Kimono. |
 | `kimono.url` | Empty | Set the HTTPS `/mcp` endpoint when using `remote`. |
 | `kimono.configFile` | Empty | Supply an optional absolute path to a host-managed corpus configuration. |
+| `kimono.semanticDevice` | `auto` | Benchmark CPU and available CUDA/CoreML providers once per server session, or explicitly select one. |
+| `kimono.logLevel` | `error` | Enable `debug` only for diagnosis; Kimono creates no trace files. The host controls stderr retention. |
 
 Use **Kimono: Open Management Panel** for corpus settings, index status and a
 search test. The local RAG mode does not require a special project structure.
 The optional AI-KIDO knowledge mode requires `prompts/index.md` or `index.md`.
+
+Embedding uses one model session by default and bounded vector batches. The
+panel displays the selected execution provider and startup timings. See
+[runtime and memory settings](https://github.com/lcalmejane/kimono-mcp-server/blob/main/docs/local-rag.md#embedding-runtime-and-memory).
 
 ## Install manually
 

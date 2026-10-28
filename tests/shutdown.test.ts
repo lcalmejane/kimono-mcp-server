@@ -9,7 +9,7 @@ it.each(['SIGTERM', 'SIGINT'] as const)('shuts down the real stdio runner cleanl
   const parent = await mkdtemp(path.join(tmpdir(), 'kimono-stop-'));
   const child = spawn(process.execPath, ['--import', 'tsx', 'src/index.ts'], {
     cwd: process.cwd(), env: { ...process.env, AIKIDO_ROOT: path.join(parent, 'absent'),
-      MCP_TRANSPORT: 'stdio' }, stdio: ['pipe', 'pipe', 'pipe'],
+      MCP_TRANSPORT: 'stdio', KIMONO_LOG_LEVEL: 'debug' }, stdio: ['pipe', 'pipe', 'pipe'],
   });
   const closed = once(child, 'close');
   try {

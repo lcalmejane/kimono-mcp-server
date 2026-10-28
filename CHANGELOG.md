@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.7.0 - 2026-10-28
+
+- Default to error-only stderr diagnostics with no internal trace files; keep
+  optional debug output and native diagnostics bounded per operation. Preserve
+  live status without appending history. Rotate standalone Compose logs at
+  2 x 5 MB and document disabling retention or using an external syslog stream.
+- Bound embedding result memory with backpressure and insert each embedded batch
+  directly into the in-memory index, without any temporary vector file; stream model hashes and state serialization, and avoid cloning retained chunks.
+- Balance short and long embedding batches instead of placing all expensive
+  batches at the end; expose each batch's duration in progress and status.
+- Default to one ONNX model session to avoid automatic model duplication.
+  Explicit CPU worker/thread/batch settings remain supported.
+- Benchmark CPU and available CUDA/CoreML providers at first model use and reuse
+  the fastest measured provider for the server session. Expose timings and
+  provider selection in responses and shared management panels; explicit
+  unavailable providers fail. Add the standalone `kimono.semanticDevice` setting.
+- Stream native progress with bounded diagnostic retention instead of buffering
+  every progress event until process exit.
+
 ## 0.6.6 - 2026-10-25
 
 - Indexing no longer fails on non-UTF-8 documents: text is decoded as UTF-8,

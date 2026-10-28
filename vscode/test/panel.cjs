@@ -10,6 +10,23 @@ const { lines, overall, readIndexStatus, summarize } = require("../status.cjs");
 
 const extensionPath = path.join(__dirname, "..");
 
+test("shared status distinguishes completed partial indexes from fully indexed content in both languages", () => {
+  const partial = { phase: "ready", chunks: 10, skippedChunks: 2 };
+  assert.equal(summarize(partial, "en"), "Partially indexed");
+  assert.equal(summarize(partial, "fr"), "Indexation partielle");
+  assert.ok(lines(partial, "en").some(row => row.label === "Skipped chunks" && row.value === "2"));
+  assert.ok(lines(partial, "fr").some(row => row.label === "Passages non vectorisés" && row.value === "2"));
+  assert.equal(summarize({ ...partial, skippedChunks: 0 }, "en"), "Indexed");
+});
+
+test("shared status exposes measured provider choice without claiming GPU execution", () => {
+  const status = { phase: "running", batchMs: 40, runtime: { executionProvider: "cpu", gpuExecutionVerified: false,
+    benchmarks: [{ executionProvider: "cpu", medianMs: 70 }, { executionProvider: "coreml", medianMs: 900 }] } };
+  assert.ok(lines(status, "en").some(row => row.label === "Execution provider" && row.value === "CPU"));
+  assert.ok(lines(status, "fr").some(row => row.label === "Mesure au démarrage" && row.value === "CPU: 70 ms · COREML: 900 ms"));
+  assert.ok(lines(status, "en").some(row => row.label === "Last batch" && row.value === "40 ms"));
+});
+
 test("index status reports live counters, ETA and interrupted indexers", async () => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), "kimono-status-"));
   const file = path.join(directory, "semantic-status.json");

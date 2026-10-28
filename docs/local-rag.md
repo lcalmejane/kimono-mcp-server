@@ -122,6 +122,116 @@ measured 323,368 → 105,223 cumulative input tokens (−67.5%) and 111.212 →
 454,796 → 130,244 cumulative input tokens (−71.4%) and 175.224 → 84.034
 seconds (−52.0%). See the [benchmark results](../benchmarks/results/current.md).
 
+## Embedding runtime and memory
+
+The default `KIMONO_SEMANTIC_DEVICE=auto` benchmarks the CPU and each available
+CUDA/CoreML execution provider when the server first uses a model. Each probe
+runs in a separate process, loads the same local model, warms up short and long
+batches, then measures three identical short/long trials. The lowest median
+embedding time wins. Probe processes exit before indexing, releasing their
+model sessions. A failed or timed-out probe is reported explicitly and excluded
+from selection; if none succeeds, the operation fails. Each probe has a
+30-second timeout.
+
+The choice and timings are reused in memory across subsequent operations and
+snapshots within the same Kimono server process. Restart the server to
+remeasure after changing the hardware, runtime or model at the same path.
+`aikido_index`, `aikido_embed`, model info and the shared index status expose
+`runtime.executionProvider`, `runtime.benchmarks` and worker/thread/batch
+settings. The management panel displays the selected provider and timings.
+
+| Environment variable | Default | Meaning |
+| --- | --- | --- |
+| `KIMONO_SEMANTIC_DEVICE` | `auto` | Benchmark and select, or explicitly select `cpu`, `cuda` or `coreml`. |
+| `KIMONO_SEMANTIC_WORKERS` | `1` | CPU model sessions (1–32); explicit accelerator providers use one session. |
+| `KIMONO_SEMANTIC_THREADS` | `auto` | 1–2 threads per session, bounded by available CPUs; explicit range 1–32. |
+| `KIMONO_SEMANTIC_BATCH` | `8` | Passages per batch (1–256). |
+
+CUDA requires a compatible ONNX runtime containing its CUDA provider and GPU
+drivers; the standard Linux/Windows bundles contain a CPU runtime. CoreML is
+tested when available in the macOS runtime, with CPU/GPU compute units enabled.
+An explicitly requested provider that cannot be registered fails rather than
+silently switching to CPU. Provider registration and benchmark timing are not
+hardware-level GPU execution evidence: `gpuExecutionVerified` remains `false`.
+
+The standalone extension exposes `kimono.semanticDevice`; Tatami Agent exposes
+`tatami.kimono.semanticDevice`. Both default to `auto`.
+
+Length-sorted batches alternate short and long work to avoid systematically
+slower final batches. A bounded result queue applies backpressure and each
+embedded batch is inserted directly into the in-memory index, then released: no
+temporary vector file is written, so disk usage does not grow during embedding.
+The new generation is written once at the end, then published atomically; the
+previous generation is removed only after success. Model hashing and state serialization are
+streamed instead of allocating full serialized copies. Native progress includes
+`batchMs`, displayed as the last batch duration.
+
+One model session is kept by default instead of automatically creating up to
+four copies. Increasing CPU workers explicitly increases model memory. The
+model and in-memory index remain resident while the helper runs; index storage
+still grows with the number of passages. Native helper exit releases its process
+memory.
+
+## Production diagnostics: no internal trace history
+
+Kimono does not install a telemetry exporter, persist profiling/benchmark traces,
+or create log files. `KIMONO_LOG_LEVEL=error` is the default in all environments,
+including production. Per-file metadata diagnostics and startup banners are
+debug-only; unavailable-content warnings are limited to 32 distinct reasons per
+server process. Affected paths and counts remain available in corpus status.
+Use `KIMONO_LOG_LEVEL=debug` explicitly during development or diagnosis; the
+standalone extension exposes `kimono.logLevel`.
+
+Native progress is an internal pipe used by the live panel, not a persisted log.
+Normal mode does not forward these events to the server's stderr. Native
+diagnostics are capped per operation at 20 lines of 4,096 characters plus one
+omission summary; debug can additionally emit 20 progress lines. Subprocess
+stderr retains only a 64 Ki-character in-memory tail for failures.
+Errors remain visible; stdout is reserved for MCP/CLI results.
+
+The current semantic status is atomically replaced, throttled to once per 500 ms
+during progress, with forced phase/completion updates; no status history is
+appended. Index databases, snapshots and extracted-document temporaries
+are functional data, not observability archives. Request and extraction
+temporaries are cleaned on normal completion/error; a forced
+process/machine termination can leave temporary work behind.
+
+The supplied Compose service uses Docker's `local` log driver with rotation
+(`max-size: 5m`, `max-file: 2`): approximately 10 MB per container before
+compression/driver overhead, not an unbounded JSON log. Existing containers must
+be recreated for this setting to apply. Docker, VS Code or another MCP host
+controls retention outside Kimono; direct `docker run` needs its own log flags.
+
+For **zero Docker log retention**, use a Compose override (Compose 2.24.4+):
+
+```yaml
+services:
+  kimono-mcp-server:
+    logging: !override
+      driver: none
+```
+
+For an **external configurable stream**, replace that logging block, for example:
+
+```yaml
+services:
+  kimono-mcp-server:
+    logging: !override
+      driver: syslog
+      options:
+        syslog-address: "${KIMONO_SYSLOG_ADDRESS:?Set an external syslog endpoint}"
+        syslog-format: rfc5424
+        mode: non-blocking
+        max-buffer-size: "1m"
+        cache-disabled: "true"
+```
+
+The operator supplies the endpoint and applies the override with `docker compose
+-f docker-compose.yml -f <override>.yml up -d`. No remote telemetry destination is
+enabled automatically. `non-blocking` bounds buffering and may drop logs if the
+external collector cannot keep up; `cache-disabled` disables Docker's local
+dual-logging cache. Do not redirect stderr to an unrotated file.
+
 ## Install and connect
 
 ### VS Code and compatible IDEs

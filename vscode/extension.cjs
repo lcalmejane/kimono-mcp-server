@@ -53,6 +53,10 @@ function register(vscode, context, native = nativeEnvironment) {
     if (configFile && !path.isAbsolute(configFile)) throw new Error("Kimono config path must be absolute.");
     const corpusMode = config().get("corpusMode", "rag");
     if (!["aikido", "rag"].includes(corpusMode)) throw new Error("Kimono corpusMode must be aikido or rag.");
+    const device = config().get("semanticDevice", "auto");
+    if (!["auto", "cpu", "cuda", "coreml"].includes(device)) throw new Error("Kimono semanticDevice must be auto, cpu, cuda or coreml.");
+    const logLevel = config().get("logLevel", "error");
+    if (!["error", "debug"].includes(logLevel)) throw new Error("Kimono logLevel must be error or debug.");
     return {
       command: nodeExecutable(), args: [serverEntry(), "serve", "--root", selected.root], cwd: root,
       env: {
@@ -63,6 +67,8 @@ function register(vscode, context, native = nativeEnvironment) {
         KIMONO_CACHE_DIR: path.join(storage, "cache"),
         KIMONO_STATUS_FILE: selected.statusFile,
         KIMONO_CORPUS_MODE: corpusMode,
+        KIMONO_SEMANTIC_DEVICE: device,
+        KIMONO_LOG_LEVEL: logLevel,
         ...(configFile ? { KIMONO_CONFIG_FILE: configFile } : {}),
         ...(profile ? { KIMONO_GIT_PROFILE_FILE: profile } : {}),
       },

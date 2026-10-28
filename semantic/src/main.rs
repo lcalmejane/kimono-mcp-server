@@ -1,18 +1,24 @@
 use embsearch_core::{Database, Embedder, Metric, OnnxEmbedder};
+mod device;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::error::Error;
 use std::fs;
+use std::io::{BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::Mutex;
+use std::sync::mpsc::sync_channel;
+use std::sync::Arc;
 use std::time::Instant;
 
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
 
 fn bounded_setting(name: &str, value: Option<&str>, default: usize, max: usize) -> Result<usize> {
-    match value.map(str::trim).filter(|value| !value.is_empty() && *value != "auto") {
+    match value
+        .map(str::trim)
+        .filter(|value| !value.is_empty() && *value != "auto")
+    {
         None => Ok(default),
         Some(value) => match value.parse::<usize>() {
             Ok(value) if (1..=max).contains(&value) => Ok(value),
@@ -28,68 +34,135 @@ struct Runtime {
     batch: usize,
 }
 
+fn requested_device(value: Option<&str>) -> Result<&str> {
+    let value = value.unwrap_or("auto");
+    match value {
+        "auto" | "cpu" | "cuda" | "coreml" => Ok(value),
+        _ => Err("KIMONO_SEMANTIC_DEVICE must be auto, cpu, cuda or coreml".into()),
+    }
+}
+
 // available_parallelism honours cgroup CPU quotas, so Docker `cpus:` limits apply.
 fn runtime_settings(available: usize, var: impl Fn(&str) -> Option<String>) -> Result<Runtime> {
     let available = available.max(1);
-    // Each worker holds its own ONNX session and activations (~600 MiB peak):
-    // cap the automatic value to stay within the default 4 GiB container limit.
-    let workers = bounded_setting("KIMONO_SEMANTIC_WORKERS", var("KIMONO_SEMANTIC_WORKERS").as_deref(),
-        available.min(4), 32)?;
-    let threads = bounded_setting("KIMONO_SEMANTIC_THREADS", var("KIMONO_SEMANTIC_THREADS").as_deref(),
-        (available / workers).clamp(1, 2), 32)?;
-    let batch = bounded_setting("KIMONO_SEMANTIC_BATCH", var("KIMONO_SEMANTIC_BATCH").as_deref(), 8, 256)?;
-    Ok(Runtime { workers, threads, batch })
+    // One session by default avoids duplicating model weights across automatic workers.
+    let workers = bounded_setting(
+        "KIMONO_SEMANTIC_WORKERS",
+        var("KIMONO_SEMANTIC_WORKERS").as_deref(),
+        1,
+        32,
+    )?;
+    let threads = bounded_setting(
+        "KIMONO_SEMANTIC_THREADS",
+        var("KIMONO_SEMANTIC_THREADS").as_deref(),
+        (available / workers).clamp(1, 2),
+        32,
+    )?;
+    let batch = bounded_setting(
+        "KIMONO_SEMANTIC_BATCH",
+        var("KIMONO_SEMANTIC_BATCH").as_deref(),
+        8,
+        256,
+    )?;
+    Ok(Runtime {
+        workers,
+        threads,
+        batch,
+    })
 }
 
-fn configure_runtime() -> Result<Runtime> {
-    let runtime = runtime_settings(
+fn configure_runtime(device: &str) -> Result<Runtime> {
+    let mut runtime = runtime_settings(
         std::thread::available_parallelism().map_or(1, |count| count.get()),
         |name| std::env::var(name).ok(),
     )?;
+    let providers = device::providers(device)?;
+    if device != "cpu" {
+        // Multiple model sessions contend for one accelerator and duplicate device allocations.
+        runtime.workers = 1;
+    }
     // ONNX Runtime parallelises poorly inside one small-model run; throughput
     // comes from independent sessions (workers), each with a small intra pool.
     let options = ort::environment::GlobalThreadPoolOptions::default()
         .with_intra_threads(runtime.threads)?
         .with_inter_threads(1)?
         .with_spin_control(false)?;
-    ort::init().with_global_thread_pool(options).commit()?;
+    ort::init()
+        .with_execution_providers(providers)
+        .with_global_thread_pool(options)
+        .commit()?;
+    eprintln!(
+        "KIMONO_PROGRESS {}",
+        serde_json::json!({"phase":"runtime_configured",
+        "completed":0, "total":0, "executionProvider":device,
+        "workers":runtime.workers, "threads":runtime.threads, "batch":runtime.batch})
+    );
     Ok(runtime)
 }
 
 // A `None` vector means the passage could not be embedded: it is traced and skipped.
-fn embed_parallel(primary: &OnnxEmbedder, model: &Path, runtime: Runtime, texts: &[&str]) -> Result<Vec<Option<Vec<f32>>>> {
+fn embedding_batches(texts: &[&str], batch: usize) -> Vec<Vec<usize>> {
+    let mut order: Vec<usize> = (0..texts.len()).collect();
+    order.sort_by_key(|&index| texts[index].len());
+    let sorted: Vec<_> = order.chunks(batch).map(<[usize]>::to_vec).collect();
+    // Alternate short/long batches: keep padding low without making every later batch slower.
+    let mut balanced = Vec::with_capacity(sorted.len());
+    let (mut left, mut right) = (0, sorted.len());
+    while left < right {
+        balanced.push(sorted[left].clone());
+        left += 1;
+        if left < right {
+            right -= 1;
+            balanced.push(sorted[right].clone());
+        }
+    }
+    balanced
+}
+
+fn embed_parallel<E: Embedder>(
+    primary: &E,
+    runtime: Runtime,
+    texts: &[&str],
+    factory: impl Fn() -> Result<E> + Sync,
+    mut consume: impl FnMut(usize, Option<Vec<f32>>) -> Result<()>,
+) -> Result<()> {
     let total = texts.len();
     let started = Instant::now();
-    // Length-sorted bulk batches minimise padding to the longest passage of each batch.
-    let mut order: Vec<usize> = (0..total).collect();
-    order.sort_by_key(|&index| texts[index].len());
-    let batches: Vec<&[usize]> = order.chunks(runtime.batch).collect();
+    let batches = embedding_batches(texts, runtime.batch);
     let workers = runtime.workers.min(batches.len()).max(1);
-    eprintln!("KIMONO_PROGRESS {}", serde_json::json!({"phase": "document_embedding", "completed": 0,
-        "total": total, "workers": workers, "batch": runtime.batch, "threads": runtime.threads}));
+    eprintln!(
+        "KIMONO_PROGRESS {}",
+        serde_json::json!({"phase": "document_embedding", "completed": 0,
+        "total": total, "workers": workers, "batch": runtime.batch, "threads": runtime.threads})
+    );
     if total == 0 {
-        return Ok(Vec::new());
+        return Ok(());
     }
     let next = AtomicUsize::new(0);
     let completed = AtomicUsize::new(0);
     let failed = AtomicBool::new(false);
-    let results = Mutex::new(vec![None; total]);
+    // Backpressure bounds queued vectors to one batch per worker, not the entire corpus.
+    let (sender, receiver) = sync_channel(workers);
     std::thread::scope(|scope| -> std::result::Result<(), String> {
         let handles: Vec<_> = (0..workers).map(|worker| {
-            let (next, completed, failed, results, batches) = (&next, &completed, &failed, &results, &batches);
+            let (next, completed, failed, batches, factory) = (&next, &completed, &failed, &batches, &factory);
+            let sender = sender.clone();
             scope.spawn(move || -> std::result::Result<(), String> {
                 let outcome = (|| -> std::result::Result<(), String> {
                     let owned;
                     let embedder = if worker == 0 {
                         primary
                     } else {
-                        owned = OnnxEmbedder::from_dir(model).map_err(|error| error.to_string())?;
+                        owned = factory().map_err(|error| error.to_string())?;
                         &owned
                     };
                     while !failed.load(Ordering::Relaxed) {
                         let Some(batch) = batches.get(next.fetch_add(1, Ordering::Relaxed)) else { break };
                         let input: Vec<String> = batch.iter().map(|&index| texts[index].to_string()).collect();
-                        let usable = |vector: &Vec<f32>| !vector.is_empty() && vector.iter().all(|value| value.is_finite());
+                        let batch_started = Instant::now();
+                        let usable = |vector: &Vec<f32>| vector.len() == embedder.dim()
+                            && vector.iter().all(|value| value.is_finite())
+                            && vector.iter().any(|value| *value != 0.0);
                         let vectors: Vec<Option<Vec<f32>>> = match embedder.embed_batch(&input) {
                             Ok(vectors) if vectors.len() == batch.len() =>
                                 vectors.into_iter().map(|vector| Some(vector).filter(usable)).collect(),
@@ -103,16 +176,13 @@ fn embed_parallel(primary: &OnnxEmbedder, model: &Path, runtime: Runtime, texts:
                                 }
                             }).collect(),
                         };
-                        {
-                            let mut results = results.lock().map_err(|_| "Embedding results lock poisoned")?;
-                            for (&index, vector) in batch.iter().zip(vectors) {
-                                results[index] = vector;
-                            }
-                        }
+                        sender.send(batch.iter().copied().zip(vectors).collect::<Vec<_>>())
+                            .map_err(|_| "Embedding result consumer closed")?;
                         let done = completed.fetch_add(batch.len(), Ordering::Relaxed) + batch.len();
                         eprintln!("KIMONO_PROGRESS {}", serde_json::json!({
                             "phase": "document_embedding", "completed": done, "total": total,
                             "workers": workers, "batch": runtime.batch, "threads": runtime.threads,
+                            "batchMs": batch_started.elapsed().as_millis(),
                             "elapsedMs": started.elapsed().as_millis()
                         }));
                     }
@@ -124,29 +194,47 @@ fn embed_parallel(primary: &OnnxEmbedder, model: &Path, runtime: Runtime, texts:
                 outcome
             })
         }).collect();
+        drop(sender);
         let mut first = Ok(());
+        for batch in receiver {
+            for (index, vector) in batch {
+                if first.is_ok() {
+                    if let Err(error) = consume(index, vector) {
+                        failed.store(true, Ordering::Relaxed);
+                        first = Err(error.to_string());
+                    }
+                }
+            }
+        }
         for handle in handles {
-            let outcome = handle.join().unwrap_or_else(|_| Err("Embedding worker panicked".into()));
+            let outcome = handle
+                .join()
+                .unwrap_or_else(|_| Err("Embedding worker panicked".into()));
             if first.is_ok() {
                 first = outcome;
             }
         }
         first
     })?;
-    let vectors = results.into_inner().map_err(|_| "Embedding results lock poisoned")?;
-    Ok(vectors)
+    Ok(())
 }
 
 fn load_embedder(model: &Path) -> Result<OnnxEmbedder> {
     let started = Instant::now();
-    eprintln!("KIMONO_PROGRESS {}", serde_json::json!({
-        "phase": "model_loading", "completed": 0, "total": 0
-    }));
+    eprintln!(
+        "KIMONO_PROGRESS {}",
+        serde_json::json!({
+            "phase": "model_loading", "completed": 0, "total": 0
+        })
+    );
     let embedder = OnnxEmbedder::from_dir(model)?;
-    eprintln!("KIMONO_PROGRESS {}", serde_json::json!({
-        "phase": "model_loaded", "completed": 0, "total": 0,
-        "elapsedMs": started.elapsed().as_millis()
-    }));
+    eprintln!(
+        "KIMONO_PROGRESS {}",
+        serde_json::json!({
+            "phase": "model_loaded", "completed": 0, "total": 0,
+            "elapsedMs": started.elapsed().as_millis()
+        })
+    );
     Ok(embedder)
 }
 
@@ -178,7 +266,7 @@ struct Request {
     sync_paths: Option<Vec<String>>,
 }
 
-#[derive(Clone, Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize, PartialEq)]
 struct Chunk {
     path: String,
     kind: String,
@@ -206,6 +294,25 @@ struct Hit {
 
 fn hash(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
+}
+
+struct HashWriter(Sha256);
+
+impl Write for HashWriter {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0.update(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+fn serialized_hash(value: &impl Serialize) -> Result<String> {
+    let mut writer = HashWriter(Sha256::new());
+    serde_json::to_writer(&mut writer, value)?;
+    Ok(format!("{:x}", writer.0.finalize()))
 }
 
 fn chunks(documents: Vec<Document>) -> BTreeMap<String, Chunk> {
@@ -252,20 +359,61 @@ fn chunks(documents: Vec<Document>) -> BTreeMap<String, Chunk> {
 }
 
 fn read_state(cache: &Path) -> Result<State> {
-    match fs::read(cache.join("state.json")) {
-        Ok(bytes) => Ok(serde_json::from_slice(&bytes)?),
+    match fs::File::open(cache.join("state.json")) {
+        Ok(file) => Ok(serde_json::from_reader(BufReader::new(file))?),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(State::default()),
         Err(error) => Err(error.into()),
     }
 }
 
-fn execute(request: Request, runtime: Runtime) -> Result<serde_json::Value> {
+/// Shares one model session between the embedding pipeline and the index, so
+/// each vector batch is inserted as soon as it is produced (no disk spool).
+struct SharedEmbedder<E>(Arc<E>);
+
+impl<E: Embedder> Embedder for SharedEmbedder<E> {
+    fn dim(&self) -> usize {
+        self.0.dim()
+    }
+    fn model_id(&self) -> &str {
+        self.0.model_id()
+    }
+    fn embed(&self, text: &str) -> embsearch_core::Result<Vec<f32>> {
+        self.0.embed(text)
+    }
+    fn embed_batch(&self, texts: &[String]) -> embsearch_core::Result<Vec<Vec<f32>>> {
+        self.0.embed_batch(texts)
+    }
+    fn embed_query(&self, text: &str) -> embsearch_core::Result<Vec<f32>> {
+        self.0.embed_query(text)
+    }
+    fn embed_query_batch(&self, texts: &[String]) -> embsearch_core::Result<Vec<Vec<f32>>> {
+        self.0.embed_query_batch(texts)
+    }
+}
+
+fn runtime_info(runtime: Runtime, selection: &device::Selection) -> serde_json::Value {
+    serde_json::json!({
+        "workers": runtime.workers, "threads": runtime.threads, "batch": runtime.batch,
+        "executionProvider": selection.execution_provider,
+        "gpuExecutionVerified": selection.gpu_execution_verified,
+        "benchmarks": selection.benchmarks,
+    })
+}
+
+fn execute(
+    request: Request,
+    runtime: Runtime,
+    selection: &device::Selection,
+) -> Result<serde_json::Value> {
+    let runtime_info = runtime_info(runtime, selection);
     if request.operation == "info" {
         let embedder = load_embedder(&request.model)?;
         let spec = embedder.spec();
         let mut files = BTreeMap::new();
         for file in ["model.onnx", "tokenizer.json", "model.json"] {
-            files.insert(file, hash(&fs::read(request.model.join(file))?));
+            let mut writer = HashWriter(Sha256::new());
+            std::io::copy(&mut fs::File::open(request.model.join(file))?, &mut writer)?;
+            files.insert(file, format!("{:x}", writer.0.finalize()));
         }
         return Ok(serde_json::json!({
             "engine": "embsearch-core", "version": "0.3.4",
@@ -274,6 +422,7 @@ fn execute(request: Request, runtime: Runtime) -> Result<serde_json::Value> {
             "maxTokens": spec.max_tokens, "pooling": spec.pooling,
             "queryPrefix": spec.query_prefix, "documentPrefix": spec.document_prefix,
             "sha256": files,
+            "runtime": runtime_info,
             "compatibility": "Reuse model as embeddingModel for vector search. Dimensions and model labels alone cannot prove vector provenance; retain these file hashes and matching preprocessing settings to reproduce embeddings."
         }));
     }
@@ -300,6 +449,7 @@ fn execute(request: Request, runtime: Runtime) -> Result<serde_json::Value> {
             "model": embedder.model_id(), "usage": usage,
             "dimensions": embedder.dim(), "normalized": embedder.spec().normalize,
             "maxTokens": embedder.spec().max_tokens, "vector": vector
+            , "runtime": runtime_info
         }));
     }
     if !["search", "update", "rebuild", "compact", "stats"].contains(&request.operation.as_str()) {
@@ -324,12 +474,15 @@ fn execute(request: Request, runtime: Runtime) -> Result<serde_json::Value> {
         return Err("Invalid semantic generation in state".into());
     }
     // Include weights + tokenizer in identity, not just the model's friendly name.
-    let mut identity = Sha256::new();
+    let mut identity = HashWriter(Sha256::new());
     for file in ["model.onnx", "tokenizer.json", "model.json"] {
-        identity.update(fs::read(request.model.join(file))?);
+        std::io::copy(
+            &mut fs::File::open(request.model.join(file))?,
+            &mut identity,
+        )?;
     }
-    let fingerprint = format!("{:x}", identity.finalize());
-    let embedder = load_embedder(&request.model)?;
+    let fingerprint = format!("{:x}", identity.0.finalize());
+    let embedder = Arc::new(load_embedder(&request.model)?);
     let model_id = embedder.model_id().to_string();
     let search_vector = if let Some(vector) = &request.vector {
         if request.embedding_model.as_deref() != Some(model_id.as_str()) {
@@ -339,79 +492,156 @@ fn execute(request: Request, runtime: Runtime) -> Result<serde_json::Value> {
             || vector.iter().any(|value| !value.is_finite())
             || !vector.iter().any(|value| value.is_normal())
         {
-            return Err(format!("vector must contain {} finite float32 values with non-zero norm", embedder.dim()).into());
+            return Err(format!(
+                "vector must contain {} finite float32 values with non-zero norm",
+                embedder.dim()
+            )
+            .into());
         }
         // Normalize in f64 so valid large/small float32 vectors do not
         // overflow/underflow the index's float32 sum-of-squares.
-        let norm = vector.iter().map(|value| (*value as f64).powi(2)).sum::<f64>().sqrt();
-        Some(vector.iter().map(|value| (*value as f64 / norm) as f32).collect::<Vec<_>>())
+        let norm = vector
+            .iter()
+            .map(|value| (*value as f64).powi(2))
+            .sum::<f64>()
+            .sqrt();
+        Some(
+            vector
+                .iter()
+                .map(|value| (*value as f64 / norm) as f32)
+                .collect::<Vec<_>>(),
+        )
     } else {
         None
     };
     if request.sync_paths.is_some() && request.operation != "update" {
         return Err("syncPaths requires update".into());
     }
-    if request.sync_paths.is_some() && previous.model != fingerprint && !previous.generation.is_empty() {
-        return Err("Embedding model changed; run a full update before targeted synchronization".into());
+    if request.sync_paths.is_some()
+        && previous.model != fingerprint
+        && !previous.generation.is_empty()
+    {
+        return Err(
+            "Embedding model changed; run a full update before targeted synchronization".into(),
+        );
     }
-    let selected = |file: &str| request.sync_paths.as_ref().is_none_or(|paths|
-        paths.iter().any(|scope| file == scope || file.starts_with(&format!("{scope}/"))));
-    let mut previous_documents = previous.documents.clone();
+    let selected = |file: &str| {
+        request.sync_paths.as_ref().is_none_or(|paths| {
+            paths
+                .iter()
+                .any(|scope| file == scope || file.starts_with(&format!("{scope}/")))
+        })
+    };
+    let mut previous_documents = previous.documents;
     // Migration from v0.2 state: hashes are unknown until each file is reread.
     for chunk in previous.chunks.values() {
         previous_documents.entry(chunk.path.clone()).or_default();
     }
-    let mut documents: BTreeMap<String, String> = previous_documents.iter()
-        .filter(|(file, _)| !selected(file)).map(|(file, hash)| (file.clone(), hash.clone())).collect();
+    let mut documents: BTreeMap<String, String> = previous_documents
+        .iter()
+        .filter(|(file, _)| !selected(file))
+        .map(|(file, hash)| (file.clone(), hash.clone()))
+        .collect();
     for document in &request.documents {
-        if !selected(&document.path) { return Err("Document outside synchronization scope".into()); }
+        if !selected(&document.path) {
+            return Err("Document outside synchronization scope".into());
+        }
         documents.insert(document.path.clone(), hash(document.content.as_bytes()));
     }
-    let added: Vec<_> = documents.keys().filter(|file| !previous_documents.contains_key(*file)).cloned().collect();
-    let modified: Vec<_> = documents.iter().filter(|(file, digest)|
-        previous_documents.get(*file).is_some_and(|old| old != *digest)).map(|(file, _)| file.clone()).collect();
-    let deleted: Vec<_> = previous_documents.keys().filter(|file| !documents.contains_key(*file)).cloned().collect();
-    let mut current: BTreeMap<String, Chunk> = previous.chunks.iter().filter(|(_, chunk)| !selected(&chunk.path))
-        .map(|(id, chunk)| (id.clone(), chunk.clone())).collect();
+    let added: Vec<_> = documents
+        .keys()
+        .filter(|file| !previous_documents.contains_key(*file))
+        .cloned()
+        .collect();
+    let modified: Vec<_> = documents
+        .iter()
+        .filter(|(file, digest)| {
+            previous_documents
+                .get(*file)
+                .is_some_and(|old| old != *digest)
+        })
+        .map(|(file, _)| file.clone())
+        .collect();
+    let deleted: Vec<_> = previous_documents
+        .keys()
+        .filter(|file| !documents.contains_key(*file))
+        .cloned()
+        .collect();
+    let previous_chunk_signature = serialized_hash(&previous.chunks)?;
+    let previous_hashes: BTreeMap<_, _> = previous
+        .chunks
+        .iter()
+        .map(|(id, chunk)| (id.clone(), chunk.hash.clone()))
+        .collect();
+    let mut current: BTreeMap<String, Chunk> = previous
+        .chunks
+        .into_iter()
+        .filter(|(_, chunk)| !selected(&chunk.path))
+        .collect();
     current.extend(chunks(request.documents));
     let reuse = previous.model == fingerprint
         && !previous.generation.is_empty()
         && request.operation != "rebuild";
     let updates: Vec<_> = current
         .iter()
-        .filter(|(id, chunk)| {
-            !reuse || previous.chunks.get(*id).map(|old| &old.hash) != Some(&chunk.hash)
-        })
+        .filter(|(id, chunk)| !reuse || previous_hashes.get(*id) != Some(&chunk.hash))
         .collect();
-    let texts: Vec<&str> = updates.iter().map(|(_, chunk)| chunk.text.as_str()).collect();
-    let vectors = embed_parallel(&embedder, &request.model, runtime, &texts)?;
-    let mut fresh: Vec<(String, Vec<f32>)> = Vec::new();
+    let texts: Vec<&str> = updates
+        .iter()
+        .map(|(_, chunk)| chunk.text.as_str())
+        .collect();
+    // The index is built in memory and only persisted after full success, so an
+    // interrupted run leaves the published generation untouched.
+    let mut db = if reuse {
+        Database::open(
+            SharedEmbedder(Arc::clone(&embedder)),
+            request.cache.join(&previous.generation),
+        )?
+    } else {
+        Database::new(SharedEmbedder(Arc::clone(&embedder)), Metric::Cosine)
+    };
+    let mut changed = !reuse;
+    let mut embedded = 0;
     let mut failed: Vec<String> = Vec::new();
-    for ((id, _), vector) in updates.iter().zip(vectors) {
-        match vector {
-            Some(vector) => fresh.push((id.to_string(), vector)),
-            None => failed.push(id.to_string()),
-        }
-    }
+    // Each bounded batch goes straight into the index: no temporary vector file
+    // grows on disk and consumed vectors are released immediately.
+    embed_parallel(
+        &*embedder,
+        runtime,
+        &texts,
+        || Ok(OnnxEmbedder::from_dir(&request.model)?),
+        |index, vector| {
+            let id = updates[index].0;
+            match vector {
+                Some(vector) => {
+                    if reuse {
+                        db.remove(id)?;
+                    }
+                    db.add_vector(id, vector)?;
+                    changed = true;
+                    embedded += 1;
+                }
+                None => failed.push(id.to_string()),
+            }
+            Ok(())
+        },
+    )?;
+    drop(updates);
     // Ignored passages are traced and left out; they are retried on the next update.
     for id in &failed {
         eprintln!("kimono-semantic: chunk ignored (embedding failed): {id}");
         current.remove(id);
     }
     // Skipping isolated passages is tolerated; a systemic failure (model/runtime) is not.
-    if fresh.is_empty() && !failed.is_empty() {
-        return Err(format!("None of the {} passages could be embedded; check the model and ONNX runtime", failed.len()).into());
+    if embedded == 0 && !failed.is_empty() {
+        return Err(format!(
+            "None of the {} passages could be embedded; check the model and ONNX runtime",
+            failed.len()
+        )
+        .into());
     }
-    let embedded = fresh.len();
-    let mut db = if reuse {
-        Database::open(embedder, request.cache.join(&previous.generation))?
-    } else {
-        Database::new(embedder, Metric::Cosine)
-    };
-    let mut changed = !reuse;
     if reuse {
-        for id in previous
-            .chunks
+        for id in previous_hashes
             .keys()
             .filter(|id| !current.contains_key(*id))
         {
@@ -419,23 +649,19 @@ fn execute(request: Request, runtime: Runtime) -> Result<serde_json::Value> {
             changed = true;
         }
     }
-    for (id, vector) in fresh {
-        if reuse {
-            db.remove(&id)?;
-        }
-        db.add_vector(&id, vector)?;
-        changed = true;
-    }
     if request.operation == "compact" {
         db.compact();
         changed = true;
     }
     let mut generation = previous.generation.clone();
-    if changed || documents != previous.documents || serde_json::to_vec(&current)? != serde_json::to_vec(&previous.chunks)? {
+    if changed
+        || documents != previous_documents
+        || serialized_hash(&current)? != previous_chunk_signature
+    {
         let nonce = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)?
             .as_nanos();
-        let digest = hash(&serde_json::to_vec(&(&fingerprint, &current, nonce))?);
+        let digest = serialized_hash(&(&fingerprint, &current, nonce))?;
         generation = format!("store-{}", &digest[..24]);
         let temporary = request.cache.join("building");
         if temporary.exists() {
@@ -450,16 +676,23 @@ fn execute(request: Request, runtime: Runtime) -> Result<serde_json::Value> {
         } else {
             fs::rename(temporary, destination)?;
         }
-        let state = State {
-            generation: generation.clone(),
-            chunks: current.clone(),
-            model: fingerprint,
-            documents,
+        #[derive(Serialize)]
+        struct StateView<'a> {
+            generation: &'a str,
+            chunks: &'a BTreeMap<String, Chunk>,
+            model: &'a str,
+            documents: &'a BTreeMap<String, String>,
+        }
+        let state = StateView {
+            generation: &generation,
+            chunks: &current,
+            model: &fingerprint,
+            documents: &documents,
         };
-        fs::write(
-            request.cache.join("state.pending"),
-            serde_json::to_vec(&state)?,
-        )?;
+        let mut writer = BufWriter::new(fs::File::create(request.cache.join("state.pending"))?);
+        serde_json::to_writer(&mut writer, &state)?;
+        writer.flush()?;
+        drop(writer);
         fs::rename(
             request.cache.join("state.pending"),
             request.cache.join("state.json"),
@@ -495,7 +728,11 @@ fn execute(request: Request, runtime: Runtime) -> Result<serde_json::Value> {
             {
                 continue;
             }
-            if request.paths.as_ref().is_some_and(|paths| !paths.contains(&chunk.path)) {
+            if request
+                .paths
+                .as_ref()
+                .is_some_and(|paths| !paths.contains(&chunk.path))
+            {
                 continue;
             }
             hits.push(Hit {
@@ -512,7 +749,7 @@ fn execute(request: Request, runtime: Runtime) -> Result<serde_json::Value> {
     Ok(serde_json::json!({
         "engine": "embsearch-core", "version": "0.3.4", "model": model_id,
         "chunks": db.len(), "embedded": embedded, "skippedChunks": failed.len(), "generation": generation,
-        "runtime": { "workers": runtime.workers, "threads": runtime.threads, "batch": runtime.batch },
+        "runtime": runtime_info,
         "count": hits.len(), "results": hits,
         "changes": { "added": added, "modified": modified, "deleted": deleted }
     }))
@@ -529,9 +766,32 @@ fn main() {
         let path = std::env::args()
             .nth(1)
             .ok_or("Expected a JSON request file")?;
-        let request: Request = serde_json::from_slice(&fs::read(path)?)?;
-        let runtime = configure_runtime()?;
-        let output = execute(request, runtime)?;
+        if path == "--benchmark" {
+            let model = std::env::args()
+                .nth(2)
+                .ok_or("Expected a model directory")?;
+            let device = std::env::var("KIMONO_SEMANTIC_DEVICE")?;
+            if requested_device(Some(&device))? == "auto" {
+                return Err("Benchmark requires an explicit provider".into());
+            }
+            let runtime = configure_runtime(&device)?;
+            println!(
+                "{}",
+                serde_json::to_string(&device::benchmark(Path::new(&model), runtime, &device)?)?
+            );
+            return Ok(());
+        }
+        let request: Request = serde_json::from_reader(BufReader::new(fs::File::open(path)?))?;
+        let selection = device::select(&request.model)?;
+        let runtime = configure_runtime(&selection.execution_provider)?;
+        eprintln!(
+            "KIMONO_PROGRESS {}",
+            serde_json::json!({
+                "phase":"runtime_configured", "completed":0, "total":0,
+                "runtime": runtime_info(runtime, &selection)
+            })
+        );
+        let output = execute(request, runtime, &selection)?;
         println!("{}", serde_json::to_string(&output)?);
         Ok(())
     })();
@@ -549,20 +809,62 @@ mod tests {
         assert_eq!(bounded_setting("threads", None, 2, 32).unwrap(), 2);
         assert_eq!(bounded_setting("threads", Some("auto"), 2, 32).unwrap(), 2);
         for value in [1, 2, 8, 32] {
-            assert_eq!(bounded_setting("threads", Some(&value.to_string()), 2, 32).unwrap(), value);
+            assert_eq!(
+                bounded_setting("threads", Some(&value.to_string()), 2, 32).unwrap(),
+                value
+            );
         }
         for value in ["0", "33", "-1", "many", "1.5"] {
             assert!(bounded_setting("threads", Some(value), 2, 32).is_err());
         }
         let none = |_: &str| None;
-        assert_eq!(runtime_settings(2, none).unwrap(), Runtime { workers: 2, threads: 1, batch: 8 });
-        assert_eq!(runtime_settings(14, none).unwrap(), Runtime { workers: 4, threads: 2, batch: 8 });
-        assert_eq!(runtime_settings(1, none).unwrap(), Runtime { workers: 1, threads: 1, batch: 8 });
-        let explicit = |name: &str| Some(match name {
-            "KIMONO_SEMANTIC_WORKERS" => "3", "KIMONO_SEMANTIC_THREADS" => "2", _ => "64",
-        }.to_string());
-        assert_eq!(runtime_settings(14, explicit).unwrap(), Runtime { workers: 3, threads: 2, batch: 64 });
-        assert!(runtime_settings(4, |name: &str| (name == "KIMONO_SEMANTIC_BATCH").then(|| "257".to_string())).is_err());
+        assert_eq!(
+            runtime_settings(2, none).unwrap(),
+            Runtime {
+                workers: 1,
+                threads: 2,
+                batch: 8
+            }
+        );
+        assert_eq!(
+            runtime_settings(14, none).unwrap(),
+            Runtime {
+                workers: 1,
+                threads: 2,
+                batch: 8
+            }
+        );
+        assert_eq!(
+            runtime_settings(1, none).unwrap(),
+            Runtime {
+                workers: 1,
+                threads: 1,
+                batch: 8
+            }
+        );
+        let explicit = |name: &str| {
+            Some(
+                match name {
+                    "KIMONO_SEMANTIC_WORKERS" => "3",
+                    "KIMONO_SEMANTIC_THREADS" => "2",
+                    _ => "64",
+                }
+                .to_string(),
+            )
+        };
+        assert_eq!(
+            runtime_settings(14, explicit).unwrap(),
+            Runtime {
+                workers: 3,
+                threads: 2,
+                batch: 64
+            }
+        );
+        assert!(
+            runtime_settings(4, |name: &str| (name == "KIMONO_SEMANTIC_BATCH")
+                .then(|| "257".to_string()))
+            .is_err()
+        );
     }
 
     #[test]
@@ -593,5 +895,123 @@ mod tests {
         assert!(!valid_generation("store-../../private"));
         assert!(!valid_generation("../store-0123456789abcdef01234567"));
         assert!(!valid_generation("store-0123456789abcdef0123456g"));
+    }
+
+    #[test]
+    fn batches_cover_input_once_and_balance_lengths() {
+        let owned: Vec<_> = (1..=35).map(|size| "x".repeat(size)).collect();
+        let input: Vec<_> = owned.iter().map(String::as_str).collect();
+        let batches = embedding_batches(&input, 8);
+        assert_eq!(
+            batches.iter().map(|batch| batch[0]).collect::<Vec<_>>(),
+            vec![0, 32, 8, 24, 16]
+        );
+        assert!(batches
+            .iter()
+            .all(|batch| !batch.is_empty() && batch.len() <= 8));
+        let mut indices: Vec<_> = batches.into_iter().flatten().collect();
+        indices.sort();
+        assert_eq!(indices, (0..35).collect::<Vec<_>>());
+        assert!(embedding_batches(&[], 8).is_empty());
+    }
+
+    #[test]
+    fn bounded_pipeline_consumes_each_result_and_propagates_failures() {
+        use embsearch_core::MockEmbedder;
+        let runtime = Runtime {
+            workers: 3,
+            threads: 1,
+            batch: 2,
+        };
+        let primary = MockEmbedder::new(8);
+        let mut received = BTreeMap::new();
+        embed_parallel(
+            &primary,
+            runtime,
+            &["a", "bb", "ccc", "dddd", "ee", "f"],
+            || Ok(MockEmbedder::new(8)),
+            |index, vector| {
+                assert_eq!(vector.unwrap().len(), 8);
+                assert!(received.insert(index, ()).is_none());
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(received.len(), 6);
+        let error = embed_parallel(
+            &primary,
+            runtime,
+            &["a"; 64],
+            || Ok(MockEmbedder::new(8)),
+            |_, _| Err("spool write failed".into()),
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("spool write failed"));
+        let error = embed_parallel(
+            &primary,
+            runtime,
+            &["a"; 64],
+            || Err("session creation failed".into()),
+            |_, _| Ok(()),
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("session creation failed"));
+        embed_parallel(
+            &primary,
+            runtime,
+            &[],
+            || Err("must not load".into()),
+            |_, _| Err("must not consume".into()),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn serialized_hash_matches_previous_buffered_hash() {
+        let value = chunks(vec![Document {
+            path: "a.md".into(),
+            kind: "knowledge".into(),
+            content: "a\nb".into(),
+        }]);
+        assert_eq!(
+            serialized_hash(&value).unwrap(),
+            hash(&serde_json::to_vec(&value).unwrap())
+        );
+    }
+
+    #[test]
+    fn batches_are_indexed_directly_without_temporary_vector_files() {
+        use embsearch_core::MockEmbedder;
+        let cache = std::env::temp_dir().join(format!("kimono-direct-{}", std::process::id()));
+        fs::create_dir_all(&cache).unwrap();
+        let shared = Arc::new(MockEmbedder::new(8));
+        let mut db = Database::new(SharedEmbedder(Arc::clone(&shared)), Metric::Cosine);
+        let mut inserted = 0;
+        let texts: Vec<String> = (0..64).map(|index| format!("passage {index}")).collect();
+        let refs: Vec<&str> = texts.iter().map(String::as_str).collect();
+        let runtime = Runtime {
+            workers: 2,
+            threads: 1,
+            batch: 4,
+        };
+        embed_parallel(
+            &*shared,
+            runtime,
+            &refs,
+            || Ok(MockEmbedder::new(8)),
+            |index, vector| {
+                if let Some(vector) = vector {
+                    db.add_vector(&format!("c{index}"), vector)?;
+                    inserted += 1;
+                }
+                // Inserted progressively, never accumulated in a cache-side file.
+                assert_eq!(fs::read_dir(&cache)?.count(), 0);
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert!(inserted > 0);
+        assert_eq!(db.len(), inserted);
+        fs::remove_dir_all(&cache).unwrap();
     }
 }

@@ -12,17 +12,23 @@
       phases: { "not-indexed": "Not indexed yet", unknown: "Unknown", interrupted: "Interrupted", running: "Indexing",
         waiting: "Waiting for another indexer", ready: "Indexed", error: "Error", disabled: "Semantic search disabled" },
       stages: { checking_index: "checking freshness", reading_documents: "reading files", model_loading: "loading model",
-        model_loaded: "model loaded", document_embedding: "embedding chunks", waiting_for_other_indexer: "another Kimono process holds the index" },
+        model_loaded: "model loaded", document_embedding: "embedding chunks", device_benchmark: "benchmarking CPU / accelerators",
+        runtime_configured: "runtime configured", waiting_for_other_indexer: "another Kimono process holds the index" },
       files: "Files", tokens: "Tokens (est.)", chunks: "Chunks", rate: "Rate", chunksPerSecond: "chunks/s", eta: "ETA",
       finishing: "finishing", indexedAt: "Last indexed", detail: "Detail", locale: "en-US",
+      partial: "Partially indexed", skipped: "Skipped chunks",
+      provider: "Execution provider", benchmarks: "Startup benchmark", batch: "Last batch", failed: "failed",
     },
     fr: {
       phases: { "not-indexed": "Pas encore indexé", unknown: "Inconnu", interrupted: "Interrompu", running: "Indexation",
         waiting: "En attente d'un autre indexeur", ready: "Indexé", error: "Erreur", disabled: "Recherche sémantique désactivée" },
       stages: { checking_index: "vérification de la fraîcheur", reading_documents: "lecture des fichiers", model_loading: "chargement du modèle",
-        model_loaded: "modèle chargé", document_embedding: "vectorisation des passages", waiting_for_other_indexer: "un autre processus Kimono tient l'index" },
+        model_loaded: "modèle chargé", document_embedding: "vectorisation des passages", device_benchmark: "comparaison CPU / accélérateurs",
+        runtime_configured: "moteur configuré", waiting_for_other_indexer: "un autre processus Kimono tient l'index" },
       files: "Fichiers", tokens: "Tokens (est.)", chunks: "Passages", rate: "Débit", chunksPerSecond: "passages/s", eta: "Temps restant",
       finishing: "finalisation", indexedAt: "Dernière indexation", detail: "Détail", locale: "fr-FR",
+      partial: "Indexation partielle", skipped: "Passages non vectorisés",
+      provider: "Fournisseur d'exécution", benchmarks: "Mesure au démarrage", batch: "Dernier lot", failed: "échec",
     },
   };
   const pick = language => labels[String(language || "en").slice(0, 2)] ?? labels.en;
@@ -58,7 +64,7 @@
     const text = pick(language);
     const value = status ?? { phase: "unknown" };
     const progress = overall(value);
-    const parts = [text.phases[value.phase] ?? value.phase];
+    const parts = [value.phase === "ready" && value.skippedChunks > 0 ? text.partial : text.phases[value.phase] ?? value.phase];
     if (value.phase === "running" && progress !== undefined) parts.push(`${Math.floor(progress * 100)}%`);
     if (active(value) && text.stages[value.stage]) parts.push(text.stages[value.stage]);
     if (value.phase === "running" && Number.isFinite(value.etaSeconds) && value.etaSeconds > 0) parts.push(`${text.eta} ${duration(value.etaSeconds)}`);
@@ -76,7 +82,16 @@
     const embedded = value.embedded ?? (value.stage === "document_embedding" ? value.progress : undefined);
     if (value.phase === "running" || !Number.isFinite(value.chunks)) pair(text.chunks, embedded);
     else result.push({ label: text.chunks, value: compact(value.chunks, language) });
+    if (Number.isFinite(value.skippedChunks) && value.skippedChunks > 0) result.push({ label: text.skipped, value: compact(value.skippedChunks, language) });
     if (value.phase === "running" && Number.isFinite(value.chunksPerSecond)) result.push({ label: text.rate, value: `${value.chunksPerSecond} ${text.chunksPerSecond}` });
+    if (value.phase === "running" && Number.isFinite(value.batchMs)) result.push({ label: text.batch, value: `${value.batchMs} ms` });
+    if (["cpu", "cuda", "coreml"].includes(value.runtime?.executionProvider)) {
+      result.push({ label: text.provider, value: value.runtime.executionProvider.toUpperCase() });
+      if (Array.isArray(value.runtime.benchmarks) && value.runtime.benchmarks.length) {
+        result.push({ label: text.benchmarks, value: value.runtime.benchmarks.map(item =>
+          `${String(item.executionProvider).toUpperCase()}: ${Number.isFinite(item.medianMs) ? `${Math.round(item.medianMs)} ms` : text.failed}`).join(" · ") });
+      }
+    }
     if (value.phase === "running" && Number.isFinite(value.etaSeconds)) result.push({ label: text.eta, value: value.etaSeconds > 0 ? duration(value.etaSeconds) : text.finishing });
     if (value.indexedAt) result.push({ label: text.indexedAt, value: new Date(value.indexedAt).toLocaleString(text.locale) });
     if (value.error && value.phase !== "ready") result.push({ label: text.detail, value: String(value.error).slice(0, 300) });

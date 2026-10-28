@@ -39,6 +39,7 @@ function hits(value) {
       const [startLine, endLine] = Array.isArray(item) ? [Number(item[0]) || 0, Number(item[1]) || 0] : [Number(item) || 0, Number(item) || 0];
       return { rank: index + 1, path: file.path, title: "", kind: "", line: startLine, startLine, endLine,
         score: typeof file.score === "number" && Number.isFinite(file.score) ? round(file.score, 4) : null,
+        ...(file.contentStatus === "metadata-only" ? { contentStatus: "metadata-only" } : {}),
         ...(Array.isArray(file.terms) ? { matchedTerms: file.terms.filter(term => typeof term === "string") } : {}) };
     }));
 }

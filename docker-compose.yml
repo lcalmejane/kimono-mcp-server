@@ -3,11 +3,21 @@ services:
     build: .
     image: ${KIMONO_IMAGE:-kimono-mcp-server:local}
     restart: unless-stopped
+    logging:
+      driver: local
+      options:
+        max-size: "5m"
+        max-file: "2"
     init: true
     stop_grace_period: 40s
     environment:
       AIKIDO_ROOT: /knowledge/${AIKIDO_DIR:-aikido}
       KIMONO_CORPUS_MODE: ${KIMONO_CORPUS_MODE:-rag}
+      KIMONO_LOG_LEVEL: ${KIMONO_LOG_LEVEL:-error}
+      KIMONO_SEMANTIC_DEVICE: ${KIMONO_SEMANTIC_DEVICE:-auto}
+      KIMONO_SEMANTIC_WORKERS: ${KIMONO_SEMANTIC_WORKERS:-auto}
+      KIMONO_SEMANTIC_THREADS: ${KIMONO_SEMANTIC_THREADS:-auto}
+      KIMONO_SEMANTIC_BATCH: ${KIMONO_SEMANTIC_BATCH:-8}
       AIKIDO_WRITABLE: ${AIKIDO_WRITABLE:-false}
       AIKIDO_INCLUDE_SPEC: ${AIKIDO_INCLUDE_SPEC:-false}
       AIKIDO_REPOSITORY: ${AIKIDO_REPOSITORY:-https://github.com/lcalmejane/aikido.git}

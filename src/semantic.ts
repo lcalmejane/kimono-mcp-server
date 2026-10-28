@@ -7,6 +7,14 @@ import type { AikidoKnowledgeBase, KnowledgeKind, SearchMatch } from './knowledg
 import { runProcess } from './process.js';
 import { within, type ChangeReport } from './synchronization.js';
 import { IndexLockedError, indexInfos, processAlive, trackIndex } from './index-basis.js';
+import { nativeDiagnostics } from './diagnostics.js';
+
+export interface SemanticRuntime {
+  executionProvider: 'cpu' | 'cuda' | 'coreml';
+  gpuExecutionVerified: boolean;
+  workers: number; threads: number; batch: number;
+  benchmarks: Array<{ executionProvider: string; medianMs: number | null; error: string | null }>;
+}
 
 export interface SemanticResult {
   engine: 'embsearch-core';
@@ -15,6 +23,7 @@ export interface SemanticResult {
   chunks: number;
   embedded: number;
   skippedChunks?: number;
+  runtime?: SemanticRuntime;
   count: number;
   results: Array<SearchMatch & { score: number }>;
   changes: ChangeReport;
@@ -29,6 +38,7 @@ export interface EmbeddingResult {
   normalized: boolean;
   maxTokens: number;
   vector: number[];
+  runtime?: SemanticRuntime;
 }
 
 interface SemanticOptions {
@@ -49,6 +59,8 @@ export interface SemanticStatus {
   progress?: Count; error?: string;
   chunks?: number; model?: string;
   skippedChunks?: number;
+  runtime?: SemanticRuntime;
+  batchMs?: number;
   /** Live counters: corpus files read, estimated tokens (UTF-8 bytes / 4) and embedded chunks (nodes). */
   files?: Count; estimatedTokens?: Count; embedded?: Count;
   chunksPerSecond?: number; etaSeconds?: number; updatedAt?: string;
@@ -202,6 +214,7 @@ export class SemanticIndex {
         const digest = raw.sha256[file];
         if (typeof digest !== 'string' || !/^[a-f0-9]{64}$/.test(digest)) throw new Error('Invalid model file fingerprint');
       }
+      this.state.runtime = readRuntime(raw.runtime);
       return raw;
     });
     this.pending = result.then(() => undefined, () => undefined);
@@ -224,7 +237,8 @@ export class SemanticIndex {
         throw new Error('Invalid embedding engine response');
       }
       return { engine: 'embsearch-core' as const, version: raw.version, model: raw.model, usage,
-        dimensions: raw.dimensions, normalized: raw.normalized, maxTokens: raw.maxTokens, vector: raw.vector };
+        dimensions: raw.dimensions, normalized: raw.normalized, maxTokens: raw.maxTokens, vector: raw.vector,
+        ...(raw.runtime ? { runtime: readRuntime(raw.runtime) } : {}) };
     });
     this.pending = result.then(() => undefined, () => undefined);
     return result;
@@ -320,8 +334,13 @@ export class SemanticIndex {
     const raw = await invokeSemantic({
       operation, model, cache: path.join(parent, 'semantic'), ...options,
     }, parent, this.knowledge.root, (progress) => {
+      if (progress.stage === 'document_embedding' && this.state.stage === progress.stage
+        && (this.state.progress?.completed ?? 0) > progress.completed) return;
       this.state.progress = { completed: progress.completed, total: progress.total };
       if (progress.stage) this.state.stage = progress.stage;
+      if (progress.runtime) this.state.runtime = progress.runtime;
+      if (progress.batchMs !== undefined) this.state.batchMs = progress.batchMs;
+      if (tracked && progress.stage !== 'document_embedding') this.persist(false);
       if (!tracked || progress.stage !== 'document_embedding') return;
       if (progress.completed === 0 || !this.embeddingStarted) this.embeddingStarted = Date.now();
       this.state.embedded = { completed: progress.completed, total: progress.total };
@@ -339,6 +358,8 @@ export class SemanticIndex {
       || !Number.isSafeInteger(raw.embedded) || raw.embedded < 0 || raw.embedded > raw.chunks
       || !Array.isArray(raw.results) || raw.count !== raw.results.length) throw new Error('Invalid semantic engine response');
     const skippedChunks = raw.skippedChunks ?? 0;
+    const runtime = readRuntime(raw.runtime);
+    if (runtime) this.state.runtime = runtime;
     if (typeof skippedChunks !== 'number' || !Number.isSafeInteger(skippedChunks) || skippedChunks < 0) {
       throw new Error('Invalid semantic skipped chunk count');
     }
@@ -358,18 +379,25 @@ export class SemanticIndex {
       engine: 'embsearch-core', model: raw.model, version: raw.version,
       chunks: raw.chunks, embedded: raw.embedded, count: results.length, results,
       ...(raw.skippedChunks !== undefined ? { skippedChunks } : {}),
+      ...(runtime ? { runtime } : {}),
       changes,
     };
   }
 }
 
+const runtimeSelections = new Map<string, Promise<SemanticRuntime | undefined>>();
+
 async function invokeSemantic(
   payload: Record<string, unknown>, parent: string, cwd: string,
-  progress?: (value: { completed: number; total: number; stage?: string }) => void,
+  progress?: (value: { completed: number; total: number; stage?: string; batchMs?: number; runtime?: SemanticRuntime }) => void,
   timeout = 60_000,
   documents?: AsyncIterable<{ path: string; kind: string; content: string }>,
 ): Promise<unknown> {
+  const diagnostics = nativeDiagnostics();
   const temporary = await mkdtemp(path.join(parent, 'semantic-request-'));
+  let finishSelection: ((value: SemanticRuntime | undefined) => void) | undefined;
+  const key = JSON.stringify([payload.model, ...['KIMONO_SEMANTIC_BIN', 'ORT_DYLIB_PATH',
+    'KIMONO_SEMANTIC_WORKERS', 'KIMONO_SEMANTIC_THREADS', 'KIMONO_SEMANTIC_BATCH'].map(name => process.env[name])]);
   try {
     const request = path.join(temporary, 'request.json');
     if (documents) {
@@ -384,14 +412,24 @@ async function invokeSemantic(
         await handle.writeFile(']}');
       } finally { await handle.close(); }
     } else await writeFile(request, JSON.stringify(payload), { mode: 0o600 });
+    const automatic = !process.env.KIMONO_SEMANTIC_DEVICE || process.env.KIMONO_SEMANTIC_DEVICE === 'auto';
+    let selected: SemanticRuntime | undefined;
+    while (automatic && runtimeSelections.has(key)) {
+      selected = await runtimeSelections.get(key);
+      if (selected) break;
+    }
+    if (automatic && !selected) {
+      runtimeSelections.set(key, new Promise(resolve => { finishSelection = resolve; }));
+    }
     let buffered = '';
     const response = await runProcess(process.env.KIMONO_SEMANTIC_BIN ?? 'kimono-semantic',
-      [request], cwd, [0], timeout, (chunk) => {
+      [request], cwd, [0], automatic && !selected ? Math.max(timeout, 120_000) : timeout, (chunk) => {
         buffered += chunk;
         let newline;
         while ((newline = buffered.indexOf('\n')) >= 0) {
           const line = buffered.slice(0, newline);
           buffered = buffered.slice(newline + 1);
+          diagnostics.line(line);
           if (!line.startsWith('KIMONO_PROGRESS ')) continue;
           try {
             const value: unknown = JSON.parse(line.slice(16));
@@ -399,17 +437,58 @@ async function invokeSemantic(
               && Number.isSafeInteger(value.completed) && Number.isSafeInteger(value.total)
               && value.completed >= 0 && value.total >= value.completed) {
               progress?.({ completed: value.completed, total: value.total,
+                ...(value.runtime ? { runtime: readRuntime(value.runtime) } : {}),
+                ...(typeof value.batchMs === 'number' && Number.isFinite(value.batchMs) && value.batchMs >= 0
+                  ? { batchMs: value.batchMs } : {}),
                 ...(typeof value.phase === 'string' ? { stage: value.phase.slice(0, 64) } : {}) });
             } else console.error('Invalid semantic progress event');
           } catch (error) {
             console.error('Invalid semantic progress JSON:', error instanceof Error ? error.message : String(error));
           }
         }
-      });
-    return JSON.parse(response.stdout);
+        if (buffered.length > 64 * 1024) {
+          buffered = '';
+          console.error('Kimono: oversized semantic diagnostic line omitted');
+        }
+      }, selected ? { ...process.env, KIMONO_SEMANTIC_DEVICE: selected.executionProvider } : process.env,
+      4 * 1024 * 1024, true);
+    const raw: unknown = JSON.parse(response.stdout);
+    if (record(raw)) {
+      const runtime = readRuntime(raw.runtime);
+      if (runtime) {
+        if (selected) runtime.benchmarks = selected.benchmarks;
+        raw.runtime = runtime;
+        finishSelection?.(runtime);
+        finishSelection = undefined;
+      }
+    }
+    return raw;
   } finally {
+    diagnostics.flush();
+    if (finishSelection) {
+      runtimeSelections.delete(key);
+      finishSelection(undefined);
+    }
     await rm(temporary, { recursive: true, force: true });
   }
+}
+
+function readRuntime(value: unknown): SemanticRuntime | undefined {
+  if (value === undefined) return undefined;
+  if (!record(value) || !['cpu', 'cuda', 'coreml'].includes(String(value.executionProvider))
+    || typeof value.gpuExecutionVerified !== 'boolean'
+    || ![value.workers, value.threads, value.batch].every(count => typeof count === 'number' && Number.isSafeInteger(count) && count > 0)
+    || !Array.isArray(value.benchmarks)) throw new Error('Invalid semantic runtime response');
+  const benchmarks = value.benchmarks.map((item: unknown) => {
+    if (!record(item) || !['cpu', 'cuda', 'coreml'].includes(String(item.executionProvider))
+      || !(item.medianMs === null || typeof item.medianMs === 'number' && Number.isFinite(item.medianMs) && item.medianMs > 0)
+      || !(item.error === null || typeof item.error === 'string')
+      || (item.medianMs === null) === (item.error === null)) throw new Error('Invalid semantic device benchmark');
+    return { executionProvider: String(item.executionProvider), medianMs: item.medianMs, error: item.error };
+  });
+  return { executionProvider: value.executionProvider as SemanticRuntime['executionProvider'],
+    gpuExecutionVerified: value.gpuExecutionVerified, workers: Number(value.workers),
+    threads: Number(value.threads), batch: Number(value.batch), benchmarks };
 }
 
 function record(value: unknown): value is Record<string, unknown> {

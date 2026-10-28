@@ -80,6 +80,7 @@ test("provider uses per-folder roots, bundled Node, and extension-owned registra
   assert.equal(servers[0].env.FGR_BIN, "/native/fgr");
   assert.equal(servers[0].env.KIMONO_CORPUS_MODE, "rag");
   assert.equal(servers[0].env.MCP_TRANSPORT, "stdio");
+  assert.equal(servers[0].env.KIMONO_LOG_LEVEL, "error");
   assert.equal(servers[0].cwd.fsPath, process.cwd());
   assert.equal(servers[1].env.AIKIDO_ROOT, path.join(process.cwd(), "tests"));
   for (const disposable of disposables) disposable.dispose();
@@ -91,6 +92,22 @@ test("settings command targets the installed extension identity", async () => {
   context.extension.id = "another-publisher.kimono-mcp";
   await state.commands.get("kimono.configure")();
   assert.deepEqual(state.commandArgs, ["workbench.action.openSettings", "@ext:another-publisher.kimono-mcp"]);
+});
+
+test("embedded device selection is passed through the isolated environment and validated", async () => {
+  const { state } = fixture({ semanticDevice: "coreml" });
+  const [server] = await state.provider.provideMcpServerDefinitions();
+  assert.equal(server.env.KIMONO_SEMANTIC_DEVICE, "coreml");
+  state.settings.semanticDevice = "gpu";
+  await assert.rejects(state.provider.provideMcpServerDefinitions(), /semanticDevice/);
+});
+
+test("debug diagnostics are explicit and invalid log levels fail", async () => {
+  const { state } = fixture({ logLevel: "debug" });
+  const [server] = await state.provider.provideMcpServerDefinitions();
+  assert.equal(server.env.KIMONO_LOG_LEVEL, "debug");
+  state.settings.logLevel = "verbose";
+  await assert.rejects(state.provider.provideMcpServerDefinitions(), /logLevel/);
 });
 
 test("embedded resolve isolates environment, cache and Git profile; configuration invalidates old definitions", async () => {

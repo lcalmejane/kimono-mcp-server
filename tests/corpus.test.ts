@@ -123,8 +123,11 @@ it('retains unreadable document metadata with a trace instead of aborting indexi
       content: expect.stringContaining('Path: "src/gone.ts"'),
     });
     await expect(knowledge.tryRead('src/ok.ts')).resolves.toMatchObject({ content: 'ok' });
-    expect(trace).toHaveBeenCalledWith(expect.stringContaining('src/gone.ts'));
+    // Production logs one bounded reason; per-file paths stay in corpus status (debug logs them).
+    expect(trace).toHaveBeenCalledWith(expect.stringContaining('content unavailable'));
+    expect(trace).not.toHaveBeenCalledWith(expect.stringContaining('src/gone.ts'));
     expect(knowledge.corpusStatus.skipped).toBe(1);
+    expect(JSON.stringify(knowledge.corpusStatus)).toContain('src/gone.ts');
   } finally { trace.mockRestore(); }
 });
 
