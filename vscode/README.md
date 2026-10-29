@@ -76,7 +76,10 @@ search test. The local RAG mode does not require a special project structure.
 The optional AI-KIDO knowledge mode requires `prompts/index.md` or `index.md`.
 
 Embedding uses one model session by default and bounded vector batches. The
-panel displays the selected execution provider and startup timings. See
+panel displays the persistent worker lifecycle, warm index cache, active
+embedding model, runtime sizing and estimated CPU/memory budgets when available,
+alongside the selected execution provider and startup timings. Resource figures
+are planning estimates, not hard utilization or memory limits. See
 [runtime and memory settings](https://github.com/lcalmejane/kimono-mcp-server/blob/main/docs/local-rag.md#embedding-runtime-and-memory).
 
 ## Install manually

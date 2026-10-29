@@ -246,7 +246,11 @@ it('sends extracted text and original paths to the semantic engine, never ZIP by
   let documents: unknown;
   vi.spyOn(processes, 'runProcess').mockImplementation(async (...args) => {
     if (args[0] !== (process.env.KIMONO_SEMANTIC_BIN ?? 'kimono-semantic')) return realRun(...args);
-    documents = JSON.parse(await readFile(args[1][0], 'utf8')).documents;
+    const request = JSON.parse(await readFile(args[1][0], 'utf8'));
+    if (request.operation === 'profile') return { stdout: JSON.stringify({
+      engine: 'embsearch-core', fingerprint: 'a'.repeat(64),
+    }), stderr: '', exitCode: 0 };
+    documents = request.documents;
     return { stdout: JSON.stringify({ engine: 'embsearch-core', version: 'test', model: 'test', chunks: 1,
       embedded: 1, count: 0, results: [], changes: { added: ['semantic.xlsx'], modified: [], deleted: [] } }),
       stderr: '', exitCode: 0 };
@@ -420,6 +424,10 @@ it('reports incomplete semantic indexing rather than claiming a fresh complete i
   const realRun = processes.runProcess;
   vi.spyOn(processes, 'runProcess').mockImplementation(async (...args) => {
     if (args[0] !== (process.env.KIMONO_SEMANTIC_BIN ?? 'kimono-semantic')) return realRun(...args);
+    const request = JSON.parse(await readFile(args[1][0], 'utf8'));
+    if (request.operation === 'profile') return { stdout: JSON.stringify({
+      engine: 'embsearch-core', fingerprint: 'a'.repeat(64),
+    }), stderr: '', exitCode: 0 };
     return { stdout: JSON.stringify({ engine: 'embsearch-core', version: 'test', model: 'test', chunks: 1,
       embedded: 1, skippedChunks: 2, count: 0, results: [], changes: { added: ['content.txt'], modified: [], deleted: [] } }),
       stderr: '', exitCode: 0 };

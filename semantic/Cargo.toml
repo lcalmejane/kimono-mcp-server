@@ -7,8 +7,19 @@ publish = false
 
 [dependencies]
 embsearch-core = { version = "=0.3.4", features = ["onnx"] }
+ndarray = "=0.16.1"
 ort = { version = "=2.0.0-rc.10", default-features = false, features = ["load-dynamic"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
 sysinfo = { version = "0.37", default-features = false, features = ["system"] }
+tokenizers = { version = "=0.20.4", default-features = false, features = ["onig"] }
+tree-sitter = "=0.25.10"
+tree-sitter-c = "=0.24.2"
+tree-sitter-cpp = "=0.23.4"
+tree-sitter-go = "=0.25.0"
+tree-sitter-java = "=0.23.5"
+tree-sitter-javascript = "=0.25.0"
+tree-sitter-python = "=0.25.0"
+tree-sitter-rust = "=0.24.2"
+tree-sitter-typescript = "=0.23.2"

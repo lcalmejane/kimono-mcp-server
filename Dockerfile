@@ -48,7 +48,7 @@ ENV ORT_DYLIB_PATH=/opt/kimono/onnxruntime/lib/libonnxruntime.so \
 
 FROM semantic-tooling AS test
 COPY --from=build --chown=node:node /app/node_modules ./node_modules
-COPY --chown=node:node package*.json tsconfig.json Dockerfile ./
+COPY --chown=node:node package*.json tsconfig.json vitest.config.ts Dockerfile ./
 COPY --chown=node:node src ./src
 COPY --chown=node:node tests ./tests
 COPY --chown=node:node semantic ./semantic

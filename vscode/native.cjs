@@ -46,7 +46,9 @@ async function nativeEnvironment(directory, target = `${process.platform}-${proc
     KIMONO_MODEL_DIR: asset(manifest.modelDir),
     PATH: [path.join(root, "bin"), library, process.env.PATH || ""].join(path.delimiter),
     ...(process.platform === "linux" ? { LD_LIBRARY_PATH: library } : {}),
-    ...(process.platform === "darwin" ? { DYLD_LIBRARY_PATH: library } : {}),
+    ...(process.platform === "darwin" ? {
+      DYLD_LIBRARY_PATH: [library, path.resolve(root, "../runtime")].join(path.delimiter),
+    } : {}),
   };
 }
 

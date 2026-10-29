@@ -3,6 +3,26 @@ import type { AikidoKnowledgeBase } from './knowledge.js';
 const stopwords = new Set(('a an and are as at au aux avec be by ce ces cette comment dans de des do does du elle en est et faire for from how il ils in is it its je la le les leur lui ma me mes mon ne nos not notre nous of on or ou par pas pour que quel quelle quels quelles qui sa se ses son sur that the their these this to un une vos votre vous was were what when where which why with').split(' '));
 const vocabularyFile = /(?:gloss|lexiqu|synonym|ontolog|vocabular)/i;
 
+export type QueryIntent = 'natural-language' | 'identifier' | 'qualified-symbol' | 'path';
+
+export function queryIntent(query: string): QueryIntent {
+  const value = query.trim();
+  if (/[\\/]/.test(value) || /^[\w.-]+\.(?:c|cc|cpp|cs|go|h|hpp|java|js|jsx|mjs|py|rb|rs|scala|sh|swift|ts|tsx|vue)$/i.test(value)) {
+    return 'path';
+  }
+  if (/::|->|#[\w$]+|\.[A-Za-z_$][\w$]*/.test(value)) return 'qualified-symbol';
+  if (/^[A-Za-z_$][\w$]*$/.test(value)) return 'identifier';
+  return 'natural-language';
+}
+
+export function identifierTerms(value: string): Set<string> {
+  const split = value.replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .replace(/([A-Z])([A-Z][a-z])/g, '$1 $2')
+    .replace(/([A-Za-z])(\d)/g, '$1 $2')
+    .replace(/(\d)([A-Za-z])/g, '$1 $2');
+  return new Set([...normalize(value).split(' '), ...normalize(split).split(' ')].filter(term => term.length > 1));
+}
+
 export function normalize(value: string): string {
   return value.normalize('NFKD').replace(/\p{M}/gu, '').toLowerCase()
     .replace(/[^\p{L}\p{N}]+/gu, ' ').trim().replace(/\s+/g, ' ');
@@ -87,6 +107,7 @@ export class ProjectVocabulary {
   async plan(query: string, enrich = true) {
     const vocabulary = await this.load();
     const normalized = normalize(query);
+    const intent = queryIntent(query);
     const originalTerms = terms(query);
     if (!originalTerms.length) originalTerms.push(...normalized.split(' ').filter(Boolean).slice(0, 16));
     const expansions: Array<{ term: string; relation: 'alias' | 'definition'; concept: string; path: string; line: number }> = [];
@@ -110,7 +131,7 @@ export class ProjectVocabulary {
       if (matchedConcepts.length >= 8) break;
     }
     const aliases = expansions.filter(item => item.relation === 'alias').map(item => item.term);
-    return { original: query, normalized, terms: originalTerms, expansions, concepts: matchedConcepts,
+    return { original: query, normalized, intent, terms: originalTerms, expansions, concepts: matchedConcepts,
       semanticQuery: [query, ...aliases].join(' ; ').slice(0, 8192),
       vocabulary: { sources: vocabulary.sources, concepts: vocabulary.concepts.length, truncated: vocabulary.truncated,
         policy: 'project-only', enabled: enrich },
@@ -124,7 +145,9 @@ export type QueryPlan = Awaited<ReturnType<ProjectVocabulary['plan']>>;
 
 export function lexicalPattern(plan: QueryPlan): string {
   const accents: Record<string, string> = { a: '[aàâäáãå]', c: '[cç]', e: '[eéèêë]', i: '[iîïíì]', o: '[oôöóòõ]', u: '[uùûüú]', y: '[yÿý]' };
-  const values = [...new Set([...plan.terms, ...plan.expansions.filter(item => item.relation === 'alias').map(item => item.term)])];
+  const identifierQuery = plan.intent === 'natural-language' ? [] : [...identifierTerms(plan.original)];
+  const values = [...new Set([...plan.terms, ...identifierQuery,
+    ...plan.expansions.filter(item => item.relation === 'alias').map(item => item.term)])];
   return values.length ? `(?:^|[^\\p{L}\\p{N}])(?:${values.map(term =>
     term.split('').map(char => char === ' ' ? '[^\\p{L}\\p{N}]+' : `${accents[char] ?? char}\\p{M}*`).join('')).join('|')})(?:$|[^\\p{L}\\p{N}])` : '';
 }

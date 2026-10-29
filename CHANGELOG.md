@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.9.0 - 2026-10-29
+
+- Keep the native embedding worker and model session warm across operations,
+  publish worker lifecycle and measured cache/runtime diagnostics, and surface
+  model, warm-index, CPU-budget and memory-estimate details in the shared
+  management panels.
+- Reuse verified document fingerprints and fresh semantic indexes during
+  incremental maintenance; correct stale fingerprint reuse when Git state is
+  unavailable.
+- Bound semantic candidate selection and request queuing, improve code-oriented
+  query signals and syntax-aware chunking, and preserve explicit error behavior.
+- Keep the experimental code embedding profile disabled by default.
+- Preserve the independent immutable snapshot lifecycle and snapshot search
+  behavior.
+
 ## 0.8.0 - 2026-10-28
 
 - Cache raw search results per immutable snapshot in bounded memory (128 entries,

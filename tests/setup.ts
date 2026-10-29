@@ -1,0 +1,1 @@
+process.env.KIMONO_SEMANTIC_PERSISTENT_WORKER ??= 'false';

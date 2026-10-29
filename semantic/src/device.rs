@@ -1,5 +1,6 @@
+use crate::model::load_embedder;
 use crate::{requested_device, Result, Runtime};
-use embsearch_core::{Embedder, OnnxEmbedder};
+use embsearch_core::Embedder;
 use ort::execution_providers::coreml::{CoreMLComputeUnits, CoreMLModelFormat};
 use ort::execution_providers::{
     CPUExecutionProvider, CUDAExecutionProvider, CoreMLExecutionProvider, ExecutionProvider,
@@ -155,7 +156,7 @@ pub fn select(model: &Path) -> Result<Selection> {
 }
 
 pub fn benchmark(model: &Path, runtime: Runtime, device: &str) -> Result<Measurement> {
-    let embedder = OnnxEmbedder::from_dir(model)?;
+    let embedder = load_embedder(model)?;
     let batch = runtime.batch.min(8);
     let short = vec!["Local project search and documentation.".repeat(2); batch];
     let long = vec!["Local project search and documentation.".repeat(12); batch];

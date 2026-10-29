@@ -1,5 +1,5 @@
 import { corpusConfig } from '../src/corpus-config.js';
-import { access, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { access, chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -12,6 +12,7 @@ import { runtimeFor } from '../src/runtime-tools.js';
 import { runProcess } from '../src/process.js';
 import * as processes from '../src/process.js';
 import { sourceSnapshot } from '../src/index-basis.js';
+import { shutdownSemanticWorkers } from '../src/semantic-worker.js';
 
 const directories: string[] = [];
 afterEach(async () => {
@@ -33,6 +34,60 @@ async function fixture() {
   await knowledge.initialize();
   return knowledge;
 }
+
+it('publishes live worker transitions to the shared status file', async () => {
+  const knowledge = await fixture();
+  const binary = path.join(knowledge.root, 'fake-semantic-worker');
+  const statusFile = path.join(knowledge.root, 'semantic-status.json');
+  await writeFile(binary, `#!/usr/bin/env node
+const fs = require('node:fs');
+const readline = require('node:readline');
+readline.createInterface({ input: process.stdin }).on('line', line => {
+  const request = JSON.parse(line);
+  const respond = result => process.stdout.write(JSON.stringify({
+    version: 1, id: request.id, ok: true, result
+  }) + '\\n');
+  if (request.operation === 'shutdown') { respond({ shutdown: true }); process.exit(0); }
+  const payload = JSON.parse(fs.readFileSync(request.requestPath, 'utf8'));
+  if (payload.operation === 'search') {
+    respond({ engine: 'embsearch-core', version: 'test', model: 'test-model', chunks: 1, embedded: 0,
+      count: 1, results: [{ path: 'prompts/index.md', line: 1, score: 0.9, excerpt: '# AI-KIDO knowledge' }],
+      changes: { added: [], modified: [], deleted: [] }, hotIndexes: 1, hotIndexEstimatedBytes: 1024 });
+    return;
+  }
+  respond({ engine: 'embsearch-core', version: 'test', model: 'test-model', usage: payload.usage,
+    normalized: true, dimensions: 2, maxTokens: 16, vector: [0.6, 0.8] });
+});
+`);
+  await chmod(binary, 0o700);
+  const originalEnvironment = Object.fromEntries([
+    'KIMONO_MODEL_DIR', 'KIMONO_SEMANTIC_BIN', 'KIMONO_SEMANTIC_PERSISTENT_WORKER', 'KIMONO_STATUS_FILE',
+  ].map(name => [name, process.env[name]]));
+  process.env.KIMONO_MODEL_DIR = path.join(knowledge.root, 'model');
+  process.env.KIMONO_SEMANTIC_BIN = binary;
+  process.env.KIMONO_SEMANTIC_PERSISTENT_WORKER = 'true';
+  process.env.KIMONO_STATUS_FILE = statusFile;
+  try {
+    await expect(knowledge.semanticIndex.embed('worker status query')).resolves.toMatchObject({
+      model: 'test-model', usage: 'query', dimensions: 2,
+    });
+    expect(JSON.parse(await readFile(statusFile, 'utf8')).worker).toMatchObject({ phase: 'ready' });
+    await expect(knowledge.semanticIndex.run('search')).resolves.toMatchObject({
+      hotIndexes: 1, hotIndexEstimatedBytes: 1024,
+    });
+    expect(JSON.parse(await readFile(statusFile, 'utf8'))).toMatchObject({
+      hotIndexes: 1, hotIndexEstimatedBytes: 1024, worker: { phase: 'ready' },
+    });
+    await shutdownSemanticWorkers();
+    expect(JSON.parse(await readFile(statusFile, 'utf8')).worker).toEqual({ phase: 'stopped' });
+  } finally {
+    await shutdownSemanticWorkers();
+    for (const [name, value] of Object.entries(originalEnvironment)) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  }
+});
 
 it('reuses a fresh semantic index at startup instead of rebuilding it', async () => {
   const knowledge = await fixture();
@@ -58,6 +113,114 @@ it('reuses a fresh semantic index at startup instead of rebuilding it', async ()
   }
 });
 
+it('uses a clean Git and matching corpus configuration as a bounded freshness fast path', async () => {
+  const knowledge = await fixture();
+  await runProcess('git', ['init', '-q'], knowledge.root, [0]);
+  await runProcess('git', ['-c', 'user.name=Kimono test', '-c', 'user.email=kimono-test@example.invalid',
+    'add', '--all'], knowledge.root, [0]);
+  await runProcess('git', ['-c', 'user.name=Kimono test', '-c', 'user.email=kimono-test@example.invalid',
+    'commit', '-qm', 'fixture'], knowledge.root, [0]);
+  const baseline = await sourceSnapshot(knowledge);
+  const read = vi.spyOn(AikidoKnowledgeBase.prototype, 'tryRead');
+  try {
+    const unchanged = await sourceSnapshot(knowledge, undefined, baseline);
+    expect(unchanged.corpusFingerprint).toBe(baseline.corpusFingerprint);
+    expect(read).not.toHaveBeenCalled();
+
+    await writeFile(path.join(knowledge.root, 'prompts/secrets.md'), 'Updated secret handling guidance.');
+    const changed = await sourceSnapshot(knowledge, undefined, baseline);
+    expect(changed.corpusFingerprint).toBeNull();
+    expect(changed.basisFingerprint).not.toBe(baseline.basisFingerprint);
+    expect(changed.dirty).toBe(true);
+    expect(read).toHaveBeenCalled();
+  } finally { read.mockRestore(); }
+});
+
+it('reuses a complete compatible index without refreshing or rereading a clean unchanged corpus', async () => {
+  const knowledge = await fixture();
+  await runProcess('git', ['init', '-q'], knowledge.root, [0]);
+  await runProcess('git', ['-c', 'user.name=Kimono test', '-c', 'user.email=kimono-test@example.invalid',
+    'add', '--all'], knowledge.root, [0]);
+  await runProcess('git', ['-c', 'user.name=Kimono test', '-c', 'user.email=kimono-test@example.invalid',
+    'commit', '-qm', 'fixture'], knowledge.root, [0]);
+  const baseline = await sourceSnapshot(knowledge);
+  const fingerprint = 'a'.repeat(64);
+  const documents = Object.fromEntries(knowledge.list().map(entry => [entry.path, 'b'.repeat(64)]));
+  const chunks = Object.fromEntries(knowledge.list().map(entry => [`${entry.path}#0`, {
+    path: entry.path, kind: entry.kind, line: 1, text: entry.path, hash: 'c'.repeat(64),
+  }]));
+  const cache = path.join(knowledge.searchIndex.directory, 'semantic');
+  await mkdir(cache, { recursive: true });
+  await writeFile(path.join(cache, 'state.json'), JSON.stringify({
+    generation: `store-${'d'.repeat(24)}`, model: fingerprint, index_version: '0.3.4', documents, chunks,
+  }));
+  await writeFile(path.join(knowledge.searchIndex.directory, 'semantic-basis.json'), JSON.stringify({
+    attempt: 'previous', phase: 'ready',
+    lastSuccessful: { ...baseline, indexedAt: '2026-10-24T00:00:00.000Z' },
+  }));
+  vi.stubEnv('KIMONO_MODEL_DIR', 'unused-test-model');
+  const realRunProcess = processes.runProcess;
+  const run = vi.spyOn(processes, 'runProcess').mockImplementation(async (executable, args, cwd, exitCodes, timeout, onStderr, environment) => {
+    if (executable !== (process.env.KIMONO_SEMANTIC_BIN ?? 'kimono-semantic')) {
+      return realRunProcess(executable, args, cwd, exitCodes, timeout, onStderr, environment);
+    }
+    const request = JSON.parse(await readFile(args[0], 'utf8')) as Record<string, unknown>;
+    if (request.operation === 'profile') return { stdout: JSON.stringify({
+      engine: 'embsearch-core', fingerprint,
+    }), stderr: '', exitCode: 0 };
+    expect(request.operation).toBe('stats');
+    expect(request).not.toHaveProperty('documents');
+    return { stdout: JSON.stringify({ engine: 'embsearch-core', version: '0.3.4', model: 'test-model',
+      chunks: Object.keys(chunks).length, embedded: 0, count: 0, results: [],
+      changes: { added: [], modified: [], deleted: [] } }), stderr: '', exitCode: 0 };
+  });
+  const refresh = vi.spyOn(knowledge, 'refresh');
+  const read = vi.spyOn(AikidoKnowledgeBase.prototype, 'tryRead');
+  try {
+    const result = await knowledge.semanticIndex.run('update');
+    expect(result.chunks).toBe(4);
+    expect(run.mock.calls.filter(([executable]) =>
+      executable === (process.env.KIMONO_SEMANTIC_BIN ?? 'kimono-semantic'))).toHaveLength(2);
+    expect(refresh).not.toHaveBeenCalled();
+    expect(read).not.toHaveBeenCalled();
+  } finally {
+    run.mockRestore();
+    refresh.mockRestore();
+    read.mockRestore();
+    vi.unstubAllEnvs();
+  }
+});
+
+it('searches the persisted index without refreshing or serializing source documents', async () => {
+  const knowledge = await fixture();
+  const originalModel = process.env.KIMONO_MODEL_DIR;
+  const realRunProcess = processes.runProcess;
+  process.env.KIMONO_MODEL_DIR = 'unused-test-model';
+  const refresh = vi.spyOn(knowledge, 'refresh');
+  const run = vi.spyOn(processes, 'runProcess').mockImplementation(async (executable, args, cwd, exitCodes, timeout, onStderr, environment) => {
+    if (executable !== (process.env.KIMONO_SEMANTIC_BIN ?? 'kimono-semantic')) {
+      return realRunProcess(executable, args, cwd, exitCodes, timeout, onStderr, environment);
+    }
+    const request = JSON.parse(await readFile(args[0], 'utf8'));
+    expect(request.operation).toBe('search');
+    expect(request).not.toHaveProperty('documents');
+    return { stdout: JSON.stringify({ engine: 'embsearch-core', version: '0.3.4', model: 'test-model',
+      chunks: 0, embedded: 0, count: 0, results: [], changes: { added: [], modified: [], deleted: [] } }),
+      stderr: '', exitCode: 0 };
+  });
+  try {
+    const result = await knowledge.semanticIndex.run('search', { query: 'find a symbol' });
+    expect(result.results).toEqual([]);
+    expect(refresh).not.toHaveBeenCalled();
+    expect(run).toHaveBeenCalledOnce();
+  } finally {
+    run.mockRestore();
+    refresh.mockRestore();
+    if (originalModel === undefined) delete process.env.KIMONO_MODEL_DIR;
+    else process.env.KIMONO_MODEL_DIR = originalModel;
+  }
+});
+
 it('reports semantic indexing stage and progress during startup preparation', async () => {
   const knowledge = await fixture();
   const originalModel = process.env.KIMONO_MODEL_DIR;
@@ -67,6 +230,10 @@ it('reports semantic indexing stage and progress during startup preparation', as
     if (executable !== (process.env.KIMONO_SEMANTIC_BIN ?? 'kimono-semantic')) {
       return realRunProcess(executable, args, cwd, exitCodes, timeout, onStderr, environment);
     }
+    const request = JSON.parse(await readFile(args[0], 'utf8'));
+    if (request.operation === 'profile') return { stdout: JSON.stringify({
+      engine: 'embsearch-core', fingerprint: 'a'.repeat(64),
+    }), stderr: '', exitCode: 0 };
     onStderr?.('KIMONO_PROGRESS {"phase":"document_embedding","completed":1,"total":2}\n');
     return { stdout: JSON.stringify({ engine: 'embsearch-core', version: '0.3.4', model: 'test-model',
       chunks: 2, embedded: 2, count: 0, results: [], changes: { added: [], modified: [], deleted: [] } }),
@@ -95,6 +262,10 @@ it('publishes live file, token and chunk counters with ETA to a status file shar
     if (executable !== (process.env.KIMONO_SEMANTIC_BIN ?? 'kimono-semantic')) {
       return realRunProcess(executable, args, cwd, exitCodes, timeout, onStderr, environment);
     }
+    const request = JSON.parse(await readFile(args[0], 'utf8'));
+    if (request.operation === 'profile') return { stdout: JSON.stringify({
+      engine: 'embsearch-core', fingerprint: 'a'.repeat(64),
+    }), stderr: '', exitCode: 0 };
     onStderr?.('KIMONO_PROGRESS {"phase":"document_embedding","completed":0,"total":4}\n');
     await new Promise(resolve => setTimeout(resolve, 20));
     onStderr?.('KIMONO_PROGRESS {"phase":"document_embedding","completed":2,"total":4}\n');
@@ -150,6 +321,10 @@ it('reuses one measured provider selection across concurrent roots and exposes r
     if (executable !== (process.env.KIMONO_SEMANTIC_BIN ?? 'kimono-semantic')) {
       return realRunProcess(executable, args, cwd, exitCodes, timeout, onStderr, environment);
     }
+    const request = JSON.parse(await readFile(args[0], 'utf8'));
+    if (request.operation === 'profile') return { stdout: JSON.stringify({
+      engine: 'embsearch-core', fingerprint: 'a'.repeat(64),
+    }), stderr: '', exitCode: 0 };
     devices.push(environment?.KIMONO_SEMANTIC_DEVICE);
     const report = { ...runtime,
       resources: { ...runtime.resources, availableMemoryBytes: devices.length === 2 ? 3_000_000_000 : 4_000_000_000,
@@ -213,6 +388,10 @@ it('waits for another live indexer and reclaims a lock left by a dead process', 
     if (executable !== (process.env.KIMONO_SEMANTIC_BIN ?? 'kimono-semantic')) {
       return realRunProcess(executable, args, cwd, exitCodes, timeout, onStderr, environment);
     }
+    const request = JSON.parse(await readFile(args[0], 'utf8'));
+    if (request.operation === 'profile') return { stdout: JSON.stringify({
+      engine: 'embsearch-core', fingerprint: 'a'.repeat(64),
+    }), stderr: '', exitCode: 0 };
     return { stdout: JSON.stringify({ engine: 'embsearch-core', version: '0.3.4', model: 'test-model',
       chunks: 1, embedded: 1, count: 0, results: [], changes: { added: [], modified: [], deleted: [] } }),
       stderr: '', exitCode: 0 };
@@ -234,6 +413,184 @@ it('waits for another live indexer and reclaims a lock left by a dead process', 
     run.mockRestore();
     if (originalModel === undefined) delete process.env.KIMONO_MODEL_DIR;
     else process.env.KIMONO_MODEL_DIR = originalModel;
+  }
+});
+
+it('sends only changed documents and explicit scoped deletions for a compatible incremental index', async () => {
+  const knowledge = await fixture();
+  await runProcess('git', ['init', '-q'], knowledge.root, [0]);
+  await runProcess('git', ['-c', 'user.name=Kimono test', '-c', 'user.email=kimono-test@example.invalid',
+    'add', '--all'], knowledge.root, [0]);
+  await runProcess('git', ['-c', 'user.name=Kimono test', '-c', 'user.email=kimono-test@example.invalid',
+    'commit', '-qm', 'fixture'], knowledge.root, [0]);
+  const baseline = await sourceSnapshot(knowledge);
+  const originalModel = process.env.KIMONO_MODEL_DIR;
+  const fingerprint = 'a'.repeat(64);
+  const documents: Record<string, string> = {};
+  const chunks: Record<string, { path: string; kind: string; line: number; text: string; hash: string }> = {};
+  for (const entry of knowledge.list()) {
+    const document = await knowledge.tryRead(entry.id);
+    if (!document) throw new Error(`Could not read fixture document: ${entry.path}`);
+    documents[entry.path] = createHash('sha256')
+      .update(JSON.stringify([entry.kind, document.content])).digest('hex');
+    chunks[`${entry.path}#0`] = {
+      path: entry.path, kind: entry.kind, line: 1, text: document.content,
+      hash: createHash('sha256').update(document.content).digest('hex'),
+    };
+  }
+  documents['prompts/removed.md'] = 'b'.repeat(64);
+  chunks['prompts/removed.md#0'] = {
+    path: 'prompts/removed.md', kind: 'knowledge', line: 1, text: 'removed',
+    hash: createHash('sha256').update('removed').digest('hex'),
+  };
+  const cache = path.join(knowledge.searchIndex.directory, 'semantic');
+  await mkdir(cache, { recursive: true });
+  await writeFile(path.join(cache, 'state.json'), JSON.stringify({
+    generation: `store-${'c'.repeat(24)}`, model: fingerprint, index_version: '0.3.4', documents, chunks,
+  }));
+  await writeFile(path.join(knowledge.searchIndex.directory, 'semantic-basis.json'), JSON.stringify({
+    attempt: 'previous', phase: 'ready',
+    lastSuccessful: { ...baseline, indexedAt: '2026-10-24T00:00:00.000Z' },
+  }));
+  await writeFile(path.join(knowledge.root, 'prompts/secrets.md'), 'Use managed credentials and rotate tokens.');
+  await writeFile(path.join(knowledge.root, 'prompts/new.md'), 'Document a new retrieval source.');
+  await knowledge.refresh();
+  process.env.KIMONO_MODEL_DIR = 'unused-test-model';
+  const realRunProcess = processes.runProcess;
+  let updateRequest: Record<string, unknown> | undefined;
+  const read = vi.spyOn(AikidoKnowledgeBase.prototype, 'tryRead');
+  const run = vi.spyOn(processes, 'runProcess').mockImplementation(async (executable, args, cwd, exitCodes, timeout, onStderr, environment) => {
+    if (executable !== (process.env.KIMONO_SEMANTIC_BIN ?? 'kimono-semantic')) {
+      return realRunProcess(executable, args, cwd, exitCodes, timeout, onStderr, environment);
+    }
+    const request = JSON.parse(await readFile(args[0], 'utf8')) as Record<string, unknown>;
+    if (request.operation === 'profile') return { stdout: JSON.stringify({
+      engine: 'embsearch-core', fingerprint,
+    }), stderr: '', exitCode: 0 };
+    updateRequest = request;
+    return { stdout: JSON.stringify({ engine: 'embsearch-core', version: '0.3.4', model: 'test-model',
+      chunks: 4, embedded: 0, count: 0, results: [], changes: { added: [], modified: [], deleted: [] } }),
+      stderr: '', exitCode: 0 };
+  });
+  try {
+    await knowledge.semanticIndex.run('update');
+    expect(updateRequest).toMatchObject({ incremental: true, deletedPaths: ['prompts/removed.md'] });
+    const submitted = (updateRequest?.documents as Array<{ path: string }>).map(document => document.path).sort();
+    expect(submitted).toEqual(['prompts/new.md', 'prompts/secrets.md']);
+    const changedContentReads = read.mock.calls.map(([id]) =>
+      knowledge.list().find(entry => entry.id === id || entry.path === id)?.path).filter(Boolean);
+    expect(new Set(changedContentReads)).toEqual(new Set(['prompts/new.md', 'prompts/secrets.md']));
+  } finally {
+    run.mockRestore();
+    read.mockRestore();
+    if (originalModel === undefined) delete process.env.KIMONO_MODEL_DIR;
+    else process.env.KIMONO_MODEL_DIR = originalModel;
+  }
+});
+
+it('does not load or search a configured code model while its paused profile is disabled', async () => {
+  const knowledge = await fixture();
+  await mkdir(knowledge.searchIndex.directory, { recursive: true });
+  vi.stubEnv('KIMONO_MODEL_DIR', 'multilingual-model');
+  vi.stubEnv('KIMONO_CODE_MODEL_DIR', 'code-model');
+  vi.stubEnv('KIMONO_CODE_PROFILE_ENABLED', 'false');
+  const realRunProcess = processes.runProcess;
+  const models: string[] = [];
+  const run = vi.spyOn(processes, 'runProcess').mockImplementation(async (executable, args, cwd, exitCodes, timeout, onStderr, environment) => {
+    if (executable !== (process.env.KIMONO_SEMANTIC_BIN ?? 'kimono-semantic')) {
+      return realRunProcess(executable, args, cwd, exitCodes, timeout, onStderr, environment);
+    }
+    const request = JSON.parse(await readFile(args[0], 'utf8')) as Record<string, unknown>;
+    models.push(String(request.model));
+    if (request.operation === 'info') return { stdout: JSON.stringify({
+      engine: 'embsearch-core', version: 'test', model: 'multilingual-model', name: 'multilingual-model',
+      dimensions: 384, normalized: true, maxTokens: 512, pooling: 'mean',
+      queryPrefix: null, documentPrefix: null, compatibility: 'test',
+      sha256: { 'model.onnx': 'a'.repeat(64), 'tokenizer.json': 'b'.repeat(64), 'model.json': 'c'.repeat(64) },
+    }), stderr: '', exitCode: 0 };
+    return { stdout: JSON.stringify({ engine: 'embsearch-core', version: 'test', model: 'multilingual-model',
+      chunks: 0, embedded: 0, count: 0, results: [], changes: { added: [], modified: [], deleted: [] } }),
+      stderr: '', exitCode: 0 };
+  });
+  try {
+    const info = await knowledge.semanticIndex.info();
+    expect(info).not.toHaveProperty('profiles');
+    const result = await knowledge.semanticIndex.run('search', { query: 'retrieval' });
+    expect(result.model).toBe('multilingual-model');
+    expect(models).toEqual(['multilingual-model', 'multilingual-model']);
+  } finally {
+    run.mockRestore();
+    vi.unstubAllEnvs();
+  }
+});
+
+it('keeps code embeddings in a separate opt-in index and fuses profile search ranks', async () => {
+  const knowledge = await fixture();
+  const originalModel = process.env.KIMONO_MODEL_DIR;
+  const originalCodeModel = process.env.KIMONO_CODE_MODEL_DIR;
+  await mkdir(path.join(knowledge.root, 'src'), { recursive: true });
+  await writeFile(path.join(knowledge.root, 'src/retrieval.ts'), 'export function retrieveSymbol() { return true; }');
+  await knowledge.refresh();
+  vi.stubEnv('KIMONO_MODEL_DIR', 'multilingual-model');
+  vi.stubEnv('KIMONO_CODE_MODEL_DIR', 'code-model');
+  vi.stubEnv('KIMONO_CODE_PROFILE_ENABLED', 'true');
+  const realRunProcess = processes.runProcess;
+  const updates: Array<{ cache: string; model: string; paths: string[] }> = [];
+  const run = vi.spyOn(processes, 'runProcess').mockImplementation(async (executable, args, cwd, exitCodes, timeout, onStderr, environment) => {
+    if (executable !== (process.env.KIMONO_SEMANTIC_BIN ?? 'kimono-semantic')) {
+      return realRunProcess(executable, args, cwd, exitCodes, timeout, onStderr, environment);
+    }
+    const request = JSON.parse(await readFile(args[0], 'utf8')) as Record<string, unknown>;
+    const model = String(request.model);
+    if (request.operation === 'profile') return { stdout: JSON.stringify({
+      engine: 'embsearch-core', fingerprint: model === 'code-model' ? 'c'.repeat(64) : 'd'.repeat(64),
+    }), stderr: '', exitCode: 0 };
+    if (request.operation === 'info') return { stdout: JSON.stringify({
+      engine: 'embsearch-core', version: 'test', model, name: model,
+      dimensions: model === 'code-model' ? 768 : 384, normalized: true, maxTokens: 512,
+      pooling: 'mean', queryPrefix: null, documentPrefix: null, compatibility: 'test',
+      sha256: { 'model.onnx': 'a'.repeat(64), 'tokenizer.json': 'b'.repeat(64), 'model.json': 'c'.repeat(64) },
+    }), stderr: '', exitCode: 0 };
+    if (request.operation === 'update') {
+      const documents = request.documents as Array<{ path: string }>;
+      updates.push({ cache: String(request.cache), model, paths: documents.map(document => document.path) });
+      return { stdout: JSON.stringify({ engine: 'embsearch-core', version: 'test', model,
+        chunks: documents.length, embedded: documents.length, count: 0, results: [],
+        changes: { added: [], modified: [], deleted: [] } }), stderr: '', exitCode: 0 };
+    }
+    const code = String(request.cache).endsWith('semantic-code');
+    const hit = code
+      ? { path: 'src/retrieval.ts', line: 1, score: 0.9, excerpt: 'export function retrieveSymbol() {}' }
+      : { path: 'prompts/index.md', line: 1, score: 0.8, excerpt: '# AI-KIDO knowledge' };
+    return { stdout: JSON.stringify({ engine: 'embsearch-core', version: 'test', model,
+      chunks: 1, embedded: 0, count: 1, results: [hit],
+      changes: { added: [], modified: [], deleted: [] } }), stderr: '', exitCode: 0 };
+  });
+  try {
+    await knowledge.semanticIndex.run('update');
+    const documentIndex = updates.find(update => update.cache.endsWith('/semantic'));
+    const codeIndex = updates.find(update => update.cache.endsWith('/semantic-code'));
+    expect(documentIndex?.model).toBe('multilingual-model');
+    expect(documentIndex?.paths).toContain('src/retrieval.ts');
+    expect(codeIndex?.model).toBe('code-model');
+    expect(codeIndex?.paths).toEqual(['src/retrieval.ts']);
+
+    const info = await knowledge.semanticIndex.info();
+    expect(info.profiles).toMatchObject({
+      multilingual: { model: 'multilingual-model', dimensions: 384 },
+      code: { model: 'code-model', dimensions: 768 },
+    });
+    const result = await knowledge.semanticIndex.run('search', { query: 'retrieveSymbol', limit: 5 });
+    expect(result.model).toBe('multilingual-model+code-model');
+    expect(result.results.map(hit => hit.path)).toEqual(['prompts/index.md', 'src/retrieval.ts']);
+    expect(result.results.every(hit => hit.score > 0 && hit.score < 1)).toBe(true);
+  } finally {
+    run.mockRestore();
+    vi.unstubAllEnvs();
+    if (originalModel === undefined) delete process.env.KIMONO_MODEL_DIR;
+    else process.env.KIMONO_MODEL_DIR = originalModel;
+    if (originalCodeModel === undefined) delete process.env.KIMONO_CODE_MODEL_DIR;
+    else process.env.KIMONO_CODE_MODEL_DIR = originalCodeModel;
   }
 });
 
@@ -377,6 +734,7 @@ describe.skipIf(!process.env.KIMONO_MODEL_DIR)('real multilingual ONNX semantic 
     const knowledge = await fixture();
     const query = 'Comment proteger les identifiants secrets ?';
     expect(await knowledge.search(query)).toEqual([]);
+    await knowledge.semanticIndex.run('update');
     const result = await knowledge.semanticIndex.run('search', { query, limit: 1 });
     expect(result.engine).toBe('embsearch-core');
     expect(result.results).toHaveLength(1);
@@ -403,8 +761,35 @@ describe.skipIf(!process.env.KIMONO_MODEL_DIR)('real multilingual ONNX semantic 
     expect(knowledge.semanticIndex.status()).toMatchObject({ phase: 'ready', chunks: 4,
       progress: { completed: 4, total: 4 } });
     expect((await knowledge.semanticIndex.run('stats')).embedded).toBe(0);
+    const sourceBeforeEdit = await sourceSnapshot(knowledge);
     await writeFile(path.join(knowledge.root, 'prompts/secrets.md'), 'Protect access tokens with a secrets manager and never disclose credentials.');
-    expect((await knowledge.semanticIndex.run('update')).embedded).toBe(1);
+    const sourceAfterEdit = await sourceSnapshot(knowledge, undefined, sourceBeforeEdit);
+    expect(sourceAfterEdit.basisFingerprint).not.toBe(sourceBeforeEdit.basisFingerprint);
+    const refresh = vi.spyOn(knowledge, 'refresh');
+    const realRunProcess = processes.runProcess;
+    const requests: Record<string, unknown>[] = [];
+    const run = vi.spyOn(processes, 'runProcess').mockImplementation(async (executable, args, cwd, exitCodes,
+      timeout, onStderr, environment, maxBuffer, streamStderr) => {
+      if (executable === (process.env.KIMONO_SEMANTIC_BIN ?? 'kimono-semantic')) {
+        requests.push(JSON.parse(await readFile(args[0], 'utf8')) as Record<string, unknown>);
+      }
+      return realRunProcess(executable, args, cwd, exitCodes, timeout, onStderr,
+        environment, maxBuffer, streamStderr);
+    });
+    try {
+      const changed = await knowledge.semanticIndex.run('update');
+      expect(refresh).toHaveBeenCalled();
+      expect(requests.find(request => request.operation === 'update')?.documents).toEqual([
+        expect.objectContaining({ path: 'prompts/secrets.md',
+          content: 'Protect access tokens with a secrets manager and never disclose credentials.' }),
+      ]);
+      expect(changed, JSON.stringify(changed)).toMatchObject({
+        embedded: 1, changes: { modified: ['prompts/secrets.md'] },
+      });
+    } finally {
+      run.mockRestore();
+      refresh.mockRestore();
+    }
     await writeFile(path.join(knowledge.root, 'prompts/new.md'), 'Rotate compromised passwords immediately.');
     await knowledge.refresh();
     expect((await knowledge.semanticIndex.run('update')).embedded).toBe(1);

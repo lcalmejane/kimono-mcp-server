@@ -39,6 +39,12 @@ await Promise.all([
 ]);
 const executable = target.startsWith('win32-') ? 'node.exe' : 'node';
 await cp(process.execPath, path.join(stage, 'runtime', executable));
+if (process.platform === 'darwin') {
+  const dependencies = execFileSync('otool', ['-L', process.execPath], { encoding: 'utf8' });
+  const nodeLibrary = dependencies.match(/^\s+@rpath\/(libnode\.[^/\s]+\.dylib)\s/m)?.[1];
+  if (nodeLibrary) await cp(path.resolve(path.dirname(process.execPath), '../lib', nodeLibrary),
+    path.join(stage, 'runtime', nodeLibrary));
+}
 const license = await fetch(`https://raw.githubusercontent.com/nodejs/node/${process.version}/LICENSE`,
   { signal: AbortSignal.timeout(60_000) });
 if (!license.ok) throw new Error(`Cannot obtain Node.js ${process.version} license: ${license.status}`);

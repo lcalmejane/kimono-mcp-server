@@ -4,12 +4,20 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
 import { AikidoKnowledgeBase } from '../src/knowledge.js';
-import { lexicalPattern, normalize } from '../src/query-plan.js';
+import { lexicalPattern, normalize, queryIntent } from '../src/query-plan.js';
 
 const roots: string[] = [];
 afterEach(async () => {
   vi.restoreAllMocks();
   await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })));
+});
+
+it('distinguishes natural language, identifiers, qualified symbols, and source paths', () => {
+  expect(queryIntent('How does authentication work?')).toBe('natural-language');
+  expect(queryIntent('authenticateUser')).toBe('identifier');
+  expect(queryIntent('AuthService.authenticate')).toBe('qualified-symbol');
+  expect(queryIntent('src/auth/service.rs')).toBe('path');
+  expect(queryIntent('service.rs')).toBe('path');
 });
 
 it('normalizes natural-language queries and expands repository glossary aliases with provenance', async () => {
@@ -28,6 +36,7 @@ it('normalizes natural-language queries and expands repository glossary aliases 
   const plan = await knowledge.vocabulary.plan('Où trouver le dépôt partagé ?');
   expect(normalize('DÉPÔT partagé')).toBe('depot partage');
   expect(plan.vocabulary).toMatchObject({ sources: ['prompts/glossaire-projet.md'], concepts: 1, truncated: false });
+  expect(plan.intent).toBe('natural-language');
   expect(plan.concepts[0]).toMatchObject({ term: 'Base commune', path: 'prompts/glossaire-projet.md', line: 3 });
   expect(plan.expansions.map(item => item.term)).toContain('shared knowledge');
   expect(plan.semanticQuery).toContain('shared knowledge');

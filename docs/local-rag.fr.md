@@ -155,11 +155,23 @@ temps mesurés.
 | Variable d'environnement | Défaut | Signification |
 | --- | --- | --- |
 | `KIMONO_SEMANTIC_DEVICE` | `auto` | Comparer puis sélectionner, ou imposer `cpu`, `cuda` ou `coreml`. |
+| `KIMONO_SEMANTIC_PERSISTENT_WORKER` | `true` | Réutiliser le worker Rust, le modèle chargé et jusqu'à quatre générations d'index en mémoire. `false` restaure un processus par opération. |
 | `KIMONO_SEMANTIC_CPU_PERCENT` | `80` | Budget CPU automatique par processus, 1–100 % des CPU disponibles, quotas visibles du conteneur compris. |
 | `KIMONO_SEMANTIC_MEMORY_PERCENT` | `80` | Budget estimatif par processus, 1–100 % de la RAM actuellement disponible sur l'hôte/dans le conteneur. |
 | `KIMONO_SEMANTIC_WORKERS` | `auto` | Sessions CPU : partie entière du budget CPU / threads, réduite selon la mémoire, minimum 1 et maximum 32. Une session pour les accélérateurs. |
 | `KIMONO_SEMANTIC_THREADS` | `auto` | Un thread d'inférence pour privilégier les sessions indépendantes ; réglage explicite 1–32. |
 | `KIMONO_SEMANTIC_BATCH` | `auto` | Passages par lot (1–256), selon la mémoire restant après estimation des sessions du modèle. |
+| `KIMONO_CODE_PROFILE_ENABLED` | `false` | Activation explicite du profil code expérimental en attente. Laisser désactivé pour éviter un second index/modèle et du travail supplémentaire d'indexation/recherche. |
+| `KIMONO_CODE_MODEL_DIR` | non défini | Répertoire ONNX local dédié au code, ignoré sauf si `KIMONO_CODE_PROFILE_ENABLED=true`. Aucun téléchargement implicite. |
+
+Le profil code spécialisé est en attente d'une évaluation de pertinence et de
+performance. La seule configuration du répertoire modèle ne le charge pas, ne
+crée pas de second index et n'ajoute pas de travail à la recherche. Pour une
+évaluation explicite, définir `KIMONO_CODE_PROFILE_ENABLED=true` et pointer
+`KIMONO_CODE_MODEL_DIR` vers un bundle local pris en charge. Dans ce mode,
+`aikido_index` maintient un index code distinct et la recherche sémantique
+interroge les deux index sans mélanger leurs vecteurs. Un bundle natif peut
+inclure un modèle local avec `--code-model`.
 
 CUDA nécessite un runtime ONNX contenant ce fournisseur et des pilotes GPU
 compatibles ; les bundles Linux/Windows standards contiennent un runtime CPU.
@@ -196,9 +208,33 @@ ni une mesure de VRAM GPU : les autres allocations, l'index croissant et les
 processus concurrents peuvent nécessiter davantage de mémoire. Les budgets
 sont indépendants par processus, sans ordonnanceur commun à l'hôte.
 Augmenter les workers CPU augmente la mémoire du modèle.
-Le modèle et l'index en mémoire restent présents pendant le
-traitement natif ; la taille de l'index augmente avec le nombre de passages.
-La fin du processus natif libère sa mémoire.
+Le modèle reste chargé dans le worker persistant ; jusqu'à quatre générations
+d'index récentes restent en mémoire. Leur éviction ou l'arrêt du serveur libère
+ces ressources. La taille des index disque augmente avec le nombre de passages.
+Définir `KIMONO_SEMANTIC_PERSISTENT_WORKER=false` pour restaurer l'ancien cycle
+de vie des sous-processus.
+
+Le statut de `aikido_index` expose séparément le cycle de vie du worker (`starting`,
+`ready`, `error`, `restarting`, `stopped`) lorsqu'il existe dans ce processus.
+La capture, l'immuabilité et le cycle de vie des snapshots ne changent pas.
+
+Une recherche sémantique interroge l'index persistant sans synchroniser la
+source ni transmettre tous les documents au moteur natif. Utiliser
+`aikido_index` pour mettre l'index à jour explicitement. Si le manifeste et le
+profil du modèle sont complets et compatibles, une mise à jour transmet au
+moteur natif uniquement les documents ajoutés/modifiés et les chemins de
+suppression explicites. Un manifeste incomplet ou incompatible déclenche une
+mise à jour complète. La validation de la source lit encore les documents pour
+recalculer leurs empreintes de contenu. Un nouveau snapshot immuable sans
+génération en cache est indexé une seule fois lors de sa première recherche
+sémantique.
+
+La fraîcheur de l'index utilise un chemin rapide uniquement si le worktree Git
+est propre et si HEAD, branche, empreinte de statut et configuration du corpus
+correspondent à l'indexation. Sinon, Kimono refait un scan du contenu ; il ne
+déduit pas son identité du seul `mtime`. Cette vérification est distincte de la
+capture des snapshots, dont la matérialisation immuable et le cycle de vie ne
+changent pas.
 
 ## Diagnostics en production : aucun historique interne de traces
 

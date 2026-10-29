@@ -1,20 +1,38 @@
-use embsearch_core::{Database, Embedder, Metric, OnnxEmbedder};
+use embsearch_core::{Database, Embedder, Metric, ModelSpec};
 mod device;
+mod model;
 mod resources;
+use model::load_embedder;
 use resources::Runtime;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::error::Error;
 use std::fs;
-use std::io::{BufReader, BufWriter, Write};
+use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::sync_channel;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Instant, UNIX_EPOCH};
 
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
+
+const INDEX_FORMAT_VERSION: &str = "kimono-semantic-v2";
+const CHUNKER_VERSION: &str =
+    "tree-sitter-0.25.10;c0.24.2;cpp0.23.4;go0.25.0;java0.23.5;js0.25.0;py0.25.0;rs0.24.2;ts0.23.2;lines-v4";
+const MAX_CHUNK_CHARS: usize = 500;
+const MAX_TREE_SITTER_BYTES: usize = 1024 * 1024;
+const MAX_SEARCH_CANDIDATES: usize = 4096;
+
+fn candidate_limit(chunks: usize, limit: usize, filtered: bool) -> usize {
+    let requested = if filtered {
+        limit.saturating_mul(16).max(256).min(MAX_SEARCH_CANDIDATES)
+    } else {
+        limit
+    };
+    chunks.min(requested)
+}
 
 fn requested_device(value: Option<&str>) -> Result<&str> {
     let value = value.unwrap_or("auto");
@@ -165,7 +183,7 @@ fn embed_parallel<E: Embedder>(
     Ok(())
 }
 
-fn load_embedder(model: &Path) -> Result<OnnxEmbedder> {
+fn load_embedder_with_progress(model: &Path) -> Result<Box<dyn Embedder>> {
     let started = Instant::now();
     eprintln!(
         "KIMONO_PROGRESS {}",
@@ -173,7 +191,7 @@ fn load_embedder(model: &Path) -> Result<OnnxEmbedder> {
             "phase": "model_loading", "completed": 0, "total": 0
         })
     );
-    let embedder = OnnxEmbedder::from_dir(model)?;
+    let embedder = load_embedder(model)?;
     eprintln!(
         "KIMONO_PROGRESS {}",
         serde_json::json!({
@@ -210,6 +228,19 @@ struct Request {
     paths: Option<Vec<String>>,
     #[serde(rename = "syncPaths")]
     sync_paths: Option<Vec<String>>,
+    #[serde(rename = "deletedPaths", default)]
+    deleted_paths: Vec<String>,
+    #[serde(default)]
+    incremental: bool,
+}
+
+#[derive(Deserialize)]
+struct WorkerMessage {
+    version: u8,
+    id: String,
+    operation: String,
+    #[serde(rename = "requestPath")]
+    request_path: Option<PathBuf>,
 }
 
 #[derive(Clone, Deserialize, Serialize, PartialEq)]
@@ -227,7 +258,15 @@ struct State {
     chunks: BTreeMap<String, Chunk>,
     model: String,
     #[serde(default)]
+    index_version: String,
+    #[serde(default)]
     documents: BTreeMap<String, String>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct StateStamp {
+    length: u64,
+    modified_nanos: u128,
 }
 
 #[derive(Serialize)]
@@ -240,6 +279,10 @@ struct Hit {
 
 fn hash(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
+}
+
+fn document_hash(kind: &str, content: &str) -> Result<String> {
+    serialized_hash(&(kind, content))
 }
 
 struct HashWriter(Sha256);
@@ -261,9 +304,24 @@ fn serialized_hash(value: &impl Serialize) -> Result<String> {
     Ok(format!("{:x}", writer.0.finalize()))
 }
 
+fn model_fingerprint(model: &Path) -> Result<String> {
+    let mut identity = HashWriter(Sha256::new());
+    for file in ["model.onnx", "tokenizer.json", "model.json"] {
+        std::io::copy(&mut fs::File::open(model.join(file))?, &mut identity)?;
+    }
+    identity.write_all(INDEX_FORMAT_VERSION.as_bytes())?;
+    identity.write_all(CHUNKER_VERSION.as_bytes())?;
+    identity.write_all(b"chunk_chars=500;embsearch-core=0.3.4")?;
+    Ok(format!("{:x}", identity.0.finalize()))
+}
+
 fn chunks(documents: Vec<Document>) -> BTreeMap<String, Chunk> {
     let mut result = BTreeMap::new();
     for document in documents {
+        let code = is_code_source(&document.path);
+        let syntax_lines = code
+            .then(|| syntax_definition_lines(&document.path, &document.content))
+            .flatten();
         let mut text = String::new();
         let mut start = 1;
         let mut ordinal = 0;
@@ -287,9 +345,21 @@ fn chunks(documents: Vec<Document>) -> BTreeMap<String, Chunk> {
             );
         };
         for (line, value) in document.content.lines().enumerate() {
-            for piece in value.chars().collect::<Vec<_>>().chunks(499) {
-                let piece: String = piece.iter().collect();
-                if text.chars().count() + piece.chars().count() + 1 > 500 {
+            let definition_start = if let Some(lines) = &syntax_lines {
+                lines.contains(&(line + 1))
+            } else {
+                code && is_definition_start(value)
+            };
+            if value.trim().is_empty() || definition_start {
+                emit(&mut text, start);
+                if value.trim().is_empty() {
+                    continue;
+                }
+            }
+            let mut chars = value.chars().peekable();
+            while chars.peek().is_some() {
+                let piece: String = chars.by_ref().take(MAX_CHUNK_CHARS - 1).collect();
+                if text.chars().count() + piece.chars().count() + 1 > MAX_CHUNK_CHARS {
                     emit(&mut text, start);
                 }
                 if text.is_empty() {
@@ -304,10 +374,134 @@ fn chunks(documents: Vec<Document>) -> BTreeMap<String, Chunk> {
     result
 }
 
+fn syntax_definition_lines(path: &str, content: &str) -> Option<BTreeSet<usize>> {
+    if content.len() > MAX_TREE_SITTER_BYTES {
+        return None;
+    }
+    let extension = Path::new(path).extension()?.to_str()?.to_ascii_lowercase();
+    let language: tree_sitter::Language = match extension.as_str() {
+        "c" | "h" => tree_sitter_c::LANGUAGE.into(),
+        "cc" | "cpp" | "hpp" => tree_sitter_cpp::LANGUAGE.into(),
+        "go" => tree_sitter_go::LANGUAGE.into(),
+        "java" => tree_sitter_java::LANGUAGE.into(),
+        "js" | "jsx" | "mjs" => tree_sitter_javascript::LANGUAGE.into(),
+        "py" => tree_sitter_python::LANGUAGE.into(),
+        "rs" => tree_sitter_rust::LANGUAGE.into(),
+        "ts" => tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
+        "tsx" => tree_sitter_typescript::LANGUAGE_TSX.into(),
+        _ => return None,
+    };
+    let mut parser = tree_sitter::Parser::new();
+    parser.set_language(&language).ok()?;
+    let tree = parser.parse(content, None)?;
+    let root = tree.root_node();
+    if root.has_error() {
+        return None;
+    }
+    let mut lines = BTreeSet::new();
+    let mut cursor = root.walk();
+    let mut visited = vec![root];
+    while let Some(node) = visited.pop() {
+        if is_syntax_definition(node.kind()) {
+            lines.insert(node.start_position().row + 1);
+        }
+        for child in node.children(&mut cursor) {
+            visited.push(child);
+        }
+    }
+    Some(lines)
+}
+
+fn is_syntax_definition(kind: &str) -> bool {
+    matches!(
+        kind,
+        "class_declaration"
+            | "class_definition"
+            | "class_method"
+            | "enum_item"
+            | "function_declaration"
+            | "function_definition"
+            | "function_item"
+            | "impl_item"
+            | "interface_declaration"
+            | "method_declaration"
+            | "method_definition"
+            | "mod_item"
+            | "struct_item"
+            | "trait_item"
+            | "type_alias_declaration"
+    )
+}
+
+fn is_code_source(path: &str) -> bool {
+    matches!(
+        Path::new(path).extension().and_then(|value| value.to_str()),
+        Some(
+            "c" | "cc"
+                | "cpp"
+                | "cs"
+                | "go"
+                | "h"
+                | "hpp"
+                | "java"
+                | "js"
+                | "jsx"
+                | "mjs"
+                | "py"
+                | "rb"
+                | "rs"
+                | "scala"
+                | "sh"
+                | "swift"
+                | "ts"
+                | "tsx"
+                | "vue"
+        )
+    )
+}
+
+fn is_definition_start(line: &str) -> bool {
+    let line = line.trim_start();
+    [
+        "function ",
+        "export function ",
+        "export async function ",
+        "class ",
+        "export class ",
+        "interface ",
+        "export interface ",
+        "type ",
+        "export type ",
+        "struct ",
+        "pub struct ",
+        "enum ",
+        "pub enum ",
+        "fn ",
+        "pub fn ",
+        "async fn ",
+        "def ",
+        "async def ",
+        "func ",
+    ]
+    .iter()
+    .any(|prefix| line.starts_with(prefix))
+}
+
 fn read_state(cache: &Path) -> Result<State> {
     match fs::File::open(cache.join("state.json")) {
         Ok(file) => Ok(serde_json::from_reader(BufReader::new(file))?),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(State::default()),
+        Err(error) => Err(error.into()),
+    }
+}
+
+fn state_stamp(cache: &Path) -> Result<Option<StateStamp>> {
+    match fs::metadata(cache.join("state.json")) {
+        Ok(metadata) => Ok(Some(StateStamp {
+            length: metadata.len(),
+            modified_nanos: metadata.modified()?.duration_since(UNIX_EPOCH)?.as_nanos(),
+        })),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(error) => Err(error.into()),
     }
 }
@@ -337,6 +531,41 @@ impl<E: Embedder> Embedder for SharedEmbedder<E> {
     }
 }
 
+struct CachedDatabase {
+    generation: String,
+    database: Database<SharedEmbedder<Box<dyn Embedder>>>,
+    state: State,
+    stamp: Option<StateStamp>,
+    estimated_bytes: u64,
+    last_used: Instant,
+}
+
+const MAX_HOT_INDEXES: usize = 4;
+const MAX_HOT_INDEX_BYTES: u64 = 512 * 1024 * 1024;
+
+fn estimated_index_bytes(state: &State, dimensions: usize) -> u64 {
+    let vectors = state.chunks.len() as u64 * (dimensions as u64 * 4 + 64);
+    let passages = state.chunks.values().fold(0u64, |total, chunk| {
+        total
+            .saturating_add(chunk.path.len() as u64)
+            .saturating_add(chunk.kind.len() as u64)
+            .saturating_add(chunk.text.len() as u64)
+            .saturating_add(128)
+    });
+    let manifest = state.documents.iter().fold(0u64, |total, (path, hash)| {
+        total
+            .saturating_add(path.len() as u64)
+            .saturating_add(hash.len() as u64 + 64)
+    });
+    vectors.saturating_add(passages).saturating_add(manifest)
+}
+
+fn hot_index_bytes(databases: &HashMap<PathBuf, CachedDatabase>) -> u64 {
+    databases.values().fold(0u64, |total, cached| {
+        total.saturating_add(cached.estimated_bytes)
+    })
+}
+
 fn runtime_info(runtime: Runtime, selection: &device::Selection) -> serde_json::Value {
     serde_json::json!({
         "workers": runtime.workers, "threads": runtime.threads, "batch": runtime.batch,
@@ -351,11 +580,13 @@ fn execute(
     request: Request,
     runtime: Runtime,
     selection: &device::Selection,
+    embedder: &Arc<Box<dyn Embedder>>,
+    fingerprint: &str,
+    databases: &mut HashMap<PathBuf, CachedDatabase>,
 ) -> Result<serde_json::Value> {
     let runtime_info = runtime_info(runtime, selection);
     if request.operation == "info" {
-        let embedder = load_embedder(&request.model)?;
-        let spec = embedder.spec();
+        let spec = ModelSpec::from_json(&fs::read(request.model.join("model.json"))?)?;
         let mut files = BTreeMap::new();
         for file in ["model.onnx", "tokenizer.json", "model.json"] {
             let mut writer = HashWriter(Sha256::new());
@@ -368,9 +599,17 @@ fn execute(
             "dimensions": embedder.dim(), "normalized": spec.normalize,
             "maxTokens": spec.max_tokens, "pooling": spec.pooling,
             "queryPrefix": spec.query_prefix, "documentPrefix": spec.document_prefix,
+            "indexVersion": INDEX_FORMAT_VERSION, "chunkerVersion": CHUNKER_VERSION,
             "sha256": files,
             "runtime": runtime_info,
             "compatibility": "Reuse model as embeddingModel for vector search. Dimensions and model labels alone cannot prove vector provenance; retain these file hashes and matching preprocessing settings to reproduce embeddings."
+        }));
+    }
+    if request.operation == "profile" {
+        return Ok(serde_json::json!({
+            "engine": "embsearch-core", "version": "0.3.4",
+            "model": embedder.model_id(), "fingerprint": fingerprint,
+            "indexVersion": INDEX_FORMAT_VERSION, "chunkerVersion": CHUNKER_VERSION
         }));
     }
     if request.operation == "embed" {
@@ -382,20 +621,20 @@ fn execute(
         if !["query", "document"].contains(&usage) {
             return Err("usage must be query or document".into());
         }
-        let embedder = load_embedder(&request.model)?;
         let vector = if usage == "query" {
             embedder.embed_query(text)?
         } else {
             embedder.embed(text)?
         };
+        let spec = ModelSpec::from_json(&fs::read(request.model.join("model.json"))?)?;
         if vector.len() != embedder.dim() || vector.iter().any(|value| !value.is_finite()) {
             return Err("Invalid embedding vector".into());
         }
         return Ok(serde_json::json!({
             "engine": "embsearch-core", "version": "0.3.4",
             "model": embedder.model_id(), "usage": usage,
-            "dimensions": embedder.dim(), "normalized": embedder.spec().normalize,
-            "maxTokens": embedder.spec().max_tokens, "vector": vector
+            "dimensions": embedder.dim(), "normalized": spec.normalize,
+            "maxTokens": spec.max_tokens, "vector": vector
             , "runtime": runtime_info
         }));
     }
@@ -416,20 +655,17 @@ fn execute(
         }
     }
     fs::create_dir_all(&request.cache)?;
-    let previous = read_state(&request.cache)?;
+    let stamp = state_stamp(&request.cache)?;
+    let mut cached = databases.remove(&request.cache);
+    let cached_state_matches = cached.as_ref().is_some_and(|value| value.stamp == stamp);
+    let previous = if cached_state_matches {
+        std::mem::take(&mut cached.as_mut().unwrap().state)
+    } else {
+        read_state(&request.cache)?
+    };
     if !previous.generation.is_empty() && !valid_generation(&previous.generation) {
         return Err("Invalid semantic generation in state".into());
     }
-    // Include weights + tokenizer in identity, not just the model's friendly name.
-    let mut identity = HashWriter(Sha256::new());
-    for file in ["model.onnx", "tokenizer.json", "model.json"] {
-        std::io::copy(
-            &mut fs::File::open(request.model.join(file))?,
-            &mut identity,
-        )?;
-    }
-    let fingerprint = format!("{:x}", identity.0.finalize());
-    let embedder = Arc::new(load_embedder(&request.model)?);
     let model_id = embedder.model_id().to_string();
     let search_vector = if let Some(vector) = &request.vector {
         if request.embedding_model.as_deref() != Some(model_id.as_str()) {
@@ -472,6 +708,25 @@ fn execute(
             "Embedding model changed; run a full update before targeted synchronization".into(),
         );
     }
+    let read_only = matches!(request.operation.as_str(), "search" | "stats");
+    let incremental = request.incremental;
+    if read_only && !request.documents.is_empty() {
+        return Err("Read-only semantic operations cannot include documents".into());
+    }
+    if incremental && request.operation != "update" {
+        return Err("incremental requires update".into());
+    }
+    if !request.deleted_paths.is_empty() && request.operation != "update" {
+        return Err("deletedPaths requires update".into());
+    }
+    if incremental && (previous.generation.is_empty() || previous.model != fingerprint) {
+        return Err(
+            "Incremental update requires a compatible existing index; run a full update".into(),
+        );
+    }
+    if read_only && !previous.generation.is_empty() && previous.model != fingerprint {
+        return Err("Embedding model changed; run a full update before searching the index".into());
+    }
     let selected = |file: &str| {
         request.sync_paths.as_ref().is_none_or(|paths| {
             paths
@@ -484,16 +739,35 @@ fn execute(
     for chunk in previous.chunks.values() {
         previous_documents.entry(chunk.path.clone()).or_default();
     }
-    let mut documents: BTreeMap<String, String> = previous_documents
-        .iter()
-        .filter(|(file, _)| !selected(file))
-        .map(|(file, hash)| (file.clone(), hash.clone()))
-        .collect();
+    let mut documents: BTreeMap<String, String> = if read_only || incremental {
+        previous_documents.clone()
+    } else {
+        previous_documents
+            .iter()
+            .filter(|(file, _)| !selected(file))
+            .map(|(file, hash)| (file.clone(), hash.clone()))
+            .collect()
+    };
+    for file in &request.deleted_paths {
+        if !selected(file)
+            || file.is_empty()
+            || file.starts_with('/')
+            || file
+                .split('/')
+                .any(|part| part.is_empty() || part == "." || part == "..")
+        {
+            return Err("Invalid or out-of-scope deleted path".into());
+        }
+        documents.remove(file);
+    }
     for document in &request.documents {
         if !selected(&document.path) {
             return Err("Document outside synchronization scope".into());
         }
-        documents.insert(document.path.clone(), hash(document.content.as_bytes()));
+        documents.insert(
+            document.path.clone(),
+            document_hash(&document.kind, &document.content)?,
+        );
     }
     let added: Vec<_> = documents
         .keys()
@@ -520,10 +794,23 @@ fn execute(
         .iter()
         .map(|(id, chunk)| (id.clone(), chunk.hash.clone()))
         .collect();
+    let touched: BTreeSet<String> = request
+        .documents
+        .iter()
+        .map(|document| document.path.clone())
+        .chain(request.deleted_paths.iter().cloned())
+        .collect();
     let mut current: BTreeMap<String, Chunk> = previous
         .chunks
         .into_iter()
-        .filter(|(_, chunk)| !selected(&chunk.path))
+        .filter(|(_, chunk)| {
+            read_only
+                || if incremental {
+                    !touched.contains(&chunk.path)
+                } else {
+                    !selected(&chunk.path)
+                }
+        })
         .collect();
     current.extend(chunks(request.documents));
     let reuse = previous.model == fingerprint
@@ -540,23 +827,29 @@ fn execute(
     // The index is built in memory and only persisted after full success, so an
     // interrupted run leaves the published generation untouched.
     let mut db = if reuse {
-        Database::open(
-            SharedEmbedder(Arc::clone(&embedder)),
-            request.cache.join(&previous.generation),
-        )?
+        match cached
+            .take()
+            .filter(|value| cached_state_matches && value.generation == previous.generation)
+        {
+            Some(value) => value.database,
+            None => Database::open(
+                SharedEmbedder(Arc::clone(embedder)),
+                request.cache.join(&previous.generation),
+            )?,
+        }
     } else {
-        Database::new(SharedEmbedder(Arc::clone(&embedder)), Metric::Cosine)
+        Database::new(SharedEmbedder(Arc::clone(embedder)), Metric::Cosine)
     };
-    let mut changed = !reuse;
+    let mut changed = !read_only && !reuse;
     let mut embedded = 0;
     let mut failed: Vec<String> = Vec::new();
     // Each bounded batch goes straight into the index: no temporary vector file
     // grows on disk and consumed vectors are released immediately.
     embed_parallel(
-        &*embedder,
+        &**embedder,
         runtime,
         &texts,
-        || Ok(OnnxEmbedder::from_dir(&request.model)?),
+        || load_embedder(&request.model),
         |index, vector| {
             let id = updates[index].0;
             match vector {
@@ -601,9 +894,10 @@ fn execute(
         changed = true;
     }
     let mut generation = previous.generation.clone();
-    if changed
-        || documents != previous_documents
-        || serialized_hash(&current)? != previous_chunk_signature
+    if !read_only
+        && (changed
+            || documents != previous_documents
+            || serialized_hash(&current)? != previous_chunk_signature)
     {
         let nonce = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)?
@@ -628,12 +922,15 @@ fn execute(
             generation: &'a str,
             chunks: &'a BTreeMap<String, Chunk>,
             model: &'a str,
+            #[serde(rename = "index_version")]
+            index_version: &'static str,
             documents: &'a BTreeMap<String, String>,
         }
         let state = StateView {
             generation: &generation,
             chunks: &current,
             model: &fingerprint,
+            index_version: INDEX_FORMAT_VERSION,
             documents: &documents,
         };
         let mut writer = BufWriter::new(fs::File::create(request.cache.join("state.pending"))?);
@@ -652,19 +949,23 @@ fn execute(
         }
     }
     let mut hits = Vec::new();
+    let mut candidates_examined = 0;
     if request.operation == "search" {
-        // Filter before limiting: a kind filter must not lose its best matches
-        // merely because another kind occupied the global top-k.
+        // The vector API cannot filter its graph traversal. Over-fetch a bounded
+        // pool for filtered searches, then apply filters before the result limit.
+        let filtered = request.kind.is_some() || request.paths.is_some();
+        let candidate_count = candidate_limit(db.len(), limit, filtered);
         let candidates = if db.len() == 0 {
             Vec::new()
         } else {
             if let Some(vector) = &search_vector {
-                db.query_vector(vector, db.len())?
+                db.query_vector(vector, candidate_count)?
             } else {
-                db.query(request.query.as_deref().unwrap(), db.len())?
+                db.query(request.query.as_deref().unwrap(), candidate_count)?
             }
         };
         for hit in candidates {
+            candidates_examined += 1;
             let chunk = current
                 .get(&hit.id)
                 .ok_or("Index returned an unknown chunk")?;
@@ -693,9 +994,52 @@ fn execute(
             }
         }
     }
+    let chunks_count = db.len();
+    let cache_path = request.cache.clone();
+    let cached_state = State {
+        generation: generation.clone(),
+        chunks: current,
+        model: fingerprint.to_string(),
+        index_version: INDEX_FORMAT_VERSION.to_string(),
+        documents,
+    };
+    let stamp = state_stamp(&cache_path)?;
+    let estimated_bytes = estimated_index_bytes(&cached_state, embedder.dim());
+    let hot_budget = (runtime.resources.memory_budget_bytes / 4).min(MAX_HOT_INDEX_BYTES);
+    if estimated_bytes <= hot_budget {
+        databases.insert(
+            cache_path.clone(),
+            CachedDatabase {
+                generation: generation.clone(),
+                database: db,
+                state: cached_state,
+                stamp,
+                estimated_bytes,
+                last_used: Instant::now(),
+            },
+        );
+        while databases.len() > MAX_HOT_INDEXES || hot_index_bytes(databases) > hot_budget {
+            let oldest = databases
+                .iter()
+                .filter(|(path, _)| *path != &cache_path)
+                .min_by_key(|(_, value)| value.last_used)
+                .map(|(path, _)| path.clone());
+            if let Some(path) = oldest {
+                databases.remove(&path);
+            } else {
+                databases.remove(&cache_path);
+                break;
+            }
+        }
+    }
+    let hot_indexes = databases.len();
+    let hot_bytes = hot_index_bytes(databases);
     Ok(serde_json::json!({
         "engine": "embsearch-core", "version": "0.3.4", "model": model_id,
-        "chunks": db.len(), "embedded": embedded, "skippedChunks": failed.len(), "generation": generation,
+        "chunks": chunks_count, "embedded": embedded, "skippedChunks": failed.len(), "generation": generation,
+        "indexVersion": INDEX_FORMAT_VERSION, "chunkerVersion": CHUNKER_VERSION,
+        "candidatesExamined": candidates_examined,
+        "hotIndexes": hot_indexes, "hotIndexEstimatedBytes": hot_bytes,
         "runtime": runtime_info,
         "count": hits.len(), "results": hits,
         "changes": { "added": added, "modified": modified, "deleted": deleted }
@@ -708,15 +1052,92 @@ fn valid_generation(value: &str) -> bool {
         && value[6..].bytes().all(|b| b.is_ascii_hexdigit())
 }
 
+fn run_worker(model: PathBuf) -> Result<()> {
+    if !model.is_absolute() {
+        return Err("Worker model directory must be absolute".into());
+    }
+    let selection = device::select(&model)?;
+    let runtime = configure_runtime(&model, &selection.execution_provider)?;
+    let embedder = Arc::new(load_embedder_with_progress(&model)?);
+    let fingerprint = model_fingerprint(&model)?;
+    let mut databases = HashMap::new();
+    let stdin = std::io::stdin();
+    let mut input = stdin.lock();
+    let stdout = std::io::stdout();
+    let mut output = BufWriter::new(stdout.lock());
+    let mut line = String::new();
+    loop {
+        line.clear();
+        if input.read_line(&mut line)? == 0 {
+            break;
+        }
+        let response = (|| -> Result<serde_json::Value> {
+            if line.len() > 8192 {
+                return Err("Worker protocol message exceeds 8192 bytes".into());
+            }
+            let message: WorkerMessage = serde_json::from_str(&line)?;
+            if message.version != 1 || message.id.is_empty() || message.id.len() > 128 {
+                return Err("Invalid worker protocol version or request ID".into());
+            }
+            if message.operation == "shutdown" {
+                return Ok(serde_json::json!({ "shutdown": true }));
+            }
+            if message.operation != "request" {
+                return Err("Invalid worker protocol operation".into());
+            }
+            let request_path = message.request_path.ok_or("requestPath is required")?;
+            if !request_path.is_absolute() {
+                return Err("Worker request path must be absolute".into());
+            }
+            let request: Request =
+                serde_json::from_reader(BufReader::new(fs::File::open(request_path)?))?;
+            if request.model != model {
+                return Err("Worker request model does not match the initialized model".into());
+            }
+            execute(
+                request,
+                runtime,
+                &selection,
+                &embedder,
+                &fingerprint,
+                &mut databases,
+            )
+        })();
+        let id = serde_json::from_str::<WorkerMessage>(&line)
+            .map(|message| message.id)
+            .unwrap_or_default();
+        let envelope = match response {
+            Ok(result) => {
+                serde_json::json!({ "version": 1, "id": id, "ok": true, "result": result })
+            }
+            Err(error) => {
+                serde_json::json!({ "version": 1, "id": id, "ok": false, "error": error.to_string() })
+            }
+        };
+        serde_json::to_writer(&mut output, &envelope)?;
+        output.write_all(b"\n")?;
+        output.flush()?;
+        if envelope["result"]["shutdown"] == true {
+            break;
+        }
+    }
+    Ok(())
+}
+
 fn main() {
     let result = (|| -> Result<()> {
-        let path = std::env::args()
-            .nth(1)
-            .ok_or("Expected a JSON request file")?;
+        let mut args = std::env::args().skip(1);
+        let first = args.next().ok_or("Expected a JSON request file")?;
+        if first == "--worker" {
+            let model = args.next().ok_or("Expected a model directory")?;
+            if args.next().is_some() {
+                return Err("Unexpected worker arguments".into());
+            }
+            return run_worker(PathBuf::from(model));
+        }
+        let path = first;
         if path == "--benchmark" {
-            let model = std::env::args()
-                .nth(2)
-                .ok_or("Expected a model directory")?;
+            let model = args.next().ok_or("Expected a model directory")?;
             let device = std::env::var("KIMONO_SEMANTIC_DEVICE")?;
             if requested_device(Some(&device))? == "auto" {
                 return Err("Benchmark requires an explicit provider".into());
@@ -738,7 +1159,17 @@ fn main() {
                 "runtime": runtime_info(runtime, &selection)
             })
         );
-        let output = execute(request, runtime, &selection)?;
+        let embedder = Arc::new(load_embedder_with_progress(&request.model)?);
+        let fingerprint = model_fingerprint(&request.model)?;
+        let mut databases = HashMap::new();
+        let output = execute(
+            request,
+            runtime,
+            &selection,
+            &embedder,
+            &fingerprint,
+            &mut databases,
+        )?;
         println!("{}", serde_json::to_string(&output)?);
         Ok(())
     })();
@@ -751,6 +1182,26 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hot_index_estimate_accounts_for_vectors_and_corpus_metadata() {
+        let chunk = Chunk {
+            path: "src/lib.rs".into(),
+            kind: "code".into(),
+            line: 1,
+            text: "fn search() {}".into(),
+            hash: "abc".into(),
+        };
+        let state = State {
+            chunks: BTreeMap::from([("chunk-1".into(), chunk)]),
+            documents: BTreeMap::from([("src/lib.rs".into(), "hash".into())]),
+            ..State::default()
+        };
+        let estimate = estimated_index_bytes(&state, 8);
+        assert!(estimate >= 8 * 4 + 64);
+        assert!(estimate > estimated_index_bytes(&State::default(), 8));
+    }
+
     #[test]
     fn chunks_are_bounded_and_keep_source_lines() {
         let result = chunks(vec![Document {
@@ -771,6 +1222,109 @@ mod tests {
         assert!(lines
             .values()
             .any(|chunk| chunk.text.contains("second line") && chunk.line == 2));
+        let code = chunks(vec![Document {
+            path: "src/lib.rs".into(),
+            kind: "knowledge".into(),
+            content: "fn first() {\n    return 1;\n}\npub fn second() {\n    return 2;\n}".into(),
+        }]);
+        assert!(code
+            .values()
+            .any(|chunk| chunk.text.contains("fn first()")
+                && !chunk.text.contains("pub fn second()")));
+        assert!(code
+            .values()
+            .any(|chunk| chunk.text.contains("pub fn second()")));
+    }
+
+    #[test]
+    fn tree_sitter_boundaries_split_supported_languages_at_definitions() {
+        let cases = [
+            (
+                "src/lib.rs",
+                "fn first() {\n    return 1;\n}\npub fn second() {\n    return 2;\n}",
+                "pub fn second()",
+                4,
+            ),
+            (
+                "src/lib.ts",
+                "export function first() { return 1; }\nexport function second() { return 2; }",
+                "export function second()",
+                2,
+            ),
+            (
+                "src/lib.py",
+                "def first():\n    return 1\n\ndef second():\n    return 2",
+                "def second():",
+                4,
+            ),
+            (
+                "src/lib.c",
+                "int first() { return 1; }\nint second() { return 2; }",
+                "int second()",
+                2,
+            ),
+            (
+                "src/lib.cpp",
+                "int first() { return 1; }\nint second() { return 2; }",
+                "int second()",
+                2,
+            ),
+            (
+                "src/lib.go",
+                "func first() int { return 1 }\nfunc second() int { return 2 }",
+                "func second()",
+                2,
+            ),
+            (
+                "src/lib.java",
+                "class Sample {\n    int first() { return 1; }\n    int second() { return 2; }\n}",
+                "int second()",
+                3,
+            ),
+            (
+                "src/lib.js",
+                "function first() { return 1; }\nfunction second() { return 2; }",
+                "function second()",
+                2,
+            ),
+        ];
+        for (path, content, second_definition, line) in cases {
+            let result = chunks(vec![Document {
+                path: path.into(),
+                kind: "knowledge".into(),
+                content: content.into(),
+            }]);
+            assert!(
+                result.values().any(|chunk| {
+                    chunk.text.contains(second_definition)
+                        && chunk.line == line
+                        && !chunk.text.contains("first()")
+                }),
+                "missing syntax boundary for {path}"
+            );
+        }
+    }
+
+    #[test]
+    fn syntax_chunking_falls_back_for_parse_errors_large_and_unknown_files() {
+        let invalid = "fn first() {\npub fn second() {\n";
+        assert!(syntax_definition_lines("src/lib.rs", invalid).is_none());
+        assert!(
+            syntax_definition_lines("src/large.rs", &" ".repeat(MAX_TREE_SITTER_BYTES + 1))
+                .is_none()
+        );
+        assert!(syntax_definition_lines("src/component.vue", "export default {}").is_none());
+        let fallback = chunks(vec![Document {
+            path: "src/lib.rs".into(),
+            kind: "knowledge".into(),
+            content: invalid.into(),
+        }]);
+        assert!(fallback
+            .values()
+            .any(|chunk| chunk.text.contains("fn first")));
+        assert!(fallback
+            .values()
+            .any(|chunk| chunk.text.contains("pub fn second")));
     }
 
     #[test]
@@ -779,6 +1333,18 @@ mod tests {
         assert!(!valid_generation("store-../../private"));
         assert!(!valid_generation("../store-0123456789abcdef01234567"));
         assert!(!valid_generation("store-0123456789abcdef0123456g"));
+    }
+
+    #[test]
+    fn filtered_search_oversamples_with_a_hard_candidate_bound() {
+        assert_eq!(candidate_limit(80, 5, true), 80);
+        assert_eq!(candidate_limit(10_000, 5, true), 256);
+        assert_eq!(candidate_limit(10_000, 100, true), 1600);
+        assert_eq!(candidate_limit(10_000, 100, false), 100);
+        assert_eq!(
+            candidate_limit(usize::MAX, usize::MAX, true),
+            MAX_SEARCH_CANDIDATES
+        );
     }
 
     #[test]

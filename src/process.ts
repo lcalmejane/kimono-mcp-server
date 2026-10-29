@@ -4,6 +4,11 @@ import { promisify } from 'node:util';
 const execute = promisify(execFile);
 const children = new Set<ChildProcess>();
 
+export function registerChild(child: ChildProcess): void {
+  children.add(child);
+  child.once('close', () => children.delete(child));
+}
+
 export function terminateChildren(): void {
   for (const child of children) child.kill('SIGKILL');
 }
@@ -30,8 +35,7 @@ export async function runProcess(
       cwd, timeout, maxBuffer,
       env: { ...environment, GIT_TERMINAL_PROMPT: '0', GIT_PAGER: 'cat', PAGER: 'cat', GIT_EDITOR: 'true', GIT_SEQUENCE_EDITOR: 'true' },
     });
-    children.add(execution.child);
-    execution.child.once('close', () => children.delete(execution.child));
+    registerChild(execution.child);
     if (onStderr) execution.child.stderr?.on('data', (chunk: Buffer) => onStderr(chunk.toString()));
     const result = await execution;
     return { stdout: redact(result.stdout), stderr: redact(result.stderr), exitCode: 0 };
@@ -54,7 +58,7 @@ function streamingProcess(
     const child = spawn(executable, args, { cwd, env: {
       ...environment, GIT_TERMINAL_PROMPT: '0', GIT_PAGER: 'cat', PAGER: 'cat', GIT_EDITOR: 'true', GIT_SEQUENCE_EDITOR: 'true',
     }, stdio: ['ignore', 'pipe', 'pipe'] });
-    children.add(child);
+    registerChild(child);
     let stdout = '', stderr = '', bytes = 0;
     let failure: Error | undefined;
     const stop = (error: Error) => {
@@ -78,7 +82,6 @@ function streamingProcess(
     child.once('error', error => { failure ??= error; });
     child.once('close', (code, signal) => {
       clearTimeout(timer);
-      children.delete(child);
       if (failure) reject(new Error(`${failure.message}\n${stderr}`, { cause: failure }));
       else if (code === null || !allowedExitCodes.includes(code)) reject(new Error(`Process exited with ${code ?? signal}\n${stderr}`));
       else resolve({ stdout, stderr, exitCode: code });

@@ -27,6 +27,35 @@ test("shared status exposes measured provider choice without claiming GPU execut
   assert.ok(lines(status, "en").some(row => row.label === "Last batch" && row.value === "40 ms"));
 });
 
+test("shared status exposes worker lifecycle, model and measured resource estimates in both languages", () => {
+  const status = {
+    phase: "ready", model: "multilingual-model", worker: { phase: "ready", pid: process.pid },
+    hotIndexes: 2, hotIndexEstimatedBytes: 16 * 1024 ** 2,
+    runtime: {
+      executionProvider: "cpu", gpuExecutionVerified: false, workers: 2, threads: 2, batch: 16, benchmarks: [],
+      resources: {
+        availableCpus: 8, cpuPercent: 80, cpuBudget: 6, availableMemoryBytes: 4 * 1024 ** 3,
+        memoryPercent: 75, memoryBudgetBytes: 3 * 1024 ** 3, estimatedMemoryBytes: 1024 ** 3,
+      },
+    },
+  };
+  const english = lines(status, "en");
+  const french = lines(status, "fr");
+  assert.ok(english.some(row => row.label === "Persistent worker" && row.value === "Ready · model warm"));
+  assert.ok(english.some(row => row.label === "Warm indexes" && row.value === "2"));
+  assert.ok(english.some(row => row.label === "Warm index estimate" && row.value === "16.0 MiB"));
+  assert.ok(english.some(row => row.label === "Embedding model" && row.value === "multilingual-model"));
+  assert.ok(english.some(row => row.label === "CPU budget" && row.value === "6 / 8 CPUs (80%)"));
+  assert.ok(english.some(row => row.label === "Estimated memory" && row.value === "1.0 GiB / 3.0 GiB (75%)"));
+  assert.ok(french.some(row => row.label === "Worker persistant" && row.value === "Prêt · modèle chargé"));
+  assert.ok(french.some(row => row.label === "Index gardés en mémoire" && row.value === "2"));
+  assert.ok(french.some(row => row.label === "Modèle d'embedding" && row.value === "multilingual-model"));
+  assert.ok(french.some(row => row.label === "Budget CPU" && row.value === "6 / 8 cœurs CPU (80%)"));
+  assert.ok(french.some(row => row.label === "Mémoire estimée" && row.value === "1.0 GiB / 3.0 GiB (75%)"));
+  assert.ok(lines({ worker: { phase: "error", error: "worker exited" } }, "en")
+    .some(row => row.label === "Worker detail" && row.value === "worker exited"));
+});
+
 test("index status reports live counters, ETA and interrupted indexers", async () => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), "kimono-status-"));
   const file = path.join(directory, "semantic-status.json");
@@ -47,6 +76,10 @@ test("index status reports live counters, ETA and interrupted indexers", async (
   const ready = await readIndexStatus(file);
   assert.equal(overall(ready), 1);
   assert.match(lines(ready).map(line => `${line.label}=${line.value}`).join(","), /Files=40 \/ 40,Chunks=300,Last indexed=/);
+  await fs.writeFile(file, JSON.stringify({
+    phase: "ready", pid: process.pid, host: os.hostname(), worker: { phase: "ready", pid: Number.MAX_SAFE_INTEGER },
+  }));
+  assert.deepEqual((await readIndexStatus(file)).worker, { phase: "stopped" });
   await fs.rm(directory, { recursive: true, force: true });
 });
 

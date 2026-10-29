@@ -28,6 +28,24 @@ npm run bundle:native -- \
   --output native-bundles/linux-arm64
 ```
 
+The code-specialized model is optional and is never downloaded by the packager.
+To include a locally prepared, supported model bundle, pass `--code-model`:
+
+```sh
+npm run bundle:native -- \
+  --target linux-arm64 \
+  --output native-bundles/linux-arm64 \
+  --code-model /absolute/path/to/jina-code-model
+```
+
+The directory must contain regular `model.onnx`, `tokenizer.json`, `model.json`
+and `LICENSE` files matching the supported model profile. The output contains
+`code-model/` plus its per-file hashes in `manifest.json`; set
+`KIMONO_CODE_MODEL_DIR` to that directory at runtime. This experimental profile
+is paused by default; also set `KIMONO_CODE_PROFILE_ENABLED=true` to load and
+query it. Without that explicit opt-in, the code model and index add no runtime
+work. The standard multilingual model remains in `model/`.
+
 When preparing from an already-built compatible Docker image, extract its
 verified `/opt/kimono` assets and pass `--assets-dir /path/to/kimono-assets`.
 The packager checks the pinned model-file hashes and the versions metadata
@@ -59,6 +77,18 @@ Every output has a `manifest.json` with schema version 1:
     "directory": "lib"
   },
   "modelDir": "model",
+  "codeModelDir": "code-model",
+  "codeModel": {
+    "name": "jina-embeddings-v2-base-code@...",
+    "dimensions": 768,
+    "maxTokens": 512,
+    "files": {
+      "model.onnx": "<sha256>",
+      "tokenizer.json": "<sha256>",
+      "model.json": "<sha256>",
+      "LICENSE": "<sha256>"
+    }
+  },
   "files": {
     "bin/fgr": "<sha256>",
     "bin/kimono-semantic": "<sha256>",
@@ -71,6 +101,8 @@ Every output has a `manifest.json` with schema version 1:
 The `files` object contains SHA-256 hashes for every regular file in the
 bundle except `manifest.json` itself. Consumers must reject unknown targets,
 missing files, path traversal, and hash mismatches before using the bundle.
+`codeModelDir` and `codeModel` are present only when the optional
+`--code-model` argument was supplied.
 For process launch, use `binaries.fgr`, `binaries.semantic`,
 `onnxRuntime.library`, and `modelDir` relative to the bundle root; expose
 `lib` to the child process loader as required by the host OS.
