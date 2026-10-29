@@ -15,6 +15,9 @@ services:
       KIMONO_CORPUS_MODE: ${KIMONO_CORPUS_MODE:-rag}
       KIMONO_LOG_LEVEL: ${KIMONO_LOG_LEVEL:-error}
       KIMONO_SEMANTIC_DEVICE: ${KIMONO_SEMANTIC_DEVICE:-auto}
+      KIMONO_CODE_PROFILE_ENABLED: ${KIMONO_CODE_PROFILE_ENABLED:-false}
+      KIMONO_CODE_MODEL_DIR: ${KIMONO_CODE_MODEL_DIR:-}
+      KIMONO_SEMANTIC_PERSISTENT_WORKER: ${KIMONO_SEMANTIC_PERSISTENT_WORKER:-true}
       KIMONO_SEMANTIC_WORKERS: ${KIMONO_SEMANTIC_WORKERS:-auto}
       KIMONO_SEMANTIC_THREADS: ${KIMONO_SEMANTIC_THREADS:-auto}
       KIMONO_SEMANTIC_BATCH: ${KIMONO_SEMANTIC_BATCH:-auto}
@@ -33,6 +36,7 @@ services:
       - "127.0.0.1:${MCP_PORT:-3000}:3000"
     volumes:
       - ${AIKIDO_HOST_PARENT:-./data}:/knowledge:${AIKIDO_VOLUME_MODE:-ro}
+      - ${KIMONO_CODE_MODEL_HOST_DIR:-./models/code}:/opt/kimono/code-model:ro
       - kimono-cache:/home/node/.cache/kimono
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/healthz').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]

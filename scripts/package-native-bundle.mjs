@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { createReadStream, createWriteStream } from 'node:fs';
-import { copyFile, mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
+import { copyFile, lstat, mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
@@ -14,7 +14,7 @@ for (let index = 2; index < process.argv.length; index += 2) {
   const key = process.argv[index];
   const name = key === '--output' ? 'out' : key.slice(2);
   if (!key.startsWith('--') || index + 1 >= process.argv.length || options.has(name)) {
-    throw new Error('Usage: npm run bundle:native -- --target <target> --output <empty-dir> [--fgr <path> --semantic <path>] [--assets-dir <prepared-assets>]');
+    throw new Error('Usage: npm run bundle:native -- --target <target> --output <empty-dir> [--fgr <path> --semantic <path>] [--assets-dir <prepared-assets>] [--code-model <local-model-dir>]');
   }
   options.set(name, process.argv[index + 1]);
 }
@@ -24,7 +24,7 @@ const config = versions.nativeTargets[target];
 if (!config) throw new Error(`Unsupported native target: ${target ?? '(missing)'}`);
 const output = path.resolve(options.get('out') ?? '');
 if (!options.has('out')) {
-  throw new Error('Usage: npm run bundle:native -- --target <target> --output <empty-dir> [--fgr <path> --semantic <path>] [--assets-dir <prepared-assets>]');
+  throw new Error('Usage: npm run bundle:native -- --target <target> --output <empty-dir> [--fgr <path> --semantic <path>] [--assets-dir <prepared-assets>] [--code-model <local-model-dir>]');
 }
 await mkdir(output, { recursive: true });
 if ((await readdir(output)).length) throw new Error(`Output directory must be empty: ${output}`);
@@ -32,10 +32,33 @@ if ((await readdir(output)).length) throw new Error(`Output directory must be em
 const work = path.join(output, '.prepare');
 const runtimeDir = path.join(output, 'lib');
 const modelDir = path.join(output, 'model');
+const codeModelDir = path.join(output, 'code-model');
 const binaryDir = path.join(output, 'bin');
 const runtimeLicenseDir = path.join(output, 'licenses/onnxruntime');
-await Promise.all([mkdir(work), mkdir(runtimeDir), mkdir(modelDir), mkdir(binaryDir), mkdir(runtimeLicenseDir, { recursive: true })]);
 const assetsDir = options.has('assets-dir') ? path.resolve(options.get('assets-dir')) : undefined;
+const codeModelSource = options.has('code-model') ? path.resolve(options.get('code-model')) : undefined;
+await Promise.all([mkdir(work), mkdir(runtimeDir), mkdir(modelDir), mkdir(binaryDir), mkdir(runtimeLicenseDir, { recursive: true })]);
+if (codeModelSource) await mkdir(codeModelDir);
+let codeModelManifest;
+if (codeModelSource) {
+  const spec = JSON.parse(await readFile(path.join(codeModelSource, 'model.json'), 'utf8'));
+  if (!spec || typeof spec.name !== 'string'
+    || !spec.name.startsWith('jina-embeddings-v2-base-code@')
+    || spec.dim !== 768 || spec.pooling !== 'mean' || spec.normalize !== true
+    || spec.max_tokens !== 512 || (spec.query_prefix != null) || (spec.document_prefix != null)) {
+    throw new Error(`Unsupported code model profile in ${codeModelSource}/model.json`);
+  }
+  for (const filename of ['model.onnx', 'tokenizer.json', 'model.json', 'LICENSE']) {
+    const info = await lstat(path.join(codeModelSource, filename));
+    if (!info.isFile()) throw new Error(`Code model bundle entry is not a regular file: ${codeModelSource}/${filename}`);
+  }
+  codeModelManifest = {
+    name: spec.name,
+    dimensions: spec.dim,
+    maxTokens: spec.max_tokens,
+    files: {},
+  };
+}
 const extension = target.startsWith('win32-') ? '.exe' : '';
 if (options.has('fgr') !== options.has('semantic')) {
   throw new Error('Pass both --fgr and --semantic, or neither to build the executables here.');
@@ -174,6 +197,14 @@ await Promise.all([
   copyFile(fgr, path.join(binaryDir, `fgr${target.startsWith('win32-') ? '.exe' : ''}`)),
   copyFile(semantic, path.join(binaryDir, `kimono-semantic${target.startsWith('win32-') ? '.exe' : ''}`)),
 ]);
+if (codeModelSource) {
+  for (const filename of ['model.onnx', 'tokenizer.json', 'model.json', 'LICENSE']) {
+    const source = path.join(codeModelSource, filename);
+    const destination = path.join(codeModelDir, filename);
+    await copyFile(source, destination);
+    codeModelManifest.files[filename] = await sha256(destination);
+  }
+}
 await rm(work, { recursive: true, force: true });
 
 const nativeHost = {
@@ -230,6 +261,7 @@ const manifest = {
     directory: 'lib',
   },
   modelDir: 'model',
+  ...(codeModelManifest ? { codeModelDir: 'code-model', codeModel: codeModelManifest } : {}),
   files,
 };
 await writeFile(path.join(output, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`);

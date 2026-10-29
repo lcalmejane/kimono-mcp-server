@@ -80,8 +80,11 @@ aucune structure particulière. Le mode optionnel AI-KIDO nécessite
 `prompts/index.md` ou `index.md`.
 
 L'embedding utilise une session du modèle par défaut et des lots de vecteurs
-bornés en mémoire. Le panneau affiche le fournisseur d'exécution choisi et les
-mesures au démarrage. Voir les
+bornés en mémoire. Le panneau affiche, lorsqu'ils sont disponibles, le cycle
+de vie du worker persistant, les index gardés en mémoire, le modèle actif, les
+paramètres d'exécution et les budgets CPU/mémoire estimés, ainsi que le
+fournisseur choisi et les mesures au démarrage. Ces valeurs servent à planifier
+les ressources ; ce ne sont pas des limites strictes d'utilisation ou de mémoire. Voir les
 [paramètres du moteur et de la mémoire](https://github.com/lcalmejane/kimono-mcp-server/blob/main/docs/local-rag.fr.md#moteur-dembedding-et-m%C3%A9moire).
 
 ## Installation manuelle

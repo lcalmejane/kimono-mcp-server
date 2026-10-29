@@ -143,11 +143,22 @@ settings. The management panel displays the selected provider and timings.
 | Environment variable | Default | Meaning |
 | --- | --- | --- |
 | `KIMONO_SEMANTIC_DEVICE` | `auto` | Benchmark and select, or explicitly select `cpu`, `cuda` or `coreml`. |
+| `KIMONO_SEMANTIC_PERSISTENT_WORKER` | `true` | Reuse the native Rust worker, loaded model and up to four hot index generations. Set `false` for one process per operation. |
 | `KIMONO_SEMANTIC_CPU_PERCENT` | `80` | Per-process automatic CPU budget, 1–100% of available CPUs, respecting visible container quotas. |
 | `KIMONO_SEMANTIC_MEMORY_PERCENT` | `80` | Per-process planning budget, 1–100% of currently available host/container RAM. |
 | `KIMONO_SEMANTIC_WORKERS` | `auto` | CPU sessions: floor(CPU budget / threads), reduced to fit memory, minimum one and maximum 32. Accelerators use one session. |
 | `KIMONO_SEMANTIC_THREADS` | `auto` | One inference thread, favoring parallel independent sessions; explicit range 1–32. |
 | `KIMONO_SEMANTIC_BATCH` | `auto` | Passages per batch (1–256), sized from memory remaining after model-session estimates. |
+| `KIMONO_CODE_PROFILE_ENABLED` | `false` | Explicit opt-in for the paused experimental code model profile. Leave disabled to avoid a second index/model and extra embedding/search work. |
+| `KIMONO_CODE_MODEL_DIR` | unset | Local code-only ONNX model directory; ignored unless `KIMONO_CODE_PROFILE_ENABLED=true`. The code model is not downloaded implicitly. |
+
+The code-specialized profile is paused pending relevance and performance
+evaluation. A configured model directory alone does not load it, create a
+second index, or add search work. To explicitly evaluate it, set
+`KIMONO_CODE_PROFILE_ENABLED=true` and point `KIMONO_CODE_MODEL_DIR` to a
+supported local model bundle. In that mode, `aikido_index` maintains a separate
+code-only index and semantic text queries search both indexes; vectors are
+never mixed. Native bundles can include a local model using `--code-model`.
 
 CUDA requires a compatible ONNX runtime containing its CUDA provider and GPU
 drivers; the standard Linux/Windows bundles contain a CPU runtime. CoreML is
@@ -180,9 +191,26 @@ session/batch memory. These estimates are not hard OS memory limits or measured
 GPU VRAM usage: other allocations, the growing index and concurrent processes
 can require more memory. Percentages apply independently to each process, not
 to a shared host scheduler. Increasing CPU workers increases model memory. The
-model and in-memory index remain resident while the helper runs; index storage
-still grows with the number of passages. Native helper exit releases its process
-memory.
+model remains resident in the persistent worker and up to four recently used
+index generations remain hot; cache eviction or server shutdown releases them.
+Index storage still grows with the number of passages. Set
+`KIMONO_SEMANTIC_PERSISTENT_WORKER=false` to roll back to the prior subprocess
+lifecycle.
+
+Semantic search queries the persisted index and does not run source
+synchronization or send all documents to the native engine. Use `aikido_index`
+to update the index explicitly. When the stored manifest and model profile are
+complete and compatible, an update sends only added/changed documents and
+explicit deletion paths to the native engine. An incomplete or incompatible
+manifest triggers a full update. Source validation still reads documents to
+compute current content hashes. A new immutable snapshot without a matching
+cached generation is indexed once on its first semantic search.
+
+Index freshness has a bounded fast path only when the Git worktree is clean and
+the indexed HEAD, branch, status fingerprint and corpus configuration still
+match. Otherwise Kimono falls back to a content scan; it does not infer content
+identity from modification time alone. This is separate from snapshot capture,
+whose immutable materialization and lifecycle are unchanged.
 
 ## Production diagnostics: no internal trace history
 

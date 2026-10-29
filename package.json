@@ -1,6 +1,6 @@
 {
   "name": "kimono-mcp-server",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "description": "Local RAG for source code and documentation with lexical and semantic retrieval over MCP",
   "license": "MIT",
   "repository": {

@@ -1,4 +1,5 @@
 import { terminateChildren } from './process.js';
+import { shutdownSemanticWorkers } from './semantic-worker.js';
 
 export class Lifecycle {
   stopping = false;
@@ -27,6 +28,7 @@ export class Lifecycle {
       try {
         await Promise.allSettled(this.active);
         await cleanup();
+        await shutdownSemanticWorkers();
         if (forced) throw new Error('Kimono shutdown required forced termination');
       } finally { clearTimeout(timeout); }
     })();

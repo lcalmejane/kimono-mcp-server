@@ -310,14 +310,15 @@ class RuntimeTools {
       const cachedSearch = async (compute: () => Promise<SearchResult>): Promise<string> => {
         const key = JSON.stringify([mode, input.query, input.vector, input.embeddingModel, kind, limit,
           input.enrich !== false, input.scope, input.pathPrefix, input.type, input.extension,
-          mode === 'semantic' || mode === 'hybrid' ? process.env.KIMONO_MODEL_DIR : undefined]);
+          mode === 'semantic' || mode === 'hybrid'
+            ? [process.env.KIMONO_MODEL_DIR, process.env.KIMONO_CODE_PROFILE_ENABLED === 'true'
+              ? process.env.KIMONO_CODE_MODEL_DIR : undefined] : undefined]);
         const result = this.knowledge.immutable && !semanticAvailability
           ? await searchCacheFor(this.knowledge).search(key, compute) : await compute();
         return this.retrieval.search(input, result.results, result.metadata);
       };
       const semanticSearch = async (options: { query?: string; vector?: number[]; embeddingModel?: string }) => {
         return cachedSearch(async () => {
-          await this.knowledge.refresh();
           const paths = this.knowledge.list(kind).filter(filter).map(entry => entry.path);
           const result = await this.knowledge.semanticIndex.run('search', { ...options, paths, kind, limit: limit + 1 });
           const { results, count: _count, ...metadata } = result;
@@ -412,6 +413,7 @@ class RuntimeTools {
           await this.knowledge.refresh();
           const report = JSON.parse(await this.execute('aikido_index', { operation: 'update', mode }));
           const after = await sourceSnapshot(this.knowledge);
+          if (!after.corpusFingerprint) throw new Error('Unable to verify the synchronized corpus fingerprint');
           const source = {
             gitUrl: published.gitUrl,
             branch: published.branch,

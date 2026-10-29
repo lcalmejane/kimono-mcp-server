@@ -1,5 +1,5 @@
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
-import { cp, mkdir, mkdtemp, open, readFile, rm, writeFile } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, open, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { createHash, randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { hostname, tmpdir } from 'node:os';
@@ -8,6 +8,7 @@ import { runProcess } from './process.js';
 import { within, type ChangeReport } from './synchronization.js';
 import { IndexLockedError, indexInfos, processAlive, trackIndex } from './index-basis.js';
 import { nativeDiagnostics } from './diagnostics.js';
+import { semanticWorkerEnabled, semanticWorkerFor, semanticWorkerStatus, type SemanticWorkerStatus } from './semantic-worker.js';
 
 export interface SemanticRuntime {
   executionProvider: 'cpu' | 'cuda' | 'coreml';
@@ -25,6 +26,11 @@ export interface SemanticResult {
   engine: 'embsearch-core';
   version: string;
   model: string;
+  indexVersion?: string;
+  chunkerVersion?: string;
+  candidatesExamined?: number;
+  hotIndexes?: number;
+  hotIndexEstimatedBytes?: number;
   chunks: number;
   embedded: number;
   skippedChunks?: number;
@@ -50,6 +56,7 @@ interface SemanticOptions {
   query?: string;
   vector?: number[];
   embeddingModel?: string;
+  profile?: 'code';
   kind?: KnowledgeKind;
   limit?: number;
   paths?: string[];
@@ -58,11 +65,20 @@ interface SemanticOptions {
 }
 
 interface Count { completed: number; total: number }
+interface SemanticManifest {
+  generation: string;
+  model: string;
+  indexVersion: string;
+  documents: Record<string, string>;
+  chunks: Record<string, unknown>;
+  complete: boolean;
+}
 export interface SemanticStatus {
   phase: 'unknown' | 'running' | 'waiting' | 'ready' | 'error' | 'disabled';
   operation?: string; stage?: string; startedAt?: string; completedAt?: string; indexedAt?: string;
   progress?: Count; error?: string;
   chunks?: number; model?: string;
+  hotIndexes?: number; hotIndexEstimatedBytes?: number;
   skippedChunks?: number;
   runtime?: SemanticRuntime;
   batchMs?: number;
@@ -70,9 +86,24 @@ export interface SemanticStatus {
   files?: Count; estimatedTokens?: Count; embedded?: Count;
   chunksPerSecond?: number; etaSeconds?: number; updatedAt?: string;
   source?: 'this-process' | 'another-process';
+  worker?: SemanticWorkerStatus;
 }
 
 const estimateTokens = (bytes: number) => Math.ceil(bytes / 4);
+const codeSource = /\.(?:c|cc|cpp|cs|go|h|hpp|java|js|jsx|mjs|py|rb|rs|scala|sh|swift|ts|tsx|vue)$/i;
+
+function semanticBasisFingerprint(documents: Record<string, string>): string {
+  const hash = createHash('sha256');
+  for (const [file, digest] of Object.entries(documents).sort(([a], [b]) => a.localeCompare(b))) {
+    hash.update(JSON.stringify([file, digest]));
+  }
+  return hash.digest('hex');
+}
+
+function codeProfileEnabled(): boolean {
+  return process.env.KIMONO_CODE_PROFILE_ENABLED === 'true'
+    && Boolean(process.env.KIMONO_CODE_MODEL_DIR);
+}
 
 export class SemanticIndex {
   private pending: Promise<unknown> = Promise.resolve();
@@ -89,11 +120,25 @@ export class SemanticIndex {
 
   status(): SemanticStatus {
     const own = structuredClone(this.state);
-    if (own.phase === 'running' || this.knowledge.immutable) return own;
-    const shared = this.readShared();
-    if (shared?.phase === 'running' || shared?.phase === 'waiting') return shared;
-    return own.phase === 'unknown' && shared ? shared : own;
+    let status = own;
+    if (own.phase !== 'running' && !this.knowledge.immutable) {
+      const shared = this.readShared();
+      if (shared?.phase === 'running' || shared?.phase === 'waiting') status = shared;
+      else if (own.phase === 'unknown' && shared) status = shared;
+    }
+    const worker = this.workerStatus();
+    if (worker) status = { ...status, worker };
+    return status;
   }
+
+  private workerStatus(): SemanticWorkerStatus | undefined {
+    const model = process.env.KIMONO_MODEL_DIR;
+    if (!model) return undefined;
+    if (!semanticWorkerEnabled()) return { phase: 'disabled' };
+    return semanticWorkerStatus(path.resolve(this.knowledge.root, model), process.env);
+  }
+
+  private readonly workerStatusChanged = (worker: SemanticWorkerStatus): void => this.persist(true, worker);
 
   private readShared(): SemanticStatus | undefined {
     try {
@@ -112,7 +157,7 @@ export class SemanticIndex {
     this.persist(force);
   }
 
-  private persist(force = true): void {
+  private persist(force = true, worker = this.workerStatus()): void {
     if (this.knowledge.immutable) return;
     const now = Date.now();
     if (!force && now - this.persistedAt < 500) return;
@@ -122,10 +167,15 @@ export class SemanticIndex {
     const pending = `${file}.${randomUUID()}.pending`;
     try {
       mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
-      writeFileSync(pending, JSON.stringify({ ...this.state, source: undefined, pid: process.pid, host: hostname() }), { mode: 0o600 });
+      writeFileSync(pending, JSON.stringify({ ...this.state, worker, source: undefined, pid: process.pid, host: hostname() }), { mode: 0o600 });
       renameSync(pending, file);
-    } catch {
-      rmSync(pending, { force: true });
+    } catch (error) {
+      try { rmSync(pending, { force: true }); }
+      catch (cleanupError) {
+        console.error('Could not remove temporary semantic status file:',
+          cleanupError instanceof Error ? cleanupError.message : String(cleanupError));
+      }
+      console.error('Could not publish semantic status:', error instanceof Error ? error.message : String(error));
     }
   }
 
@@ -203,24 +253,16 @@ export class SemanticIndex {
     const model = process.env.KIMONO_MODEL_DIR;
     if (!model) throw new Error('Model introspection requires KIMONO_MODEL_DIR with a local ONNX model');
     const result = this.pending.then(async () => {
-      const raw = await invokeSemantic({ operation: 'info', model }, tmpdir(), tmpdir());
-      if (!record(raw) || raw.engine !== 'embsearch-core' || typeof raw.version !== 'string'
-        || typeof raw.model !== 'string' || typeof raw.name !== 'string'
-        || typeof raw.dimensions !== 'number' || !Number.isSafeInteger(raw.dimensions) || raw.dimensions < 1
-        || typeof raw.normalized !== 'boolean' || typeof raw.maxTokens !== 'number'
-        || !Number.isSafeInteger(raw.maxTokens) || raw.maxTokens < 1
-        || !['mean', 'cls'].includes(String(raw.pooling))
-        || !(raw.queryPrefix === null || typeof raw.queryPrefix === 'string')
-        || !(raw.documentPrefix === null || typeof raw.documentPrefix === 'string')
-        || typeof raw.compatibility !== 'string' || !record(raw.sha256)) {
+      const raw = await invokeSemantic({ operation: 'info', model }, this.knowledge.root, this.workerStatusChanged);
+      if (!validModelInfo(raw)) {
         throw new Error('Invalid model introspection response');
       }
-      for (const file of ['model.onnx', 'tokenizer.json', 'model.json']) {
-        const digest = raw.sha256[file];
-        if (typeof digest !== 'string' || !/^[a-f0-9]{64}$/.test(digest)) throw new Error('Invalid model file fingerprint');
-      }
       this.state.runtime = readRuntime(raw.runtime);
-      return raw;
+      if (!codeProfileEnabled()) return raw;
+      const codeModel = await invokeSemantic({ operation: 'info', model: process.env.KIMONO_CODE_MODEL_DIR },
+        this.knowledge.root, this.workerStatusChanged);
+      if (!validModelInfo(codeModel)) throw new Error('Invalid code model introspection response');
+      return { ...raw, profiles: { multilingual: raw, code: codeModel } };
     });
     this.pending = result.then(() => undefined, () => undefined);
     return result;
@@ -232,7 +274,8 @@ export class SemanticIndex {
     const model = process.env.KIMONO_MODEL_DIR;
     if (!model) throw new Error('Embedding requires KIMONO_MODEL_DIR with a local ONNX model');
     const result = this.pending.then(async () => {
-      const raw = await invokeSemantic({ operation: 'embed', model, text, usage }, tmpdir(), tmpdir());
+      const raw = await invokeSemantic({ operation: 'embed', model, text, usage }, this.knowledge.root,
+        this.workerStatusChanged);
       if (!record(raw) || raw.engine !== 'embsearch-core' || typeof raw.version !== 'string'
         || typeof raw.model !== 'string' || raw.usage !== usage || typeof raw.normalized !== 'boolean'
         || typeof raw.dimensions !== 'number' || !Number.isSafeInteger(raw.dimensions) || raw.dimensions < 1
@@ -253,33 +296,97 @@ export class SemanticIndex {
     operation: 'search' | 'update' | 'rebuild' | 'compact' | 'stats',
     options: SemanticOptions = {},
   ): Promise<SemanticResult> {
-    const result = this.pending.then(() => this.perform(operation, options));
+    const result = this.pending.then(() => this.performProfiles(operation, options));
     this.pending = result.then(() => undefined, () => undefined);
     return result;
+  }
+
+  private async performProfiles(
+    operation: 'search' | 'update' | 'rebuild' | 'compact' | 'stats',
+    options: SemanticOptions,
+  ): Promise<SemanticResult> {
+    const enabled = codeProfileEnabled();
+    if (options.profile === 'code' && !enabled) {
+      throw new Error('The code embedding profile is paused; explicitly set KIMONO_CODE_PROFILE_ENABLED=true to enable it.');
+    }
+    if (options.profile || !enabled || options.vector) {
+      return this.perform(operation, options);
+    }
+
+    const document = await this.perform(operation, options);
+    const code = await this.perform(operation, {
+      ...options,
+      profile: 'code',
+      refreshed: operation === 'search' ? options.refreshed : true,
+      ...(operation === 'search' ? {
+        paths: this.knowledge.list().filter(entry => codeSource.test(entry.path)
+          && (!options.kind || entry.kind === options.kind)
+          && (!options.paths || options.paths.includes(entry.path))).map(entry => entry.path),
+      } : {}),
+    });
+    const fused = new Map<string, SemanticResult['results'][number]>();
+    for (const profile of [document, code]) {
+      profile.results.forEach((result, rank) => {
+        const key = `${result.path}:${result.line}`;
+        const prior = fused.get(key);
+        fused.set(key, { ...result, score: (prior?.score ?? 0) + 1 / (60 + rank + 1) });
+      });
+    }
+    const results = [...fused.values()].sort((a, b) => b.score - a.score
+      || a.path.localeCompare(b.path) || a.line - b.line).slice(0, options.limit ?? 25);
+    const unique = (values: string[]) => [...new Set(values)].sort();
+    const combined: SemanticResult = {
+      ...document,
+      model: `${document.model}+${code.model}`,
+      version: `${document.version}+${code.version}`,
+      chunks: document.chunks + code.chunks,
+      embedded: document.embedded + code.embedded,
+      count: results.length,
+      results,
+      changes: {
+        added: unique([...document.changes.added, ...code.changes.added]),
+        modified: unique([...document.changes.modified, ...code.changes.modified]),
+        deleted: unique([...document.changes.deleted, ...code.changes.deleted]),
+      },
+    };
+    this.state = { ...this.state, model: combined.model, chunks: combined.chunks };
+    if (operation !== 'search' && operation !== 'stats') this.persist();
+    return combined;
   }
 
   private async perform(operation: 'search' | 'update' | 'rebuild' | 'compact' | 'stats',
     options: SemanticOptions = {}): Promise<SemanticResult> {
     const startedAt = new Date().toISOString();
     const tracked = operation !== 'search' && operation !== 'stats';
+    const maintenance = operation === 'update' || operation === 'rebuild' || operation === 'compact';
     const previous = this.state;
     this.state = { phase: 'running', operation, stage: operation, startedAt };
     if (tracked) this.persist();
     try {
-      const output = this.knowledge.immutable && operation === 'search'
-        ? await this.execute(operation, options)
-        : await trackIndex(this.knowledge, 'semantic', options.syncPaths, observed => this.execute(operation, options, observed));
+      const output = maintenance
+        ? options.profile
+          ? await this.execute(operation, options)
+          : await trackIndex(this.knowledge, 'semantic', options.syncPaths,
+            (observed, reusableFingerprint, reusableDocuments) =>
+              this.execute(operation, options, observed, reusableFingerprint, reusableDocuments))
+        : await this.execute(operation, options);
       if (tracked) {
         const corpus = this.knowledge.corpusStatus;
         this.update({ ...this.state, phase: 'ready', completedAt: new Date().toISOString(),
           indexedAt: new Date().toISOString(), chunks: output.chunks, model: output.model,
+          ...(output.hotIndexes !== undefined ? { hotIndexes: output.hotIndexes } : {}),
+          ...(output.hotIndexEstimatedBytes !== undefined ? { hotIndexEstimatedBytes: output.hotIndexEstimatedBytes } : {}),
           skippedChunks: output.skippedChunks ?? 0, etaSeconds: 0,
           files: { completed: corpus.files, total: corpus.files },
           estimatedTokens: { completed: estimateTokens(corpus.bytes), total: estimateTokens(corpus.bytes) },
           embedded: { completed: output.chunks, total: output.chunks } });
       } else {
         this.state = { ...(previous.phase === 'ready' ? previous : {}), ...this.state, phase: 'ready',
-          completedAt: new Date().toISOString(), chunks: output.chunks, model: output.model };
+          completedAt: new Date().toISOString(), chunks: output.chunks, model: output.model,
+          ...(output.hotIndexes !== undefined ? { hotIndexes: output.hotIndexes } : {}),
+          ...(output.hotIndexEstimatedBytes !== undefined ? { hotIndexEstimatedBytes: output.hotIndexEstimatedBytes } : {}) };
+        if (output.hotIndexes !== undefined && (output.hotIndexes !== previous.hotIndexes
+          || output.hotIndexEstimatedBytes !== previous.hotIndexEstimatedBytes)) this.persist();
       }
       return output;
     } catch (error) {
@@ -294,17 +401,81 @@ export class SemanticIndex {
     operation: string,
     options: SemanticOptions,
     observed?: (fingerprint: string, partial?: boolean) => void,
+    reusableFingerprint?: string,
+    reusableDocuments?: Record<string, string>,
   ): Promise<SemanticResult> {
-    const model = process.env.KIMONO_MODEL_DIR;
-    if (!model) throw new Error('Semantic search requires KIMONO_MODEL_DIR with model.onnx, tokenizer.json and model.json. Use the Kimono Docker image or install a local model.');
-    if (!options.refreshed) await this.knowledge.refresh(options.syncPaths);
+    const model = options.profile === 'code' ? process.env.KIMONO_CODE_MODEL_DIR : process.env.KIMONO_MODEL_DIR;
+    if (!model) throw new Error(options.profile === 'code'
+      ? 'Code semantic search requires KIMONO_CODE_MODEL_DIR with model.onnx, tokenizer.json and model.json.'
+      : 'Semantic search requires KIMONO_MODEL_DIR with model.onnx, tokenizer.json and model.json. Use the Kimono Docker image or install a local model.');
+    const maintenance = operation === 'update' || operation === 'rebuild' || operation === 'compact';
     const parent = this.knowledge.searchIndex.directory;
+    const cache = path.join(parent, options.profile === 'code' ? 'semantic-code' : 'semantic');
     await mkdir(parent, { recursive: true, mode: 0o700 });
     const knowledge = this.knowledge;
-    const tracked = operation !== 'search' && operation !== 'stats';
+    const tracked = maintenance;
+    let profileFingerprint: string | undefined;
+    let manifest: SemanticManifest | undefined;
+    if (operation === 'update') {
+      const profile = await invokeSemantic({ operation: 'profile', model, cache }, this.knowledge.root,
+        this.workerStatusChanged);
+      if (!record(profile) || profile.engine !== 'embsearch-core' || typeof profile.fingerprint !== 'string'
+        || !/^[a-f0-9]{64}$/.test(profile.fingerprint)) throw new Error('Invalid semantic model profile response');
+      profileFingerprint = profile.fingerprint;
+      manifest = await readSemanticManifest(cache);
+    }
+
+    const expectedPaths = operation === 'update' && reusableFingerprint !== undefined
+      && knowledge.isInitialized && !options.profile
+      ? knowledge.list().filter(entry => within(entry.path, options.syncPaths)
+        && (options.profile !== 'code' || codeSource.test(entry.path)))
+        .map(entry => entry.path).sort()
+      : undefined;
+    const manifestPaths = manifest ? Object.keys(manifest.documents).sort() : undefined;
+    let raw: unknown;
+    const reusedFreshIndex = operation === 'update' && reusableFingerprint !== undefined
+      && !options.profile && !options.syncPaths && manifest?.complete === true
+      && manifest.model === profileFingerprint && manifest.generation !== ''
+      && expectedPaths !== undefined && manifestPaths !== undefined
+      && expectedPaths.length === manifestPaths.length
+      && expectedPaths.every((file, index) => file === manifestPaths[index]);
+    if (reusedFreshIndex) {
+      observed?.(reusableFingerprint);
+      raw = await invokeSemantic({ operation: 'stats', model, cache }, this.knowledge.root, this.workerStatusChanged);
+    } else {
+      if (maintenance && !options.refreshed) await knowledge.refresh(options.syncPaths);
+    }
+    if (operation === 'search' && knowledge.immutable) {
+      try {
+        await readFile(path.join(cache, 'state.json'), 'utf8');
+      } catch (error) {
+        if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
+        await this.execute('update', { ...options, refreshed: true });
+      }
+    }
     const selected = knowledge.list().filter(entry => within(entry.path, options.syncPaths))
+      .filter(entry => options.profile !== 'code' || codeSource.test(entry.path))
       .sort((a, b) => a.path.localeCompare(b.path));
-    if (tracked) {
+    let incremental = reusedFreshIndex;
+    let deletedPaths: string[] = [];
+    let previousDocuments: Record<string, string> = {};
+    if (operation === 'update' && !reusedFreshIndex) {
+      if (manifest?.complete && manifest.model === profileFingerprint && manifest.generation
+        && Object.values(manifest.documents).every(value => /^[a-f0-9]{64}$/.test(value))) {
+        incremental = true;
+        previousDocuments = manifest.documents;
+        const selectedPaths = new Set(selected.map(entry => entry.path));
+        deletedPaths = Object.keys(previousDocuments).filter(file => within(file, options.syncPaths)
+          && !selectedPaths.has(file));
+      }
+    }
+    const selectedPaths = new Set(selected.map(entry => entry.path));
+    const reusableDocumentFingerprints = incremental && reusableDocuments
+      ? Object.fromEntries(Object.entries(reusableDocuments)
+        .filter(([file, digest]) => selectedPaths.has(file)
+          && previousDocuments[file] === digest))
+      : {};
+    if (tracked && !reusedFreshIndex) {
       const corpusBytes = options.syncPaths ? 0 : knowledge.corpusStatus.bytes;
       this.state.stage = 'reading_documents';
       this.state.files = { completed: 0, total: selected.length };
@@ -319,44 +490,58 @@ export class SemanticIndex {
       this.persist(false);
     };
     let indexedFingerprint: string | undefined;
+    let readSkipped = false;
     async function* documents() {
-      const fingerprint = createHash('sha256');
       let bytes = 0;
+      const currentDocuments: Record<string, string> = {};
       for (const entry of selected) {
+        const reusable = reusableDocumentFingerprints[entry.path];
+        if (reusable) {
+          currentDocuments[entry.path] = reusable;
+          counted(0);
+          continue;
+        }
         // An unreadable document is traced and skipped; it must not abort the whole run.
         const document = await knowledge.tryRead(entry.id);
-        if (!document) { counted(0); continue; }
+        if (!document) { readSkipped = true; counted(0); continue; }
         const { content } = document;
         const size = Buffer.byteLength(content);
         bytes += size;
         counted(size);
         if (bytes > knowledge.config.maxCorpusBytes) throw new Error('Semantic corpus exceeds maxCorpusBytes; narrow include/exclude in the host config.');
-        fingerprint.update(JSON.stringify([entry.path, entry.kind, content]));
+        const digest = createHash('sha256').update(JSON.stringify([entry.kind, content])).digest('hex');
+        currentDocuments[entry.path] = digest;
+        if (incremental && previousDocuments[entry.path] === digest) continue;
         yield { path: entry.path, kind: entry.kind, content };
       }
-      indexedFingerprint = fingerprint.digest('hex');
+      indexedFingerprint = semanticBasisFingerprint(currentDocuments);
     }
-    const raw = await invokeSemantic({
-      operation, model, cache: path.join(parent, 'semantic'), ...options,
-    }, parent, this.knowledge.root, (progress) => {
-      if (progress.stage === 'document_embedding' && this.state.stage === progress.stage
-        && (this.state.progress?.completed ?? 0) > progress.completed) return;
-      this.state.progress = { completed: progress.completed, total: progress.total };
-      if (progress.stage) this.state.stage = progress.stage;
-      if (progress.runtime) this.state.runtime = progress.runtime;
-      if (progress.batchMs !== undefined) this.state.batchMs = progress.batchMs;
-      if (tracked && progress.stage !== 'document_embedding') this.persist(false);
-      if (!tracked || progress.stage !== 'document_embedding') return;
-      if (progress.completed === 0 || !this.embeddingStarted) this.embeddingStarted = Date.now();
-      this.state.embedded = { completed: progress.completed, total: progress.total };
-      const seconds = (Date.now() - this.embeddingStarted) / 1000;
-      if (progress.completed > 0 && seconds > 0) {
-        const rate = progress.completed / seconds;
-        this.state.chunksPerSecond = Math.round(rate * 10) / 10;
-        this.state.etaSeconds = Math.ceil((progress.total - progress.completed) / rate);
-      }
-      this.persist(progress.completed === progress.total);
-    }, operation === 'search' ? 60_000 : 3_600_000, documents());
+    const payload = {
+      operation, model, cache,
+      ...(operation === 'update' ? { incremental, deletedPaths } : {}),
+      ...Object.fromEntries(Object.entries(options).filter(([key]) => key !== 'profile')),
+    };
+    if (!reusedFreshIndex) {
+      raw = await invokeSemantic(payload, this.knowledge.root, this.workerStatusChanged, (progress) => {
+        if (progress.stage === 'document_embedding' && this.state.stage === progress.stage
+          && (this.state.progress?.completed ?? 0) > progress.completed) return;
+        this.state.progress = { completed: progress.completed, total: progress.total };
+        if (progress.stage) this.state.stage = progress.stage;
+        if (progress.runtime) this.state.runtime = progress.runtime;
+        if (progress.batchMs !== undefined) this.state.batchMs = progress.batchMs;
+        if (tracked && progress.stage !== 'document_embedding') this.persist(false);
+        if (!tracked || progress.stage !== 'document_embedding') return;
+        if (progress.completed === 0 || !this.embeddingStarted) this.embeddingStarted = Date.now();
+        this.state.embedded = { completed: progress.completed, total: progress.total };
+        const seconds = (Date.now() - this.embeddingStarted) / 1000;
+        if (progress.completed > 0 && seconds > 0) {
+          const rate = progress.completed / seconds;
+          this.state.chunksPerSecond = Math.round(rate * 10) / 10;
+          this.state.etaSeconds = Math.ceil((progress.total - progress.completed) / rate);
+        }
+        this.persist(progress.completed === progress.total);
+      }, operation === 'search' ? 60_000 : 3_600_000, maintenance ? documents() : undefined);
+    }
     if (!record(raw) || raw.engine !== 'embsearch-core' || typeof raw.model !== 'string'
       || typeof raw.version !== 'string' || typeof raw.chunks !== 'number'
       || !Number.isSafeInteger(raw.chunks) || raw.chunks < 0 || typeof raw.embedded !== 'number'
@@ -369,7 +554,7 @@ export class SemanticIndex {
       throw new Error('Invalid semantic skipped chunk count');
     }
     if (skippedChunks > 0) console.error(`Kimono: ${skippedChunks} semantic passages could not be embedded; lexical and metadata retrieval remain available`);
-    if (indexedFingerprint) observed?.(indexedFingerprint, skippedChunks > 0);
+    if (indexedFingerprint) observed?.(indexedFingerprint, skippedChunks > 0 || readSkipped);
     const results: SemanticResult['results'] = raw.results.map((hit: unknown) => {
       if (!record(hit) || typeof hit.path !== 'string' || !Number.isInteger(hit.line)
         || typeof hit.line !== 'number' || hit.line < 1 || typeof hit.score !== 'number'
@@ -380,9 +565,24 @@ export class SemanticIndex {
     });
     if (results.length > (options.limit ?? 25)) throw new Error('Semantic engine exceeded the result limit');
     const changes = changeReport(raw.changes, options.syncPaths);
+    if ((raw.indexVersion !== undefined && typeof raw.indexVersion !== 'string')
+      || (raw.chunkerVersion !== undefined && typeof raw.chunkerVersion !== 'string')
+      || (raw.candidatesExamined !== undefined && (!Number.isSafeInteger(raw.candidatesExamined)
+        || Number(raw.candidatesExamined) < 0 || Number(raw.candidatesExamined) > 4096))
+      || (raw.hotIndexes !== undefined && (!Number.isSafeInteger(raw.hotIndexes)
+        || Number(raw.hotIndexes) < 0 || Number(raw.hotIndexes) > 4))
+      || (raw.hotIndexEstimatedBytes !== undefined && (!Number.isSafeInteger(raw.hotIndexEstimatedBytes)
+        || Number(raw.hotIndexEstimatedBytes) < 0 || Number(raw.hotIndexEstimatedBytes) > 512 * 1024 * 1024))) {
+      throw new Error('Invalid semantic index diagnostics');
+    }
     return {
       engine: 'embsearch-core', model: raw.model, version: raw.version,
       chunks: raw.chunks, embedded: raw.embedded, count: results.length, results,
+      ...(typeof raw.indexVersion === 'string' ? { indexVersion: raw.indexVersion } : {}),
+      ...(typeof raw.chunkerVersion === 'string' ? { chunkerVersion: raw.chunkerVersion } : {}),
+      ...(typeof raw.candidatesExamined === 'number' ? { candidatesExamined: raw.candidatesExamined } : {}),
+      ...(typeof raw.hotIndexes === 'number' ? { hotIndexes: raw.hotIndexes } : {}),
+      ...(typeof raw.hotIndexEstimatedBytes === 'number' ? { hotIndexEstimatedBytes: raw.hotIndexEstimatedBytes } : {}),
       ...(raw.skippedChunks !== undefined ? { skippedChunks } : {}),
       ...(runtime ? { runtime } : {}),
       changes,
@@ -393,15 +593,28 @@ export class SemanticIndex {
 const runtimeSelections = new Map<string, Promise<SemanticRuntime | undefined>>();
 
 async function invokeSemantic(
-  payload: Record<string, unknown>, parent: string, cwd: string,
+  payload: Record<string, unknown>, cwd: string,
+  onWorkerStatus?: (status: SemanticWorkerStatus) => void,
   progress?: (value: { completed: number; total: number; stage?: string; batchMs?: number; runtime?: SemanticRuntime }) => void,
   timeout = 60_000,
   documents?: AsyncIterable<{ path: string; kind: string; content: string }>,
 ): Promise<unknown> {
   const diagnostics = nativeDiagnostics();
-  const temporary = await mkdtemp(path.join(parent, 'semantic-request-'));
+  const workingDirectoryExists = await stat(cwd).then(info => {
+    if (!info.isDirectory()) throw new Error(`Semantic working directory is not a directory: ${cwd}`);
+    return true;
+  }).catch(error => {
+    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return false;
+    throw error;
+  });
+  const workingDirectory = workingDirectoryExists ? cwd : process.cwd();
+  const temporary = await mkdtemp(path.join(tmpdir(), 'kimono-semantic-request-'));
   let finishSelection: ((value: SemanticRuntime | undefined) => void) | undefined;
-  const key = JSON.stringify([payload.model, ...['KIMONO_SEMANTIC_BIN', 'ORT_DYLIB_PATH',
+  const useWorker = semanticWorkerEnabled();
+  const workerModel = typeof payload.model === 'string' ? path.resolve(cwd, payload.model) : undefined;
+  const requestPayload = (useWorker || !workingDirectoryExists) && workerModel
+    ? { ...payload, model: workerModel } : payload;
+  const key = JSON.stringify([requestPayload.model, ...['KIMONO_SEMANTIC_BIN', 'ORT_DYLIB_PATH',
     'KIMONO_SEMANTIC_WORKERS', 'KIMONO_SEMANTIC_THREADS', 'KIMONO_SEMANTIC_BATCH',
     'KIMONO_SEMANTIC_CPU_PERCENT', 'KIMONO_SEMANTIC_MEMORY_PERCENT'].map(name => process.env[name])]);
   try {
@@ -409,7 +622,7 @@ async function invokeSemantic(
     if (documents) {
       const handle = await open(request, 'wx', 0o600);
       try {
-        await handle.writeFile(`${JSON.stringify(payload).slice(0, -1)},"documents":[`);
+        await handle.writeFile(`${JSON.stringify(requestPayload).slice(0, -1)},"documents":[`);
         let first = true;
         for await (const document of documents) {
           await handle.writeFile(`${first ? '' : ','}${JSON.stringify(document)}`);
@@ -417,48 +630,59 @@ async function invokeSemantic(
         }
         await handle.writeFile(']}');
       } finally { await handle.close(); }
-    } else await writeFile(request, JSON.stringify(payload), { mode: 0o600 });
+    } else await writeFile(request, JSON.stringify(requestPayload), { mode: 0o600 });
+    let stderrBuffer = '';
+    const handleStderr = (chunk: string) => {
+      stderrBuffer += chunk;
+      let newline: number;
+      while ((newline = stderrBuffer.indexOf('\n')) >= 0) {
+        const line = stderrBuffer.slice(0, newline);
+        stderrBuffer = stderrBuffer.slice(newline + 1);
+        diagnostics.line(line);
+        if (!line.startsWith('KIMONO_PROGRESS ')) continue;
+        try {
+          const value: unknown = JSON.parse(line.slice(16));
+          if (record(value) && typeof value.completed === 'number' && typeof value.total === 'number'
+            && Number.isSafeInteger(value.completed) && Number.isSafeInteger(value.total)
+            && value.completed >= 0 && value.total >= value.completed) {
+            progress?.({ completed: value.completed, total: value.total,
+              ...(value.runtime ? { runtime: readRuntime(value.runtime) } : {}),
+              ...(typeof value.batchMs === 'number' && Number.isFinite(value.batchMs) && value.batchMs >= 0
+                ? { batchMs: value.batchMs } : {}),
+              ...(typeof value.phase === 'string' ? { stage: value.phase.slice(0, 64) } : {}) });
+          } else console.error('Invalid semantic progress event');
+        } catch (error) {
+          console.error('Invalid semantic progress JSON:', error instanceof Error ? error.message : String(error));
+        }
+      }
+      if (stderrBuffer.length > 64 * 1024) {
+        stderrBuffer = '';
+        console.error('Kimono: oversized semantic diagnostic line omitted');
+      }
+    };
     const automatic = !process.env.KIMONO_SEMANTIC_DEVICE || process.env.KIMONO_SEMANTIC_DEVICE === 'auto';
     let selected: SemanticRuntime | undefined;
-    while (automatic && runtimeSelections.has(key)) {
-      selected = await runtimeSelections.get(key);
-      if (selected) break;
+    if (!useWorker) {
+      while (automatic && runtimeSelections.has(key)) {
+        selected = await runtimeSelections.get(key);
+        if (selected) break;
+      }
+      if (automatic && !selected) {
+        runtimeSelections.set(key, new Promise(resolve => { finishSelection = resolve; }));
+      }
     }
-    if (automatic && !selected) {
-      runtimeSelections.set(key, new Promise(resolve => { finishSelection = resolve; }));
+    let raw: unknown;
+    if (useWorker) {
+      if (!workerModel) throw new Error('Persistent semantic worker requires a model directory');
+      const worker = semanticWorkerFor(workerModel, workingDirectory, process.env, onWorkerStatus);
+      raw = await worker.request(request, automatic && !worker.ready ? Math.max(timeout, 120_000) : timeout, handleStderr);
+    } else {
+      const response = await runProcess(process.env.KIMONO_SEMANTIC_BIN ?? 'kimono-semantic',
+        [request], workingDirectory, [0], automatic && !selected ? Math.max(timeout, 120_000) : timeout, handleStderr,
+        selected ? { ...process.env, KIMONO_SEMANTIC_DEVICE: selected.executionProvider } : process.env,
+        4 * 1024 * 1024, true);
+      raw = JSON.parse(response.stdout);
     }
-    let buffered = '';
-    const response = await runProcess(process.env.KIMONO_SEMANTIC_BIN ?? 'kimono-semantic',
-      [request], cwd, [0], automatic && !selected ? Math.max(timeout, 120_000) : timeout, (chunk) => {
-        buffered += chunk;
-        let newline;
-        while ((newline = buffered.indexOf('\n')) >= 0) {
-          const line = buffered.slice(0, newline);
-          buffered = buffered.slice(newline + 1);
-          diagnostics.line(line);
-          if (!line.startsWith('KIMONO_PROGRESS ')) continue;
-          try {
-            const value: unknown = JSON.parse(line.slice(16));
-            if (record(value) && typeof value.completed === 'number' && typeof value.total === 'number'
-              && Number.isSafeInteger(value.completed) && Number.isSafeInteger(value.total)
-              && value.completed >= 0 && value.total >= value.completed) {
-              progress?.({ completed: value.completed, total: value.total,
-                ...(value.runtime ? { runtime: readRuntime(value.runtime) } : {}),
-                ...(typeof value.batchMs === 'number' && Number.isFinite(value.batchMs) && value.batchMs >= 0
-                  ? { batchMs: value.batchMs } : {}),
-                ...(typeof value.phase === 'string' ? { stage: value.phase.slice(0, 64) } : {}) });
-            } else console.error('Invalid semantic progress event');
-          } catch (error) {
-            console.error('Invalid semantic progress JSON:', error instanceof Error ? error.message : String(error));
-          }
-        }
-        if (buffered.length > 64 * 1024) {
-          buffered = '';
-          console.error('Kimono: oversized semantic diagnostic line omitted');
-        }
-      }, selected ? { ...process.env, KIMONO_SEMANTIC_DEVICE: selected.executionProvider } : process.env,
-      4 * 1024 * 1024, true);
-    const raw: unknown = JSON.parse(response.stdout);
     if (record(raw)) {
       const runtime = readRuntime(raw.runtime);
       if (runtime) {
@@ -515,6 +739,66 @@ function readRuntime(value: unknown): SemanticRuntime | undefined {
 
 function record(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function validModelInfo(value: unknown): value is Record<string, unknown> {
+  if (!record(value) || value.engine !== 'embsearch-core' || typeof value.version !== 'string'
+    || typeof value.model !== 'string' || typeof value.name !== 'string'
+    || typeof value.dimensions !== 'number' || !Number.isSafeInteger(value.dimensions) || value.dimensions < 1
+    || typeof value.normalized !== 'boolean' || typeof value.maxTokens !== 'number'
+    || !Number.isSafeInteger(value.maxTokens) || value.maxTokens < 1
+    || !['mean', 'cls'].includes(String(value.pooling))
+    || !(value.queryPrefix === null || typeof value.queryPrefix === 'string')
+    || !(value.documentPrefix === null || typeof value.documentPrefix === 'string')
+    || typeof value.compatibility !== 'string' || !record(value.sha256)) return false;
+  for (const file of ['model.onnx', 'tokenizer.json', 'model.json']) {
+    const digest = value.sha256[file];
+    if (typeof digest !== 'string' || !/^[a-f0-9]{64}$/.test(digest)) return false;
+  }
+  return true;
+}
+
+async function readSemanticManifest(cache: string): Promise<SemanticManifest | undefined> {
+  let contents: string;
+  try { contents = await readFile(path.join(cache, 'state.json'), 'utf8'); }
+  catch (error) {
+    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return undefined;
+    throw error;
+  }
+  let value: unknown;
+  try { value = JSON.parse(contents); }
+  catch (error) { throw new Error('Invalid semantic index manifest JSON', { cause: error }); }
+  if (!record(value) || typeof value.generation !== 'string'
+    || value.generation !== '' && !/^store-[a-f0-9]{24}$/.test(value.generation)
+    || typeof value.model !== 'string' || !/^[a-f0-9]{64}$/.test(value.model)
+    || typeof value.index_version !== 'string' || !value.index_version
+    || !record(value.documents) || !record(value.chunks)) {
+    throw new Error('Invalid semantic index manifest');
+  }
+  const documents: Record<string, string> = {};
+  for (const [file, digest] of Object.entries(value.documents)) {
+    if (!file || path.posix.isAbsolute(file) || /[\\\0\r\n]/.test(file)
+      || file.split('/').some(part => !part || part === '.' || part === '..')
+      || typeof digest !== 'string') throw new Error('Invalid semantic document manifest');
+    documents[file] = digest;
+  }
+  for (const [id, chunk] of Object.entries(value.chunks)) {
+    if (!record(chunk) || typeof chunk.path !== 'string' || !chunk.path
+      || path.posix.isAbsolute(chunk.path) || /[\\\0\r\n]/.test(chunk.path)
+      || chunk.path.split('/').some(part => !part || part === '.' || part === '..')
+      || !id.startsWith(`${chunk.path}#`) || !/^\d+$/.test(id.slice(chunk.path.length + 1))
+      || typeof chunk.kind !== 'string' || !chunk.kind || typeof chunk.line !== 'number'
+      || !Number.isSafeInteger(chunk.line) || chunk.line < 1 || typeof chunk.text !== 'string'
+      || typeof chunk.hash !== 'string' || !/^[a-f0-9]{64}$/.test(chunk.hash)) {
+      throw new Error('Invalid semantic chunk manifest');
+    }
+  }
+  const complete = Object.values(value.chunks).every(chunk =>
+    record(chunk) && /^[a-f0-9]{64}$/.test(documents[String(chunk.path)] ?? ''));
+  return {
+    generation: value.generation, model: value.model, indexVersion: value.index_version,
+    documents, chunks: value.chunks, complete,
+  };
 }
 
 function changeReport(value: unknown, scopes?: string[]): ChangeReport {

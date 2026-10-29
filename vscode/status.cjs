@@ -14,10 +14,14 @@ async function readIndexStatus(file) {
   try { value = JSON.parse(await fs.readFile(file, "utf8")); } catch { return { phase: "not-indexed" }; }
   if (!value || typeof value !== "object" || typeof value.phase !== "string") return { phase: "not-indexed" };
   const { pid, host, ...status } = value;
-  if ((status.phase === "running" || status.phase === "waiting") && (host !== os.hostname() || !alive(pid))) {
-    return { ...status, phase: "interrupted" };
+  const ownerAlive = host === os.hostname() && alive(pid);
+  const workerAlive = !status.worker?.pid || host !== os.hostname() || alive(status.worker.pid);
+  const worker = status.worker && (!ownerAlive || !workerAlive) ? { phase: "stopped" } : status.worker;
+  const normalized = { ...status, ...(worker ? { worker } : {}) };
+  if ((status.phase === "running" || status.phase === "waiting") && !ownerAlive) {
+    return { ...normalized, phase: "interrupted" };
   }
-  return status;
+  return normalized;
 }
 
 const { compact, duration, lines, overall, summarize, view } = require("./management/status-format.js");
