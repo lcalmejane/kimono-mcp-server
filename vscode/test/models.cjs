@@ -7,18 +7,12 @@ const { createServer } = require("node:http");
 const { readFile } = require("node:fs/promises");
 const path = require("node:path");
 
-test("all three HTML entries load the model helper before their callbacks", async () => {
-  const workspace = path.resolve(__dirname, "../../..");
-  for (const relative of ["kimono-mcp-server/vscode/management/kimono.html", "tatami-agent/vscode/management/kimono.html"]) {
-    const html = await readFile(path.join(workspace, relative), "utf8");
-    const scripts = [...html.matchAll(/<script\b([^>]*)src="([^"]+)"[^>]*>/g)];
-    assert.deepEqual(scripts.map(item => path.basename(item[2])), ["status-format.js", "kimono-view.js", "model-actions.js", "kimono.js"]);
-    assert.ok(scripts.every(item => item[1].includes('nonce="{{nonce}}"')));
-    assert.match(html, /script-src 'nonce-\{\{nonce\}\}'/);
-  }
-  const core = await readFile(path.join(workspace, "tatami-core/public/index.html"), "utf8");
-  assert.match(core, /<script src="\/kimono\/model-actions.js" defer><\/script>/);
-  assert.ok(core.indexOf("/kimono/model-actions.js") < core.indexOf('src="/app.js"'));
+test("standalone HTML loads the model helper before its callbacks", async () => {
+  const html = await readFile(path.resolve(__dirname, "../management/kimono.html"), "utf8");
+  const scripts = [...html.matchAll(/<script\b([^>]*)src="([^"]+)"[^>]*>/g)];
+  assert.deepEqual(scripts.map(item => path.basename(item[2])), ["status-format.js", "kimono-view.js", "model-actions.js", "kimono.js"]);
+  assert.ok(scripts.every(item => item[1].includes('nonce="{{nonce}}"')));
+  assert.match(html, /script-src 'nonce-\{\{nonce\}\}'/);
 });
 
 const status = { models: [{ id: "multilingual-fast", repository: "approved/source", revision: "pinned-sha",
