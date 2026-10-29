@@ -68,7 +68,7 @@ it('ranks original whole terms above aliases, suppresses definition-only noise, 
   expect(search).toHaveBeenCalledWith(expect.stringContaining('[^\\p{L}\\p{N}]'), undefined, 4000, true, expect.any(Function), 40);
 });
 
-it('boosts code symbol definitions and matching source filenames for identifier queries', async () => {
+it.each(['ts', 'php'])('boosts %s code symbol definitions and matching source filenames for identifier queries', async (extension) => {
   const root = await mkdtemp(path.join(tmpdir(), 'kimono-symbol-search-'));
   roots.push(root);
   await writeFile(path.join(root, 'index.md'), '# Project');
@@ -80,14 +80,14 @@ it('boosts code symbol definitions and matching source filenames for identifier 
   });
   const search = vi.spyOn(knowledge.searchIndex, 'searchCandidates').mockResolvedValue({
     matches: [
-      candidate('src/profile.ts', 'export function loadUserProfile() { return profile; }'),
-      candidate('src/usage.ts', '// load user profile before rendering'),
+      candidate(`src/profile.${extension}`, `${extension === 'php' ? 'public' : 'export'} function loadUserProfile() { return profile; }`),
+      candidate(`src/usage.${extension}`, '// load user profile before rendering'),
     ], truncated: false,
   });
   const plan = await knowledge.vocabulary.plan('loadUserProfile', false);
   const result = await plannedSearch(knowledge, plan, 'text', undefined, () => true, 5);
 
-  expect(result.results[0].path).toBe('src/profile.ts');
+  expect(result.results[0].path).toBe(`src/profile.${extension}`);
   expect(result.metadata.queryIntent).toBe('identifier');
   expect(result.results[0].scoreDetails).toMatchObject({ identifier: 0.3, symbolDefinition: 0.2 });
   expect(result.results[1].scoreDetails?.identifier).toBeGreaterThan(0);

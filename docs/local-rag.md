@@ -40,6 +40,27 @@ SQL, HTML/CSS and shell. AI-KIDO uses a narrower documentation-oriented
 allowlist. See [`src/corpus-config.ts`](../src/corpus-config.ts) for the exact
 defaults.
 
+In RAG mode, `.php`, `.md` and `.txt` contents are all indexed; model policy
+can partition code and documentation without dropping either. PHP definitions (including class methods and traits)
+use Tree-sitter, alongside C/C++, Go, Java, JavaScript, Python, Rust and
+TypeScript/TSX. Unknown grammars, invalid syntax and files over 1 MiB fall back
+to bounded line chunks. The model's `model.json` can declare `chunk_chars`
+(128–2048 Unicode characters); when absent it defaults to 500, preserving the
+bundled E5 configuration. The limit belongs to the model profile, not to the
+corpus size or embedding batch size. Blank lines stay inside a passage when
+space permits. Adjacent small fragments (under 40% of the current character
+limit on either side) share a passage when their combined text
+fits the cap; substantial definitions retain separate passages. Closing-only
+tails are merged or given context from the preceding line when it fits, rather
+than vectorizing an isolated brace. Imports, comments, short declarations and
+symbol-only files are not discarded. Source order and starting line numbers
+are retained; ONNX tokenizers enforce the model's independent token limit.
+Character limits are not token limits and do not guarantee the absence of
+truncation for every language. Model introspection reports `passageChars` and
+`smallFragmentChars`; these settings enter the index fingerprint.
+This chunker change requires one full semantic re-embedding on the next update,
+with the old generation retained until successful publication.
+
 Both modes respect root and nested `.gitignore` files. Dependencies, build
 outputs, caches, secrets directories and symlinks are excluded.
 Built-in exclusions cannot be overridden by include patterns. Kimono does not
@@ -92,6 +113,44 @@ and multilingual embedding model. No external embedding API is called. A chat
 client may still send passages returned by MCP to its configured model provider.
 Local indexing alone does not guarantee that all data remains on your device.
 
+## Embedding models and Auto
+
+The management panel uses `aikido_models` on the effective server. `status`
+reports requested/active policies, corpus composition, missing models, pinned
+revisions/licenses/download sizes and estimated RAM. Nothing downloads on status.
+
+| Policy | Indexing trade-off |
+| --- | --- |
+| `auto-balanced` | Recommended for new managed ROOTs: static code; E5 multilingual documents |
+| `auto-speed` | Static code and fast static multilingual documents; larger model download |
+| `code` | Static code model for every file; document relevance is not guaranteed |
+| `multilingual-fast` | Fast multilingual static model for every file; about 531 MB download |
+| `e5` | Bundled contextual multilingual model; slower indexing, retained as a manual choice |
+
+Static models use Model2Vec token lookup/mean/L2, not transformer inference,
+with 750-character passages and shared weights. They do not truncate tokens.
+The multilingual FP32 table is about 489 MiB before tokenizer/index overhead.
+Speed is not a relevance guarantee: limited FR/EN checks are not a quality benchmark.
+Auto follows content types and checks resource estimates; no unmeasured universal
+corpus-size threshold selects a purportedly better model.
+
+After explicit human approval of source/revision/size/license, call
+`aikido_models` with `{"operation":"install","model":"code","confirmed":true}`
+(or `multilingual-fast`). SHA256 and exact sizes are verified before atomic
+installation. No corpus is uploaded. Then confirm
+`{"operation":"configure","policy":"auto-speed","confirmed":true}`.
+Missing downloads are reported, never silently replaced. Reapply after installing.
+Configuration builds isolated generations in background and activates them only
+after success; failed builds retain the previous selection and index. Models
+never mix vectors; mixed policies partition files and fuse search results by rank.
+Snapshots pin their selection. Existing legacy indexes are not migrated implicitly.
+
+`KIMONO_MODELS_DIR` is a host-controlled cache outside ROOT (default
+`~/.cache/kimono-models`). `KIMONO_EMBEDDING_POLICY` selects the initial policy;
+saved per-ROOT settings take precedence. Without it, existing CLI/ONNX deployments
+retain E5. The old optional Jina code profile below is separate and stays paused;
+it is not needed by these static policies.
+
 ## What search returns
 
 Search defaults to compact results: file paths, matching line ranges and a
@@ -123,6 +182,19 @@ measured 323,368 → 105,223 cumulative input tokens (−67.5%) and 111.212 →
 seconds (−52.0%). See the [benchmark results](../benchmarks/results/current.md).
 
 ## Embedding runtime and memory
+
+The indexing card in the Kimono extension, Tatami Agent and Tatami Core offers
+**Update index** (incremental when compatible) and **Rebuild entirely**.
+Rebuild asks for confirmation, regenerates every semantic vector in the
+connected ROOT and runs in the background with live progress. For a shared
+server it affects all users of that index. The previous generation is replaced
+only after success; source files, snapshots and the lexical index are not
+deleted. Controls are disabled while indexing or another panel action is
+pending; a rebuild requested during server startup is queued after its warmup.
+The MCP equivalent is `aikido_index` with
+`{"operation":"rebuild","mode":"semantic","background":true}`. Rebuild requires
+the full semantic scope (no `paths`); poll `operation:"status"` to see completion
+or an explicit error. Deploy the updated MCP server along with the panels.
 
 The default `KIMONO_SEMANTIC_DEVICE=auto` benchmarks the CPU and each available
 CUDA/CoreML execution provider when the server first uses a model. Each probe
@@ -178,6 +250,18 @@ The new generation is written once at the end, then published atomically; the
 previous generation is removed only after success. Model hashing and state serialization are
 streamed instead of allocating full serialized copies. Native progress includes
 `batchMs`, displayed as the last batch duration.
+The persistent worker publishes its selected runtime and budgets before
+processing documents, so they are visible while indexing, not only after
+completion. Failed batch inference is reported explicitly before retrying
+individual passages; this fallback can reduce throughput.
+
+The panel's tokens are estimated UTF-8 bytes / 4, not tokenizer output.
+Chunks/second counts passages, not files or tokens, and the remaining time is
+an extrapolation of completed embedding work, not a measured total duration.
+Many small paragraphs or definitions can therefore increase passage count
+without changing the displayed corpus tokens. Diagnose slow indexing using
+passage count, provider, workers/threads/batch, memory budget and batch time;
+Rust orchestration alone does not make ONNX inference faster.
 
 Resource sizing runs before each native operation; cached provider selection
 does not freeze the CPU/memory sizing. Explicit worker/thread/batch values remain
@@ -190,7 +274,7 @@ batch estimates account for hidden states and attention at the model token cap.
 session/batch memory. These estimates are not hard OS memory limits or measured
 GPU VRAM usage: other allocations, the growing index and concurrent processes
 can require more memory. Percentages apply independently to each process, not
-to a shared host scheduler. Increasing CPU workers increases model memory. The
+to a shared host scheduler. ONNX workers add sessions; static workers share weights. The
 model remains resident in the persistent worker and up to four recently used
 index generations remain hot; cache eviction or server shutdown releases them.
 Index storage still grows with the number of passages. Set
@@ -205,6 +289,13 @@ explicit deletion paths to the native engine. An incomplete or incompatible
 manifest triggers a full update. Source validation still reads documents to
 compute current content hashes. A new immutable snapshot without a matching
 cached generation is indexed once on its first semantic search.
+
+Unversioned manifests from releases before v0.9 are accepted as legacy state
+after path/hash validation, but cannot take the incremental shortcut. A full
+update migrates them to the current model/chunker fingerprint and publishes a
+new generation only after success; it does not delete the previous generation
+up front. Invalid JSON, unsafe paths and malformed version fields still fail
+explicitly. A chunker version change requires one full re-embedding.
 
 Index freshness has a bounded fast path only when the Git worktree is clean and
 the indexed HEAD, branch, status fingerprint and corpus configuration still

@@ -1,4 +1,4 @@
-use crate::model::load_embedder;
+use crate::model::{backend_for, load_embedder, Backend};
 use crate::{requested_device, Result, Runtime};
 use embsearch_core::Embedder;
 use ort::execution_providers::coreml::{CoreMLComputeUnits, CoreMLModelFormat};
@@ -110,6 +110,16 @@ pub fn fastest(measurements: &[Measurement]) -> Result<String> {
 pub fn select(model: &Path) -> Result<Selection> {
     let setting = std::env::var("KIMONO_SEMANTIC_DEVICE").ok();
     let requested = requested_device(setting.as_deref())?;
+    if backend_for(model)? == Backend::Model2Vec {
+        if !matches!(requested, "auto" | "cpu") {
+            return Err("The Model2Vec static backend runs on CPU; select auto or cpu".into());
+        }
+        return Ok(Selection {
+            execution_provider: "cpu".into(),
+            gpu_execution_verified: false,
+            benchmarks: Vec::new(),
+        });
+    }
     let mut benchmarks = Vec::new();
     let execution_provider = if requested != "auto" {
         requested.to_string()

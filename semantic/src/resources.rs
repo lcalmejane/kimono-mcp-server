@@ -55,7 +55,32 @@ pub fn plan(
     device: &str,
     var: impl Fn(&str) -> Option<String>,
 ) -> Result<Runtime> {
-    if cpus == 0 || available_memory == 0 || session_bytes == 0 || passage_bytes == 0 {
+    plan_with_shared(
+        cpus,
+        available_memory,
+        0,
+        session_bytes,
+        passage_bytes,
+        device,
+        var,
+    )
+}
+
+fn plan_with_shared(
+    cpus: usize,
+    available_memory: u64,
+    shared_bytes: u64,
+    session_bytes: u64,
+    passage_bytes: u64,
+    device: &str,
+    var: impl Fn(&str) -> Option<String>,
+) -> Result<Runtime> {
+    if cpus == 0
+        || available_memory == 0
+        || session_bytes == 0
+        || passage_bytes == 0
+        || shared_bytes >= available_memory
+    {
         return Err(
             "Cannot size semantic runtime: CPU, memory and model estimates must be positive".into(),
         );
@@ -65,12 +90,16 @@ pub fn plan(
     let memory_percent = setting("KIMONO_SEMANTIC_MEMORY_PERCENT", 80, 100)?;
     let cpu_budget = (cpus.saturating_mul(cpu_percent) / 100).max(1);
     let memory_budget = percent(available_memory, memory_percent);
+    if shared_bytes >= memory_budget {
+        return Err("Semantic memory budget cannot fit the shared model weights".into());
+    }
     let threads = setting("KIMONO_SEMANTIC_THREADS", 1, 32)?;
     let batch_setting = var("KIMONO_SEMANTIC_BATCH");
     let batch = bounded_setting("KIMONO_SEMANTIC_BATCH", batch_setting.as_deref(), 0, 256)?;
     let minimum_session =
         session_bytes.saturating_add(passage_bytes.saturating_mul(batch.max(1) as u64));
-    let memory_workers = (memory_budget / minimum_session).min(32) as usize;
+    let memory_workers = (memory_budget - shared_bytes) / minimum_session;
+    let memory_workers = memory_workers.min(32) as usize;
     let automatic_workers = (cpu_budget / threads)
         .clamp(1, 32)
         .min(memory_workers)
@@ -79,14 +108,21 @@ pub fn plan(
     if device != "cpu" {
         workers = 1;
     }
-    if workers == 0 || memory_budget / (workers as u64) < minimum_session {
+    if workers == 0 || (memory_budget - shared_bytes) / (workers as u64) < minimum_session {
         return Err(format!("Semantic memory budget ({memory_budget} bytes) cannot fit {workers} model sessions and the requested batch; reduce explicit workers/batch or increase available memory or KIMONO_SEMANTIC_MEMORY_PERCENT").into());
     }
     let batch = if batch == 0 {
-        ((memory_budget / workers as u64 - session_bytes) / passage_bytes).clamp(1, 256) as usize
+        (((memory_budget - shared_bytes) / workers as u64 - session_bytes) / passage_bytes)
+            .clamp(1, 256) as usize
     } else {
         batch
     };
+    let estimated_memory = shared_bytes.saturating_add(
+        workers as u64 * session_bytes.saturating_add(passage_bytes.saturating_mul(batch as u64)),
+    );
+    if estimated_memory > memory_budget {
+        return Err(format!("Semantic memory estimate ({estimated_memory} bytes) exceeds budget ({memory_budget} bytes)").into());
+    }
     Ok(Runtime {
         workers,
         threads,
@@ -98,7 +134,7 @@ pub fn plan(
             available_memory_bytes: available_memory,
             memory_percent,
             memory_budget_bytes: memory_budget,
-            estimated_memory_bytes: workers as u64 * (session_bytes + passage_bytes * batch as u64),
+            estimated_memory_bytes: estimated_memory,
         },
     })
 }
@@ -179,16 +215,53 @@ fn cgroup_headroom(directory: &Path, limit: &str, usage: &str, available: u64) -
 pub fn detect(model: &Path, device: &str) -> Result<Runtime> {
     let model_config: serde_json::Value =
         serde_json::from_slice(&fs::read(model.join("model.json"))?)?;
+    let backend = match model_config.get("backend") {
+        None => "onnx",
+        Some(serde_json::Value::String(value)) if value == "onnx" => "onnx",
+        Some(serde_json::Value::String(value)) if value == "model2vec" => "model2vec",
+        Some(serde_json::Value::String(value)) => {
+            return Err(format!("Unsupported semantic backend '{value}'").into())
+        }
+        Some(_) => return Err("model.json backend must be a string".into()),
+    };
     let tokens = model_config["max_tokens"]
         .as_u64()
-        .filter(|n| (1..=8192).contains(n))
+        .filter(|n| *n > 0 && (backend == "model2vec" || *n <= 8192))
         .ok_or("Invalid model max_tokens for semantic memory sizing")?;
     let dimensions = model_config["dim"]
         .as_u64()
         .filter(|n| (1..=65536).contains(n))
         .ok_or("Invalid model dim for semantic memory sizing")?;
-    let weights = fs::metadata(model.join("model.onnx"))?.len();
     let tokenizer = fs::metadata(model.join("tokenizer.json"))?.len();
+    if backend == "model2vec" {
+        let weights = fs::metadata(model.join("model.safetensors"))?.len();
+        let config = fs::metadata(model.join("config.json"))?.len();
+        let session = tokenizer
+            .saturating_mul(2)
+            .saturating_add(config.saturating_mul(2))
+            .saturating_add(8 * MIB);
+        let chunk_chars = model_config
+            .get("chunk_chars")
+            .map(|value| {
+                value
+                    .as_u64()
+                    .filter(|chars| (128..=2048).contains(chars))
+                    .ok_or("Invalid model chunk_chars for semantic memory sizing")
+            })
+            .transpose()?
+            .unwrap_or(500);
+        let passage = (chunk_chars * 128).max(64 * 1024);
+        return plan_with_shared(
+            std::thread::available_parallelism()?.get(),
+            available_memory()?,
+            weights,
+            session,
+            passage,
+            device,
+            |name| std::env::var(name).ok(),
+        );
+    }
+    let weights = fs::metadata(model.join("model.onnx"))?.len();
     // Conservative planning estimates: sessions may expand quantized weights;
     // passage workspace includes hidden states and attention at the token cap.
     let session = weights
@@ -295,6 +368,18 @@ mod tests {
         assert_eq!(runtime.workers, 1);
         assert!(runtime.batch > 8);
         assert!(runtime.resources.estimated_memory_bytes <= runtime.resources.memory_budget_bytes);
+    }
+
+    #[test]
+    fn shared_model_weights_are_counted_once_across_workers() {
+        let runtime = plan_with_shared(4, 4_000, 1_200, 400, 100, "cpu", |_| None).unwrap();
+        assert_eq!(runtime.workers, 3);
+        assert_eq!(
+            runtime.resources.estimated_memory_bytes,
+            1_200 + runtime.workers as u64 * (400 + 100 * runtime.batch as u64)
+        );
+        assert!(runtime.resources.estimated_memory_bytes <= runtime.resources.memory_budget_bytes);
+        assert!(plan_with_shared(4, 4_000, 3_300, 400, 100, "cpu", |_| None).is_err());
     }
 
     #[test]

@@ -130,12 +130,13 @@ async function fixture(settings = {}, language = "en") {
         return state.panel;
       },
       showErrorMessage: message => state.errors.push(message),
+      showWarningMessage: async (...args) => { state.warning = args; return state.confirmation; },
     },
   };
-  const context = { extensionPath, secrets: { get: async () => undefined, onDidChange: () => disposable } };
+  const context = { extensionPath, secrets: { get: async () => state.secret, onDidChange: () => disposable } };
   const disposables = registerManagement(vscode, context, {
     config: () => vscode.workspace.getConfiguration("kimono"), embeddedFolders: () => [folder],
-    embeddedLaunch: async () => { throw new Error("not started in tests"); }, remoteUrl: value => value.startsWith("https://") ? value : undefined,
+    embeddedLaunch: async () => { if (state.launch) return state.launch; throw new Error("not started in tests"); }, remoteUrl: value => value.startsWith("https://") ? value : undefined,
     tokenKey: "kimono.token", version: "0.6.2",
   });
   return { state, folder, directory, dispose: async () => {
@@ -238,4 +239,107 @@ test("manifest contributes the Kimono view, commands and packaged assets", async
     await fs.access(path.join(extensionPath, file));
   }
   assert.ok(manifest.files.includes("management/**") && manifest.files.includes("media/**"));
+});
+
+test("full rebuild needs native confirmation and routes only a background semantic rebuild", async () => {
+  const { state, directory, folder, dispose } = await fixture();
+  try {
+    await state.commands.get("kimono.openPanel")();
+    await state.receive({ action: "indexRebuild", folder: folder.uri.toString() });
+    assert.match(state.warning[0], /Sources and snapshots are unchanged/);
+    assert.deepEqual(state.warning[1], { modal: true });
+    assert.match(state.messages.at(-1).message, /cancelled/);
+    const requestFile = path.join(directory, "requests.json");
+    state.launch = { command: process.execPath, cwd: directory, env: process.env, args: ["-e", `
+      const fs = require("node:fs");
+      require("node:readline").createInterface({ input: process.stdin }).on("line", line => {
+        const request = JSON.parse(line);
+        if (request.id === undefined) return;
+        if (request.method === "tools/call") fs.writeFileSync(${JSON.stringify(requestFile)}, JSON.stringify(request.params));
+        process.stdout.write(JSON.stringify({ jsonrpc:"2.0", id:request.id,
+          result: request.method === "tools/call" ? { content:[{type:"text",text:'{"phase":"running"}'}] } : {} }) + "\\n");
+      });
+
+    `] };
+    state.confirmation = "Rebuild";
+    await state.receive({ action: "indexRebuild", folder: folder.uri.toString() });
+    assert.deepEqual(JSON.parse(await fs.readFile(requestFile, "utf8")), {
+      name: "aikido_index", arguments: { operation: "rebuild", mode: "semantic", background: true },
+    });
+    assert.match(state.messages.at(-1).message, /Rebuild started/);
+    state.settings.mode = "remote";
+    await state.receive({ action: "indexRebuild", folder: folder.uri.toString() });
+    assert.match(state.messages.at(-1).message, /Switch Mode to Embedded/);
+  } finally { await dispose(); }
+});
+
+test("model management is lazy and native consent is separate for download and rebuild", async () => {
+  const { state, directory, folder, dispose } = await fixture();
+  try {
+    const requestFile = path.join(directory, "model-requests.jsonl");
+    const status = { requestedPolicy: "auto-speed", activePolicy: "e5", reason: "retained", models: [
+      { id: "code", repository: "approved/source", revision: "pinned-sha", license: "Apache-2.0", downloadBytes: 12345 },
+    ] };
+    state.launch = { command: process.execPath, cwd: directory, env: process.env, args: ["-e", `
+      const fs = require("node:fs");
+      require("node:readline").createInterface({ input: process.stdin }).on("line", line => {
+        const request = JSON.parse(line);
+        if (request.id === undefined) return;
+        if (request.method === "tools/call") fs.appendFileSync(${JSON.stringify(requestFile)}, JSON.stringify(request.params) + "\\n");
+        process.stdout.write(JSON.stringify({ jsonrpc:"2.0", id:request.id,
+          result: request.method === "tools/call" ? { content:[{type:"text",text:${JSON.stringify(JSON.stringify(status))}}] } : {} }) + "\\n");
+      });
+    `] };
+    await state.commands.get("kimono.openPanel")();
+    await state.receive({ action: "refresh" });
+    await assert.rejects(fs.stat(requestFile), { code: "ENOENT" });
+    const send = input => state.receive({ action: "models", input, folder: folder.uri.toString() });
+    const requests = async () => (await fs.readFile(requestFile, "utf8")).trim().split("\n").map(line => JSON.parse(line));
+    await send({ operation: "status" });
+    assert.deepEqual((await requests())[0], { name: "aikido_models", arguments: { operation: "status" } });
+    await send({ operation: "install", model: "code" });
+    assert.equal((await requests()).filter(call => call.arguments.operation === "install").length, 0);
+    state.confirmation = "Confirm";
+    await send({ operation: "install", model: "code" });
+    assert.deepEqual(state.warning[1], { modal: true });
+    for (const text of ["approved/source", "pinned-sha", "Apache-2.0", "12345"]) assert.ok(state.warning[0].includes(text));
+    assert.deepEqual((await requests()).find(call => call.arguments.operation === "install").arguments,
+      { operation: "install", model: "code", confirmed: true });
+    await send({ operation: "configure", policy: "auto-speed" });
+    assert.deepEqual((await requests()).find(call => call.arguments.operation === "configure").arguments,
+      { operation: "configure", policy: "auto-speed", confirmed: true });
+    await send({ operation: "install", model: "../../bad" });
+    assert.equal(state.messages.at(-1).type, "error");
+  } finally { await dispose(); }
+});
+
+test("remote model panel honors endpoint-bound SecretStorage without local launch", async () => {
+  const { state, dispose } = await fixture({ mode: "remote", url: "https://configured.example/mcp" });
+  const originalFetch = global.fetch;
+  const calls = [];
+  global.fetch = async (url, options) => {
+    calls.push({ url, options });
+    if (options.method === "DELETE") return new Response(null, { status: 204 });
+    const request = JSON.parse(options.body);
+    if (!request.id) return new Response(null, { status: 202 });
+    return Response.json({ jsonrpc: "2.0", id: request.id, result: request.method === "initialize"
+      ? { protocolVersion: "2025-03-26" }
+      : { content: [{ type: "text", text: JSON.stringify({ requestedPolicy: "code", activePolicy: null,
+        reason: "remote status", phase: "download-required", models: [] }) }] } });
+  };
+  try {
+    state.secret = JSON.stringify({ url: "https://different.example/mcp", token: "never-forward" });
+    await state.commands.get("kimono.openPanel")();
+    await state.receive({ action: "models", input: { operation: "status" } });
+    assert.equal(calls.length, 0);
+    assert.match(state.messages.at(-1).message, /endpoint changed/);
+    state.secret = JSON.stringify({ url: "https://configured.example/mcp", token: "bound-token" });
+    await state.receive({ action: "models", input: { operation: "status" } });
+    assert.equal(state.messages.at(-1).type, "models");
+    assert.equal(state.messages.at(-1).value.activePolicy, null);
+    assert.ok(calls.every(call => call.url === "https://configured.example/mcp"));
+    assert.ok(calls.every(call => call.options.headers.authorization === "Bearer bound-token"));
+    assert.deepEqual(JSON.parse(calls.at(-1).options.body).params,
+      { name: "aikido_models", arguments: { operation: "status" } });
+  } finally { global.fetch = originalFetch; await dispose(); }
 });

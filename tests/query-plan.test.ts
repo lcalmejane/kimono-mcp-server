@@ -18,6 +18,7 @@ it('distinguishes natural language, identifiers, qualified symbols, and source p
   expect(queryIntent('AuthService.authenticate')).toBe('qualified-symbol');
   expect(queryIntent('src/auth/service.rs')).toBe('path');
   expect(queryIntent('service.rs')).toBe('path');
+  expect(queryIntent('service.php')).toBe('path');
 });
 
 it('normalizes natural-language queries and expands repository glossary aliases with provenance', async () => {

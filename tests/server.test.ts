@@ -53,7 +53,7 @@ describe('AI-KIDO MCP surface', () => {
       const serverInfo = { name: metadata.name, version: metadata.version };
       expect(client.getServerVersion()).toEqual(serverInfo);
       const tools = await client.listTools();
-      expect(tools.tools.map((tool) => tool.name)).toEqual(['aikido', 'aikido_snapshot', 'aikido_embed', 'aikido_root', 'aikido_search', 'aikido_index', 'aikido_git', 'aikido_collaboration', 'aikido_file']);
+      expect(tools.tools.map((tool) => tool.name)).toEqual(['aikido', 'aikido_models', 'aikido_snapshot', 'aikido_embed', 'aikido_root', 'aikido_search', 'aikido_index', 'aikido_git', 'aikido_collaboration', 'aikido_file']);
       for (const name of ['aikido', 'aikido_search']) {
         expect(tools.tools.find(tool => tool.name === name)?.inputSchema.properties?.detail)
           .toMatchObject({ enum: ['compact', 'locations', 'excerpts'], default: 'compact' });

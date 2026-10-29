@@ -100,6 +100,44 @@ externe n'est appelée. Le client de chat peut néanmoins transmettre les extrai
 retournés par MCP au fournisseur de modèle qu'il utilise. L'indexation locale
 ne garantit donc pas que toutes les données restent sur l'appareil.
 
+## Modèles d'embedding et Auto
+
+Le panneau utilise `aikido_models` sur le serveur effectif. `status` expose
+politique demandée/active, composition du corpus, modèles manquants, révisions,
+licences, tailles des téléchargements et RAM estimée. Aucun téléchargement implicite.
+
+| Politique | Compromis d'indexation |
+| --- | --- |
+| `auto-balanced` | Recommandé pour les nouveaux ROOT gérés : code statique, documents multilingues E5 |
+| `auto-speed` | Code et documents multilingues statiques rapides ; téléchargement plus volumineux |
+| `code` | Modèle code statique pour tous les fichiers ; pertinence documentaire non garantie |
+| `multilingual-fast` | Statique multilingue rapide pour tous les fichiers ; téléchargement ~531 Mo |
+| `e5` | Modèle contextuel multilingue livré ; indexation plus lente, choix manuel conservé |
+
+Les modèles statiques utilisent lookup/moyenne/L2 Model2Vec, sans transformer,
+avec passages de 750 caractères et poids partagés, sans troncature des tokens.
+La table multilingue FP32 occupe ~489 Mio hors tokenizer/index. La vitesse ne
+garantit pas la pertinence ; quelques contrôles FR/EN ne constituent pas un
+benchmark qualitatif. Auto suit la nature des contenus et vérifie les ressources,
+sans seuil de taille universel prétendant choisir une meilleure qualité.
+
+Après accord humain explicite sur provenance/révision/taille/licence, appeler
+`aikido_models` avec `{"operation":"install","model":"code","confirmed":true}`
+(ou `multilingual-fast`). Tailles exactes et SHA256 sont vérifiés avant installation
+atomique. Aucun corpus n'est envoyé. Confirmer ensuite
+`{"operation":"configure","policy":"auto-speed","confirmed":true}`.
+Un modèle manquant est signalé, sans substitution silencieuse ; réappliquer après
+installation. La configuration reconstruit en arrière-plan des générations isolées,
+activées seulement après succès. Un échec conserve ancien choix et ancien index.
+Les profils mixtes répartissent les fichiers et fusionnent par rang, jamais leurs
+vecteurs. Les snapshots figent leur sélection ; aucun ancien index ne migre implicitement.
+
+`KIMONO_MODELS_DIR` est un cache hôte hors ROOT (`~/.cache/kimono-models` par défaut).
+`KIMONO_EMBEDDING_POLICY` fixe la politique initiale ; le choix enregistré par ROOT
+prime ensuite. Sans cette variable, les déploiements CLI/ONNX existants gardent E5.
+Le profil Jina optionnel ci-dessous reste distinct, en attente, et n'est pas
+nécessaire aux nouvelles politiques statiques.
+
 ## Résultats de recherche
 
 Par défaut, la recherche renvoie un résultat compact : chemins, plages de lignes
@@ -207,7 +245,7 @@ estimée des sessions/lots. Ces estimations ne sont ni des limites OS strictes,
 ni une mesure de VRAM GPU : les autres allocations, l'index croissant et les
 processus concurrents peuvent nécessiter davantage de mémoire. Les budgets
 sont indépendants par processus, sans ordonnanceur commun à l'hôte.
-Augmenter les workers CPU augmente la mémoire du modèle.
+Les workers ONNX ajoutent des sessions ; les workers statiques partagent les poids.
 Le modèle reste chargé dans le worker persistant ; jusqu'à quatre générations
 d'index récentes restent en mémoire. Leur éviction ou l'arrêt du serveur libère
 ces ressources. La taille des index disque augmente avec le nombre de passages.
@@ -217,6 +255,56 @@ de vie des sous-processus.
 Le statut de `aikido_index` expose séparément le cycle de vie du worker (`starting`,
 `ready`, `error`, `restarting`, `stopped`) lorsqu'il existe dans ce processus.
 La capture, l'immuabilité et le cycle de vie des snapshots ne changent pas.
+
+La carte d'indexation des panneaux Kimono, Tatami Agent et Tatami Core propose
+**Mettre à jour l'index** (incrémental si compatible) et **Reconstruire
+entièrement**. La reconstruction demande confirmation et recalcule tous les
+vecteurs sémantiques du ROOT connecté en arrière-plan, avec progression en
+direct. Sur un serveur partagé, elle concerne tous les utilisateurs de
+l'index. L'ancienne génération n'est remplacée qu'après réussite ; sources,
+snapshots et index lexical ne sont pas supprimés. Les boutons sont désactivés
+pendant l'indexation ou une action du panneau ; une reconstruction demandée au
+démarrage du serveur attend la fin de son préchauffage.
+Équivalent MCP : `aikido_index` avec
+`{"operation":"rebuild","mode":"semantic","background":true}`. La reconstruction
+exige le périmètre sémantique complet, sans `paths`. Consulter
+`operation:"status"` pour la fin ou une erreur explicite. Déployer le MCP mis à
+jour avec les panneaux.
+
+En mode RAG, les contenus `.php`, `.md` et `.txt` rejoignent tous l'index
+sémantique multilingue par défaut ; le modèle code facultatif n'est pas
+nécessaire. Les définitions PHP (méthodes de classe et traits compris) utilisent
+Tree-sitter, comme C/C++, Go, Java, JavaScript, Python, Rust et TypeScript/TSX.
+Une grammaire inconnue, une syntaxe invalide ou un fichier de plus de 1 Mio
+utilise le découpage par lignes borné. Le `model.json` du modèle peut déclarer
+`chunk_chars` (128 à 2048 caractères Unicode), avec 500 par défaut si absent :
+le modèle E5 livré conserve donc sa taille actuelle. Cette limite dépend du
+profil du modèle, pas de la taille du corpus ni du lot d'embedding. Les lignes
+vides restent dans le passage si la place le permet. Les petits fragments
+adjacents (moins de 40 % de la limite courante d'un côté ou de l'autre)
+partagent un passage si l'ensemble tient dans cette limite ; les
+définitions substantielles restent distinctes. Les fins composées uniquement
+de délimiteurs sont regroupées ou accompagnées du contexte de la ligne
+précédente si la place le permet, au lieu de vectoriser une accolade isolée.
+Imports, commentaires, petites déclarations et fichiers de symboles ne sont
+pas supprimés. L'ordre source et les lignes de début sont conservés ; la limite
+de tokens propre au modèle reste appliquée par le tokenizer. Le plafond en
+caractères ne garantit pas l'absence de troncature pour toute langue.
+L'introspection expose `passageChars` et `smallFragmentChars` ; ces paramètres
+entrent dans l'empreinte de l'index. Le changement de version du
+chunker impose une vectorisation sémantique complète à la prochaine mise à
+jour, avec conservation de l'ancienne génération jusqu'à publication réussie.
+
+Le worker persistant publie le moteur choisi et ses budgets avant le traitement
+des documents, pour les rendre visibles pendant l'indexation. Un échec de lot
+est signalé avant la reprise passage par passage, qui peut réduire le débit.
+Les tokens du panneau sont une estimation octets UTF-8 / 4, pas le résultat du
+tokenizer. Le débit compte les passages, pas les fichiers ni les tokens ;
+le temps restant extrapole le travail de vectorisation terminé. Beaucoup de
+petits paragraphes ou définitions augmentent le nombre de passages sans
+changer les tokens affichés. Pour diagnostiquer une lenteur, relever passages,
+moteur, workers/threads/lot, budget mémoire et temps de lot ; utiliser Rust ne
+suffit pas à accélérer l'inférence ONNX.
 
 Une recherche sémantique interroge l'index persistant sans synchroniser la
 source ni transmettre tous les documents au moteur natif. Utiliser
@@ -228,6 +316,14 @@ mise à jour complète. La validation de la source lit encore les documents pour
 recalculer leurs empreintes de contenu. Un nouveau snapshot immuable sans
 génération en cache est indexé une seule fois lors de sa première recherche
 sémantique.
+
+Les manifestes sans version des versions antérieures à v0.9 sont reconnus après
+validation des chemins et empreintes, mais ne permettent pas le raccourci
+incrémental. Une mise à jour complète migre vers l'empreinte modèle/chunker
+courante et publie la nouvelle génération seulement après réussite, sans
+supprimer l'ancienne au préalable. Un JSON invalide, un chemin dangereux ou un
+champ de version malformé reste une erreur explicite. Un changement de version
+du chunker impose une vectorisation complète unique.
 
 La fraîcheur de l'index utilise un chemin rapide uniquement si le worktree Git
 est propre et si HEAD, branche, empreinte de statut et configuration du corpus

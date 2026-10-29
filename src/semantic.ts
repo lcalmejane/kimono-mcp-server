@@ -9,6 +9,11 @@ import { within, type ChangeReport } from './synchronization.js';
 import { IndexLockedError, indexInfos, processAlive, trackIndex } from './index-basis.js';
 import { nativeDiagnostics } from './diagnostics.js';
 import { semanticWorkerEnabled, semanticWorkerFor, semanticWorkerStatus, type SemanticWorkerStatus } from './semantic-worker.js';
+import {
+  EMBEDDING_CATALOGUE, assertEmbeddingMemory, corpusComposition, embeddingPolicy,
+  installEmbeddingModel, isCodeSource, modelInstalled, readEmbeddingSettings, resolveEmbedding,
+  saveEmbeddingSettings, type EmbeddingPolicy, type EmbeddingSelection,
+} from './embedding-models.js';
 
 export interface SemanticRuntime {
   executionProvider: 'cpu' | 'cuda' | 'coreml';
@@ -48,6 +53,8 @@ export interface EmbeddingResult {
   dimensions: number;
   normalized: boolean;
   maxTokens: number;
+  backend?: 'onnx' | 'model2vec';
+  truncation?: boolean;
   vector: number[];
   runtime?: SemanticRuntime;
 }
@@ -90,7 +97,7 @@ export interface SemanticStatus {
 }
 
 const estimateTokens = (bytes: number) => Math.ceil(bytes / 4);
-const codeSource = /\.(?:c|cc|cpp|cs|go|h|hpp|java|js|jsx|mjs|py|rb|rs|scala|sh|swift|ts|tsx|vue)$/i;
+const codeSource = /\.(?:c|cc|cpp|cs|go|h|hpp|java|js|jsx|mjs|php|py|rb|rs|scala|sh|swift|ts|tsx|vue)$/i;
 
 function semanticBasisFingerprint(documents: Record<string, string>): string {
   const hash = createHash('sha256');
@@ -110,8 +117,124 @@ export class SemanticIndex {
   private state: SemanticStatus = { phase: 'unknown' };
   private persistedAt = 0;
   private embeddingStarted = 0;
+  private rebuildRequested = false;
   private retry: NodeJS.Timeout | undefined;
+  private selection: EmbeddingSelection | undefined;
+  private snapshotSelection: EmbeddingSelection | undefined;
+  private managedDocuments: Record<string, string> | undefined;
+  private modelTransition = false;
   constructor(private readonly knowledge: AikidoKnowledgeBase) {}
+
+  private async activeSelection(): Promise<EmbeddingSelection | undefined> {
+    if (this.knowledge.immutable) return this.snapshotSelection;
+    return (await readEmbeddingSettings(this.knowledge))?.active;
+  }
+
+  private async selectionForOperation(): Promise<EmbeddingSelection | undefined> {
+    const active = await this.activeSelection();
+    if (active || this.knowledge.immutable) return active;
+    const saved = await readEmbeddingSettings(this.knowledge);
+    const policy = saved?.requestedPolicy ?? embeddingPolicy(process.env.KIMONO_EMBEDDING_POLICY ?? 'e5');
+    if (!saved && policy === 'e5') return undefined;
+    try {
+      await stat(path.join(this.knowledge.searchIndex.directory, 'semantic', 'state.json'));
+      return undefined;
+    } catch (error) {
+      if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
+    }
+    const selection = resolveEmbedding(this.knowledge, policy);
+    for (const profile of selection.profiles) {
+      if (!await modelInstalled(this.knowledge.root, profile.model)) {
+        throw new Error(`Embedding model ${profile.model} requires a confirmed download; no fallback was selected.`);
+      }
+    }
+    return selection;
+  }
+
+  async models(): Promise<Record<string, unknown>> {
+    const saved = this.knowledge.immutable ? undefined : await readEmbeddingSettings(this.knowledge);
+    const active = this.knowledge.immutable ? this.snapshotSelection : saved?.active;
+    const requestedPolicy = saved?.requestedPolicy
+      ?? embeddingPolicy(process.env.KIMONO_EMBEDDING_POLICY ?? 'e5');
+    const resolved = resolveEmbedding(this.knowledge, requestedPolicy);
+    const models = await Promise.all(EMBEDDING_CATALOGUE.map(async ({ files: _files, ...model }) =>
+      ({ ...model, installed: await modelInstalled(this.knowledge.root, model.id) })));
+    const requiredModels = [...new Set(resolved.profiles.map(profile => profile.model))];
+    const missingModels = requiredModels.filter(id => !models.find(model => model.id === id)?.installed);
+    const reconstructionRequired = !active || active.signature !== resolved.signature || active.policy !== resolved.policy;
+    const legacy = await stat(path.join(this.knowledge.searchIndex.directory, 'semantic', 'state.json')).then(() => true).catch(error => {
+      if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return false;
+      throw error;
+    });
+    const index = this.status();
+    const building = this.modelTransition || index.operation === 'rebuild'
+      && (index.phase === 'running' || index.phase === 'waiting');
+    const error = saved?.error ?? (index.phase === 'error' ? index.error : undefined);
+    return {
+      requestedPolicy, activePolicy: active?.policy ?? (legacy ? 'e5' : null), reason: resolved.reason,
+      corpus: corpusComposition(this.knowledge), requiredModels, missingModels, reconstructionRequired, models,
+      profiles: (active ?? resolved).profiles.map(profile => ({
+        id: profile.id, model: profile.model, files: this.knowledge.list().filter(entry =>
+          profile.scope === 'all' || isCodeSource(entry.path) === (profile.scope === 'code')).length,
+      })),
+      phase: building ? 'building' : missingModels.length ? 'download-required'
+        : error ? 'error' : reconstructionRequired ? 'rebuild-required' : 'ready',
+      ...(error ? { error } : {}),
+    };
+  }
+
+  async installModel(model: unknown, confirmed: unknown): Promise<Record<string, unknown>> {
+    if (this.knowledge.immutable) throw new Error('Snapshot models are immutable.');
+    await installEmbeddingModel(this.knowledge.root, model, confirmed);
+    return this.models();
+  }
+
+  async configureModels(policy: unknown, confirmed: unknown): Promise<Record<string, unknown>> {
+    if (this.knowledge.immutable) throw new Error('Snapshot models are immutable.');
+    if (confirmed !== true) throw new Error('Explicit confirmation is required to change models and rebuild the index.');
+    if (this.modelTransition || this.state.phase === 'running' || this.state.phase === 'waiting') {
+      throw new Error('Wait for the current index operation before changing the embedding policy.');
+    }
+    const requestedPolicy = embeddingPolicy(policy);
+    await this.knowledge.refresh();
+    const candidate = { ...resolveEmbedding(this.knowledge, requestedPolicy), generation: randomUUID() };
+    assertEmbeddingMemory(candidate);
+    await mkdir(this.knowledge.searchIndex.directory, { recursive: true, mode: 0o700 });
+    const lockPath = path.join(this.knowledge.searchIndex.directory, 'embedding-settings.lock');
+    const lock = await open(lockPath, 'wx', 0o600).catch(error => {
+      if (error instanceof Error && 'code' in error && error.code === 'EEXIST') throw new Error('Another process is changing this ROOT embedding policy. Retry after completion; after a crash an administrator must remove the embedding settings lock.');
+      throw error;
+    });
+    const release = async () => { await lock.close(); await rm(lockPath, { force: true }); };
+    let active: EmbeddingSelection | undefined;
+    try { active = await this.activeSelection(); }
+    catch (error) { await release(); throw error; }
+    const settings = { version: 1 as const, requestedPolicy, ...(active ? { active } : {}) };
+    try {
+      await saveEmbeddingSettings(this.knowledge, settings);
+      for (const profile of candidate.profiles) {
+        if (!await modelInstalled(this.knowledge.root, profile.model)) { await release(); return this.models(); }
+      }
+    } catch (error) { await release(); throw error; }
+    this.modelTransition = true;
+    const startedAt = new Date().toISOString();
+    this.update({ ...this.state, phase: 'running', operation: 'rebuild', stage: 'model_transition', startedAt });
+    const transition = this.pending.then(async () => {
+      try {
+        await this.performManaged('rebuild', candidate);
+        await saveEmbeddingSettings(this.knowledge, { ...settings, active: candidate });
+      } catch (error) {
+        await this.removeFailedGeneration(candidate);
+        const message = error instanceof Error ? error.message : String(error);
+        await saveEmbeddingSettings(this.knowledge, { ...settings, error: message });
+        this.update({ phase: 'error', operation: 'rebuild', startedAt, error: message });
+        throw error;
+      } finally { this.modelTransition = false; await release(); }
+    });
+    this.pending = transition.then(() => undefined, () => undefined);
+    void transition.catch(error => console.error('Embedding profile rebuild failed:', error instanceof Error ? error.message : String(error)));
+    return this.models();
+  }
 
   /** Shared with other Kimono processes on the same ROOT and with the VS Code panel. */
   get statusFile(): string {
@@ -132,7 +255,7 @@ export class SemanticIndex {
   }
 
   private workerStatus(): SemanticWorkerStatus | undefined {
-    const model = process.env.KIMONO_MODEL_DIR;
+    const model = this.selection?.profiles[0]?.directory ?? process.env.KIMONO_MODEL_DIR;
     if (!model) return undefined;
     if (!semanticWorkerEnabled()) return { phase: 'disabled' };
     return semanticWorkerStatus(path.resolve(this.knowledge.root, model), process.env);
@@ -181,19 +304,57 @@ export class SemanticIndex {
 
   async idle(): Promise<void> { await this.pending; }
 
-  warmup(): void {
-    if (this.state.phase === 'running') return;
+  warmup(operation: 'update' | 'rebuild' = 'update'): void {
+    if (operation === 'rebuild' && this.rebuildRequested) throw new Error('Semantic rebuild is already running or queued.');
+    if (operation === 'update' && this.state.phase === 'running') return;
     if (this.retry) { clearTimeout(this.retry); this.retry = undefined; }
-    if (!process.env.KIMONO_MODEL_DIR) {
-      this.update({ phase: 'disabled', error: 'KIMONO_MODEL_DIR is not configured; semantic search is unavailable.' });
-      return;
-    }
+    if (operation === 'rebuild') this.rebuildRequested = true;
     const startedAt = new Date().toISOString();
-    this.update({ phase: 'running', operation: 'update', stage: 'checking_index', startedAt });
+    this.update({ phase: 'running', operation, stage: 'checking_index', startedAt });
     const result = this.pending.then(async () => {
       try {
-        const info = await indexInfos(this.knowledge);
-        const semantic = info.indexes.semantic;
+        const settings = await readEmbeddingSettings(this.knowledge);
+        const active = settings?.active;
+        if (active) {
+          if (operation === 'rebuild') await this.rebuildManaged(active);
+          else await this.performManaged(operation, active);
+          return;
+        }
+        if (settings || process.env.KIMONO_EMBEDDING_POLICY && process.env.KIMONO_EMBEDDING_POLICY !== 'e5') {
+          if (!settings) {
+            try {
+              await stat(path.join(this.knowledge.searchIndex.directory, 'semantic', 'state.json'));
+              await this.perform(operation);
+              return;
+            } catch (error) {
+              if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
+            }
+          }
+          const policy = settings?.requestedPolicy ?? embeddingPolicy(process.env.KIMONO_EMBEDDING_POLICY);
+          const desired = resolveEmbedding(this.knowledge, policy);
+          for (const profile of desired.profiles) {
+            if (!await modelInstalled(this.knowledge.root, profile.model)) {
+              throw new Error(`Embedding model ${profile.model} requires an explicitly confirmed download. Open Kimono model settings; lexical search remains available.`);
+            }
+            if (!process.env.KIMONO_MODEL_DIR) {
+              this.update({ phase: 'disabled', error: 'KIMONO_MODEL_DIR is not configured; semantic search is unavailable.' });
+              return;
+            }
+          }
+          // A new ROOT may build the default policy, but an existing generation is never migrated implicitly.
+          try {
+            await stat(path.join(this.knowledge.searchIndex.directory, 'semantic', 'state.json'));
+            if (!settings) { await this.perform(operation); return; }
+            throw new Error('Confirm the requested embedding policy to rebuild; the previous generation is retained.');
+          } catch (error) {
+            if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
+          }
+          await this.performManaged(operation, desired);
+          await saveEmbeddingSettings(this.knowledge, { version: 1, requestedPolicy: policy, active: desired });
+          return;
+        }
+        const info = operation === 'update' ? await indexInfos(this.knowledge) : undefined;
+        const semantic = info?.indexes.semantic;
         if (record(semantic) && semantic.freshness === 'fresh') {
           const basis = record(semantic.basis) ? semantic.basis : undefined;
           const previous = this.readShared();
@@ -207,20 +368,20 @@ export class SemanticIndex {
           });
           return;
         }
-        await this.perform('update');
+        await this.perform(operation);
       } catch (error) {
         if (error instanceof IndexLockedError) {
           // Another Kimono process on this ROOT is writing: wait and re-check freshness instead of failing.
-          this.update({ phase: 'waiting', operation: 'update', stage: 'waiting_for_other_indexer', startedAt, error: error.message });
-          this.retry = setTimeout(() => { this.retry = undefined; this.warmup(); }, 2000);
+          this.update({ phase: 'waiting', operation, stage: 'waiting_for_other_indexer', startedAt, error: error.message });
+          this.retry = setTimeout(() => { this.retry = undefined; this.warmup(operation); }, 2000);
           this.retry.unref();
           return;
         }
-        this.update({ phase: 'error', operation: 'update', startedAt, completedAt: new Date().toISOString(),
+        this.update({ phase: 'error', operation, startedAt, completedAt: new Date().toISOString(),
           error: error instanceof Error ? error.message : String(error) });
         throw error;
       }
-    });
+    }).finally(() => { if (operation === 'rebuild') this.rebuildRequested = false; });
     this.pending = result.then(() => undefined, () => undefined);
     void result.catch(error => {
       console.error('Semantic index preparation failed:', error instanceof Error ? error.message : String(error));
@@ -228,13 +389,21 @@ export class SemanticIndex {
   }
 
   async seedFrom(source: SemanticIndex, fingerprint: string): Promise<boolean> {
-    if (source.state.phase !== 'ready') return false;
+    this.snapshotSelection = await source.activeSelection();
+    const status = source.status();
+    const retained = status.phase === 'error' && status.operation === 'rebuild' && Boolean(this.snapshotSelection);
+    if (status.phase !== 'ready' && !retained) return false;
     const copy = source.pending.then(async () => {
       const basis: unknown = JSON.parse(await readFile(path.join(source.knowledge.searchIndex.directory, 'semantic-basis.json'), 'utf8'));
-      if (!record(basis) || basis.phase !== 'ready' || !record(basis.lastSuccessful)
+      if (!record(basis) || basis.phase !== 'ready' && !retained || !record(basis.lastSuccessful)
         || basis.lastSuccessful.corpusFingerprint !== fingerprint) return false;
-      const from = path.join(source.knowledge.searchIndex.directory, 'semantic');
-      const to = path.join(this.knowledge.searchIndex.directory, 'semantic');
+      const directories = this.snapshotSelection
+        ? this.snapshotSelection.profiles.map(profile => path.join('semantic-models', this.snapshotSelection!.signature,
+          this.snapshotSelection!.generation ?? 'initial', profile.id))
+        : ['semantic'];
+      for (const relative of directories) {
+      const from = path.join(source.knowledge.searchIndex.directory, relative);
+      const to = path.join(this.knowledge.searchIndex.directory, relative);
       const state: unknown = JSON.parse(await readFile(path.join(from, 'state.json'), 'utf8'));
       if (!record(state) || typeof state.generation !== 'string' || !/^store-[a-f0-9]{24}$/.test(state.generation)) {
         throw new Error('Invalid semantic cache generation');
@@ -242,7 +411,8 @@ export class SemanticIndex {
       await mkdir(to, { recursive: true, mode: 0o700 });
       await cp(path.join(from, state.generation), path.join(to, state.generation), { recursive: true });
       await writeFile(path.join(to, 'state.json'), JSON.stringify(state), { mode: 0o600 });
-      this.state = { ...source.state };
+      }
+      this.state = { ...source.state, phase: 'ready' };
       return true;
     });
     source.pending = copy.then(() => undefined, () => undefined);
@@ -250,7 +420,9 @@ export class SemanticIndex {
   }
 
   async info(): Promise<Record<string, unknown>> {
-    const model = process.env.KIMONO_MODEL_DIR;
+    const selection = await this.selectionForOperation();
+    const model = selection?.profiles.find(profile => profile.id === 'multilingual')?.directory
+      ?? selection?.profiles[0]?.directory ?? process.env.KIMONO_MODEL_DIR;
     if (!model) throw new Error('Model introspection requires KIMONO_MODEL_DIR with a local ONNX model');
     const result = this.pending.then(async () => {
       const raw = await invokeSemantic({ operation: 'info', model }, this.knowledge.root, this.workerStatusChanged);
@@ -258,8 +430,8 @@ export class SemanticIndex {
         throw new Error('Invalid model introspection response');
       }
       this.state.runtime = readRuntime(raw.runtime);
-      if (!codeProfileEnabled()) return raw;
-      const codeModel = await invokeSemantic({ operation: 'info', model: process.env.KIMONO_CODE_MODEL_DIR },
+      if (selection ? selection.profiles.length < 2 : !codeProfileEnabled()) return raw;
+      const codeModel = await invokeSemantic({ operation: 'info', model: selection?.profiles.find(profile => profile.id === 'code')?.directory ?? process.env.KIMONO_CODE_MODEL_DIR },
         this.knowledge.root, this.workerStatusChanged);
       if (!validModelInfo(codeModel)) throw new Error('Invalid code model introspection response');
       return { ...raw, profiles: { multilingual: raw, code: codeModel } };
@@ -271,9 +443,11 @@ export class SemanticIndex {
   async embed(text: string, usage: 'query' | 'document' = 'query'): Promise<EmbeddingResult> {
     if (!text.trim() || Buffer.byteLength(text) > 32_768) throw new Error('text must be non-empty and at most 32768 UTF-8 bytes');
     if (usage !== 'query' && usage !== 'document') throw new Error('usage must be query or document');
-    const model = process.env.KIMONO_MODEL_DIR;
+    const selection = await this.selectionForOperation();
+    const model = selection?.profiles.find(profile => profile.id === 'multilingual')?.directory
+      ?? selection?.profiles[0]?.directory ?? process.env.KIMONO_MODEL_DIR;
     if (!model) throw new Error('Embedding requires KIMONO_MODEL_DIR with a local ONNX model');
-    const result = this.pending.then(async () => {
+    const result = this.pending.then<EmbeddingResult>(async () => {
       const raw = await invokeSemantic({ operation: 'embed', model, text, usage }, this.knowledge.root,
         this.workerStatusChanged);
       if (!record(raw) || raw.engine !== 'embsearch-core' || typeof raw.version !== 'string'
@@ -286,6 +460,8 @@ export class SemanticIndex {
       }
       return { engine: 'embsearch-core' as const, version: raw.version, model: raw.model, usage,
         dimensions: raw.dimensions, normalized: raw.normalized, maxTokens: raw.maxTokens, vector: raw.vector,
+        ...(raw.backend === 'onnx' || raw.backend === 'model2vec' ? { backend: raw.backend } : {}),
+        ...(typeof raw.truncation === 'boolean' ? { truncation: raw.truncation } : {}),
         ...(raw.runtime ? { runtime: readRuntime(raw.runtime) } : {}) };
     });
     this.pending = result.then(() => undefined, () => undefined);
@@ -296,9 +472,89 @@ export class SemanticIndex {
     operation: 'search' | 'update' | 'rebuild' | 'compact' | 'stats',
     options: SemanticOptions = {},
   ): Promise<SemanticResult> {
-    const result = this.pending.then(() => this.performProfiles(operation, options));
+    const result = this.pending.then(async () => {
+      const selection = await this.selectionForOperation();
+      const result = selection ? operation === 'rebuild' && !this.knowledge.immutable
+        ? await this.rebuildManaged(selection, options) : await this.performManaged(operation, selection, options)
+        : await this.performProfiles(operation, options);
+      if (selection && !this.knowledge.immutable && operation !== 'search' && operation !== 'stats'
+        && !options.syncPaths && !await this.activeSelection()) {
+        await saveEmbeddingSettings(this.knowledge, { version: 1, requestedPolicy: selection.policy, active: selection });
+      }
+      return result;
+    });
     this.pending = result.then(() => undefined, () => undefined);
     return result;
+  }
+
+  private async rebuildManaged(selection: EmbeddingSelection, options: SemanticOptions = {}): Promise<SemanticResult> {
+    const candidate = { ...selection, generation: randomUUID() };
+    const lockPath = path.join(this.knowledge.searchIndex.directory, 'embedding-settings.lock');
+    await mkdir(this.knowledge.searchIndex.directory, { recursive: true, mode: 0o700 });
+    const lock = await open(lockPath, 'wx', 0o600).catch(error => {
+      if (error instanceof Error && 'code' in error && error.code === 'EEXIST') throw new Error('Another process is changing this ROOT embedding policy; retry after completion.');
+      throw error;
+    });
+    try {
+      const result = await this.performManaged('rebuild', candidate, options);
+      const saved = await readEmbeddingSettings(this.knowledge);
+      await saveEmbeddingSettings(this.knowledge, { version: 1, requestedPolicy: saved?.requestedPolicy ?? selection.policy, active: candidate });
+      return result;
+    } catch (error) {
+      await this.removeFailedGeneration(candidate);
+      throw error;
+    } finally { await lock.close(); await rm(lockPath, { force: true }); }
+  }
+
+  private async removeFailedGeneration(selection: EmbeddingSelection & { generation: string }): Promise<void> {
+    try {
+      await rm(path.join(this.knowledge.searchIndex.directory, 'semantic-models', selection.signature, selection.generation),
+        { recursive: true, force: true });
+    } catch (error) {
+      console.error('Could not remove the inactive embedding generation; its files may still be open in a native worker:',
+        error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  private async performManaged(
+    operation: 'search' | 'update' | 'rebuild' | 'compact' | 'stats',
+    selection: EmbeddingSelection, options: SemanticOptions = {},
+  ): Promise<SemanticResult> {
+    this.selection = selection;
+    const maintenance = operation !== 'search' && operation !== 'stats';
+    const startedAt = new Date().toISOString();
+    if (maintenance) this.update({ phase: 'running', operation, stage: operation, startedAt });
+    try {
+      const execute = async (observed?: (fingerprint: string, partial?: boolean) => void,
+        reusableFingerprint?: string, reusableDocuments?: Record<string, string>) => {
+        if (maintenance && !options.refreshed) await this.knowledge.refresh(options.syncPaths);
+        this.managedDocuments = {};
+        const outputs: SemanticResult[] = [];
+        const profiles = options.vector ? [selection.profiles.find(profile => profile.id === 'multilingual') ?? selection.profiles[0]!]
+          : selection.profiles;
+        for (const profile of profiles) {
+          const scope = this.knowledge.list().filter(entry => profile.scope === 'all'
+            || isCodeSource(entry.path) === (profile.scope === 'code')).map(entry => entry.path);
+          const paths = operation === 'search' ? scope.filter(file => !options.paths || options.paths.includes(file)) : options.paths;
+          outputs.push(await this.execute(operation, { ...options, profile: profile.id === 'code' ? 'code' : undefined,
+            refreshed: true, ...(paths ? { paths } : {}) }, undefined, reusableFingerprint, reusableDocuments));
+        }
+        const result = combineProfiles(outputs, options.limit ?? 25);
+        observed?.(semanticBasisFingerprint(this.managedDocuments), Boolean(result.skippedChunks));
+        if (maintenance) {
+          if (result.skippedChunks) throw new Error('Embedding profile generation is incomplete; the active model selection was retained.');
+          this.update({ ...this.state, phase: 'ready', operation, startedAt, completedAt: new Date().toISOString(),
+            indexedAt: new Date().toISOString(), chunks: result.chunks, model: result.model, etaSeconds: 0,
+            embedded: { completed: result.chunks, total: result.chunks },
+            files: { completed: this.knowledge.corpusStatus.files, total: this.knowledge.corpusStatus.files } });
+        }
+        return result;
+      };
+      return maintenance ? await trackIndex(this.knowledge, 'semantic', options.syncPaths, execute) : await execute();
+    } catch (error) {
+      if (maintenance) this.update({ phase: 'error', operation, startedAt, error: error instanceof Error ? error.message : String(error) });
+      throw error;
+    } finally { this.selection = undefined; this.managedDocuments = undefined; }
   }
 
   private async performProfiles(
@@ -404,13 +660,15 @@ export class SemanticIndex {
     reusableFingerprint?: string,
     reusableDocuments?: Record<string, string>,
   ): Promise<SemanticResult> {
-    const model = options.profile === 'code' ? process.env.KIMONO_CODE_MODEL_DIR : process.env.KIMONO_MODEL_DIR;
+    const selectedProfile = this.selection?.profiles.find(profile => profile.id === (options.profile ?? 'multilingual'));
+    const model = selectedProfile?.directory ?? (options.profile === 'code' ? process.env.KIMONO_CODE_MODEL_DIR : process.env.KIMONO_MODEL_DIR);
     if (!model) throw new Error(options.profile === 'code'
       ? 'Code semantic search requires KIMONO_CODE_MODEL_DIR with model.onnx, tokenizer.json and model.json.'
       : 'Semantic search requires KIMONO_MODEL_DIR with model.onnx, tokenizer.json and model.json. Use the Kimono Docker image or install a local model.');
     const maintenance = operation === 'update' || operation === 'rebuild' || operation === 'compact';
     const parent = this.knowledge.searchIndex.directory;
-    const cache = path.join(parent, options.profile === 'code' ? 'semantic-code' : 'semantic');
+    const cache = this.selection ? path.join(parent, 'semantic-models', this.selection.signature, this.selection.generation ?? 'initial', selectedProfile!.id)
+      : path.join(parent, options.profile === 'code' ? 'semantic-code' : 'semantic');
     await mkdir(parent, { recursive: true, mode: 0o700 });
     const knowledge = this.knowledge;
     const tracked = maintenance;
@@ -426,20 +684,23 @@ export class SemanticIndex {
     }
 
     const expectedPaths = operation === 'update' && reusableFingerprint !== undefined
-      && knowledge.isInitialized && !options.profile
+      && knowledge.isInitialized && (!options.profile || this.selection)
       ? knowledge.list().filter(entry => within(entry.path, options.syncPaths)
-        && (options.profile !== 'code' || codeSource.test(entry.path)))
+        && (selectedProfile ? selectedProfile.scope === 'all'
+          || isCodeSource(entry.path) === (selectedProfile.scope === 'code')
+          : options.profile !== 'code' || codeSource.test(entry.path)))
         .map(entry => entry.path).sort()
       : undefined;
     const manifestPaths = manifest ? Object.keys(manifest.documents).sort() : undefined;
     let raw: unknown;
     const reusedFreshIndex = operation === 'update' && reusableFingerprint !== undefined
-      && !options.profile && !options.syncPaths && manifest?.complete === true
+      && (!options.profile || this.selection) && !options.syncPaths && manifest?.complete === true
       && manifest.model === profileFingerprint && manifest.generation !== ''
       && expectedPaths !== undefined && manifestPaths !== undefined
       && expectedPaths.length === manifestPaths.length
       && expectedPaths.every((file, index) => file === manifestPaths[index]);
     if (reusedFreshIndex) {
+      if (this.managedDocuments && manifest) Object.assign(this.managedDocuments, manifest.documents);
       observed?.(reusableFingerprint);
       raw = await invokeSemantic({ operation: 'stats', model, cache }, this.knowledge.root, this.workerStatusChanged);
     } else {
@@ -454,7 +715,9 @@ export class SemanticIndex {
       }
     }
     const selected = knowledge.list().filter(entry => within(entry.path, options.syncPaths))
-      .filter(entry => options.profile !== 'code' || codeSource.test(entry.path))
+      .filter(entry => selectedProfile ? selectedProfile.scope === 'all'
+        || isCodeSource(entry.path) === (selectedProfile.scope === 'code')
+        : options.profile !== 'code' || codeSource.test(entry.path))
       .sort((a, b) => a.path.localeCompare(b.path));
     let incremental = reusedFreshIndex;
     let deletedPaths: string[] = [];
@@ -491,6 +754,7 @@ export class SemanticIndex {
     };
     let indexedFingerprint: string | undefined;
     let readSkipped = false;
+    const managedDocuments = this.managedDocuments;
     async function* documents() {
       let bytes = 0;
       const currentDocuments: Record<string, string> = {};
@@ -498,6 +762,7 @@ export class SemanticIndex {
         const reusable = reusableDocumentFingerprints[entry.path];
         if (reusable) {
           currentDocuments[entry.path] = reusable;
+          if (managedDocuments) managedDocuments[entry.path] = reusable;
           counted(0);
           continue;
         }
@@ -511,6 +776,7 @@ export class SemanticIndex {
         if (bytes > knowledge.config.maxCorpusBytes) throw new Error('Semantic corpus exceeds maxCorpusBytes; narrow include/exclude in the host config.');
         const digest = createHash('sha256').update(JSON.stringify([entry.kind, content])).digest('hex');
         currentDocuments[entry.path] = digest;
+        if (managedDocuments) managedDocuments[entry.path] = digest;
         if (incremental && previousDocuments[entry.path] === digest) continue;
         yield { path: entry.path, kind: entry.kind, content };
       }
@@ -751,11 +1017,31 @@ function validModelInfo(value: unknown): value is Record<string, unknown> {
     || !(value.queryPrefix === null || typeof value.queryPrefix === 'string')
     || !(value.documentPrefix === null || typeof value.documentPrefix === 'string')
     || typeof value.compatibility !== 'string' || !record(value.sha256)) return false;
-  for (const file of ['model.onnx', 'tokenizer.json', 'model.json']) {
+  for (const file of [value.backend === 'model2vec' ? 'model.safetensors' : 'model.onnx', 'tokenizer.json', 'model.json']) {
     const digest = value.sha256[file];
     if (typeof digest !== 'string' || !/^[a-f0-9]{64}$/.test(digest)) return false;
   }
   return true;
+}
+
+function combineProfiles(profiles: SemanticResult[], limit: number): SemanticResult {
+  const first = profiles[0];
+  if (!first) throw new Error('No embedding profile selected.');
+  if (profiles.length === 1) return first;
+  const fused = new Map<string, SemanticResult['results'][number]>();
+  for (const profile of profiles) profile.results.forEach((result, rank) => {
+    const key = `${result.path}:${result.line}`, prior = fused.get(key);
+    fused.set(key, { ...result, score: (prior?.score ?? 0) + 1 / (60 + rank + 1) });
+  });
+  const results = [...fused.values()].sort((a, b) => b.score - a.score
+    || a.path.localeCompare(b.path) || a.line - b.line).slice(0, limit);
+  const paths = (kind: keyof ChangeReport) => [...new Set(profiles.flatMap(profile => profile.changes[kind]))].sort();
+  return { ...first, model: profiles.map(profile => profile.model).join('+'),
+    version: profiles.map(profile => profile.version).join('+'),
+    chunks: profiles.reduce((sum, profile) => sum + profile.chunks, 0),
+    embedded: profiles.reduce((sum, profile) => sum + profile.embedded, 0),
+    skippedChunks: profiles.reduce((sum, profile) => sum + (profile.skippedChunks ?? 0), 0),
+    count: results.length, results, changes: { added: paths('added'), modified: paths('modified'), deleted: paths('deleted') } };
 }
 
 async function readSemanticManifest(cache: string): Promise<SemanticManifest | undefined> {
@@ -771,7 +1057,7 @@ async function readSemanticManifest(cache: string): Promise<SemanticManifest | u
   if (!record(value) || typeof value.generation !== 'string'
     || value.generation !== '' && !/^store-[a-f0-9]{24}$/.test(value.generation)
     || typeof value.model !== 'string' || !/^[a-f0-9]{64}$/.test(value.model)
-    || typeof value.index_version !== 'string' || !value.index_version
+    || value.index_version !== undefined && (typeof value.index_version !== 'string' || !value.index_version)
     || !record(value.documents) || !record(value.chunks)) {
     throw new Error('Invalid semantic index manifest');
   }
@@ -793,10 +1079,13 @@ async function readSemanticManifest(cache: string): Promise<SemanticManifest | u
       throw new Error('Invalid semantic chunk manifest');
     }
   }
-  const complete = Object.values(value.chunks).every(chunk =>
+  // Pre-v0.9 manifests have no index_version: validate them but require a full migration.
+  const indexVersion = typeof value.index_version === 'string' ? value.index_version : '';
+  if (!indexVersion) console.error('Kimono: legacy semantic manifest requires a full index migration.');
+  const complete = indexVersion !== '' && Object.values(value.chunks).every(chunk =>
     record(chunk) && /^[a-f0-9]{64}$/.test(documents[String(chunk.path)] ?? ''));
   return {
-    generation: value.generation, model: value.model, indexVersion: value.index_version,
+    generation: value.generation, model: value.model, indexVersion,
     documents, chunks: value.chunks, complete,
   };
 }

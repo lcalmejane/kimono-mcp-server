@@ -20,7 +20,7 @@ const manifest = JSON.parse(await readFile(path.join(root, 'vscode/package.json'
 if (pkg.version !== manifest.version) throw new Error('Server and VS Code extension versions must match.');
 const bundle = path.resolve(process.env.KIMONO_BUNDLE_DIR ?? path.join(root, 'native-bundles', target));
 await nativeEnvironment(bundle, target);
-const stage = path.join(root, 'vscode/.package');
+const stage = path.resolve(process.env.KIMONO_VSIX_STAGE ?? path.join(root, 'vscode/.package'));
 await mkdir(stage, { recursive: true });
 if ((await readdir(stage)).length) throw new Error(`Packaging directory must be empty: ${stage}`);
 await Promise.all([
@@ -60,7 +60,7 @@ await build({
   bundle: true, platform: 'node', format: 'esm', target: 'node24',
   banner: { js: "import { createRequire as kimonoCreateRequire } from 'node:module'; const require = kimonoCreateRequire(import.meta.url);" },
 });
-const output = path.join(root, 'vscode', `kimono-rag-mcp-${pkg.version}-${target}.vsix`);
+const output = path.resolve(process.env.KIMONO_VSIX_OUTPUT ?? path.join(root, 'vscode', `kimono-rag-mcp-${pkg.version}-${target}.vsix`));
 await createVSIX({ cwd: stage, packagePath: output, target, dependencies: false });
 const sha256 = async filename => createHash('sha256').update(await readFile(filename)).digest('hex');
 await writeFile(output.replace(/\.vsix$/, '.build.json'), `${JSON.stringify({

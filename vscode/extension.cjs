@@ -54,6 +54,8 @@ function register(vscode, context, native = nativeEnvironment) {
     const corpusMode = config().get("corpusMode", "rag");
     if (!["aikido", "rag"].includes(corpusMode)) throw new Error("Kimono corpusMode must be aikido or rag.");
     const device = config().get("semanticDevice", "auto");
+    const embeddingPolicy = config().get("embeddingPolicy", "auto-balanced");
+    if (!["auto-balanced", "auto-speed", "code", "multilingual-fast", "e5"].includes(embeddingPolicy)) throw new Error("Invalid Kimono embedding policy.");
     if (!["auto", "cpu", "cuda", "coreml"].includes(device)) throw new Error("Kimono semanticDevice must be auto, cpu, cuda or coreml.");
     const semanticEnvironment = {};
     for (const [key, variable, fallback, minimum, maximum] of [
@@ -75,6 +77,9 @@ function register(vscode, context, native = nativeEnvironment) {
         HOME: storage, USERPROFILE: storage, TMPDIR: storage, TMP: storage, TEMP: storage,
         MCP_TRANSPORT: "stdio", AIKIDO_ROOT: root,
         KIMONO_CACHE_DIR: path.join(storage, "cache"),
+        // Startup default only: the server's saved per-root policy takes precedence.
+        KIMONO_EMBEDDING_POLICY: embeddingPolicy,
+        KIMONO_MODELS_DIR: path.join(context.globalStorageUri.fsPath, "models"),
         KIMONO_STATUS_FILE: selected.statusFile,
         KIMONO_CORPUS_MODE: corpusMode,
         KIMONO_SEMANTIC_DEVICE: device,

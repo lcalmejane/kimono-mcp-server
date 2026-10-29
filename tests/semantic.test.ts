@@ -416,6 +416,51 @@ it('waits for another live indexer and reclaims a lock left by a dead process', 
   }
 });
 
+it.each([
+  { name: 'legacy unversioned', version: undefined, generation: `store-${'c'.repeat(24)}`, valid: true },
+  { name: 'invalid version type', version: 3, generation: `store-${'c'.repeat(24)}`, valid: false },
+  { name: 'empty version', version: '', generation: `store-${'c'.repeat(24)}`, valid: false },
+  { name: 'unsafe legacy generation', version: undefined, generation: '../outside', valid: false },
+])('migrates only a valid $name manifest without an incremental shortcut', async ({ version, generation, valid }) => {
+  const knowledge = await fixture();
+  vi.stubEnv('KIMONO_MODEL_DIR', 'unused-test-model');
+  const cache = path.join(knowledge.searchIndex.directory, 'semantic');
+  await mkdir(cache, { recursive: true });
+  const state = JSON.stringify({
+    generation, model: 'a'.repeat(64), index_version: version,
+    documents: { 'prompts/index.md': 'b'.repeat(64) },
+    chunks: { 'prompts/index.md#0': { path: 'prompts/index.md', kind: 'knowledge',
+      line: 1, text: '# AI-KIDO knowledge', hash: 'd'.repeat(64) } },
+  });
+  await writeFile(path.join(cache, 'state.json'), state);
+  const realRunProcess = processes.runProcess;
+  const requests: Record<string, unknown>[] = [];
+  const run = vi.spyOn(processes, 'runProcess').mockImplementation(async (executable, ...args) => {
+    if (executable !== (process.env.KIMONO_SEMANTIC_BIN ?? 'kimono-semantic')) {
+      return realRunProcess(executable, ...args);
+    }
+    const request = JSON.parse(await readFile(args[0][0], 'utf8')) as Record<string, unknown>;
+    requests.push(request);
+    return { stdout: JSON.stringify(request.operation === 'profile'
+      ? { engine: 'embsearch-core', fingerprint: 'a'.repeat(64) }
+      : { engine: 'embsearch-core', version: '0.3.4', model: 'test-model',
+        chunks: 4, embedded: 4, count: 0, results: [], changes: { added: [], modified: [], deleted: [] } }),
+    stderr: '', exitCode: 0 };
+  });
+  try {
+    if (valid) {
+      await expect(knowledge.semanticIndex.run('update')).resolves.toMatchObject({ embedded: 4 });
+      expect(requests.map(request => request.operation)).toEqual(['profile', 'update']);
+      expect(requests[1]).toMatchObject({ incremental: false, deletedPaths: [] });
+      expect(requests[1].documents).toHaveLength(4);
+    } else {
+      await expect(knowledge.semanticIndex.run('update')).rejects.toThrow('Invalid semantic index manifest');
+      expect(requests.map(request => request.operation)).toEqual(['profile']);
+    }
+    expect(await readFile(path.join(cache, 'state.json'), 'utf8')).toBe(state);
+  } finally { run.mockRestore(); vi.unstubAllEnvs(); }
+});
+
 it('sends only changed documents and explicit scoped deletions for a compatible incremental index', async () => {
   const knowledge = await fixture();
   await runProcess('git', ['init', '-q'], knowledge.root, [0]);
@@ -595,6 +640,45 @@ it('keeps code embeddings in a separate opt-in index and fuses profile search ra
 });
 
 describe.skipIf(!process.env.KIMONO_MODEL_DIR)('real multilingual ONNX semantic search', () => {
+  it('migrates a real unversioned generation and reuses the migrated index on the next update', async () => {
+    const knowledge = await fixture();
+    await knowledge.semanticIndex.run('update');
+    const stateFile = path.join(knowledge.searchIndex.directory, 'semantic/state.json');
+    const state = JSON.parse(await readFile(stateFile, 'utf8'));
+    delete state.index_version;
+    state.model = 'b'.repeat(64);
+    await writeFile(stateFile, JSON.stringify(state));
+    const migrated = await knowledge.semanticIndex.run('update');
+    expect(migrated.embedded).toBe(4);
+    expect(JSON.parse(await readFile(stateFile, 'utf8'))).toMatchObject({
+      index_version: 'kimono-semantic-v2',
+    });
+    expect((await knowledge.semanticIndex.run('update')).embedded).toBe(0);
+    const result = await knowledge.semanticIndex.run('search', { query: 'Protect passwords and credentials', limit: 1 });
+    expect(result.results[0].path).toBe('prompts/secrets.md');
+    const generation = JSON.parse(await readFile(stateFile, 'utf8')).generation;
+    knowledge.semanticIndex.warmup();
+    const started = JSON.parse(await runtimeFor(knowledge).call('aikido_index', {
+      operation: 'rebuild', mode: 'semantic', background: true,
+    }));
+    expect(started).toMatchObject({ phase: 'running', operation: 'rebuild' });
+    await expect(runtimeFor(knowledge).call('aikido_index', {
+      operation: 'rebuild', mode: 'semantic', background: true,
+    })).rejects.toThrow('already running');
+    await knowledge.semanticIndex.idle();
+    expect(knowledge.semanticIndex.status()).toMatchObject({ phase: 'ready', operation: 'rebuild' });
+    expect(JSON.parse(await readFile(stateFile, 'utf8')).generation).not.toBe(generation);
+    expect((await knowledge.semanticIndex.run('update')).embedded).toBe(0);
+    const healthyState = await readFile(stateFile, 'utf8');
+    vi.stubEnv('KIMONO_MODEL_DIR', path.join(knowledge.root, 'missing-model'));
+    try {
+      await runtimeFor(knowledge).call('aikido_index', { operation: 'rebuild', mode: 'semantic', background: true });
+      await knowledge.semanticIndex.idle();
+      expect(knowledge.semanticIndex.status().phase).toBe('error');
+      expect(await readFile(stateFile, 'utf8')).toBe(healthyState);
+    } finally { vi.unstubAllEnvs(); }
+  }, 60_000);
+
   it('searches supplied vectors through MCP with model checks, filters and fresh index contents', async () => {
     const knowledge = await fixture();
     const server = createAikidoMcpServer(knowledge);

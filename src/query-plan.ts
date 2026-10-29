@@ -7,7 +7,7 @@ export type QueryIntent = 'natural-language' | 'identifier' | 'qualified-symbol'
 
 export function queryIntent(query: string): QueryIntent {
   const value = query.trim();
-  if (/[\\/]/.test(value) || /^[\w.-]+\.(?:c|cc|cpp|cs|go|h|hpp|java|js|jsx|mjs|py|rb|rs|scala|sh|swift|ts|tsx|vue)$/i.test(value)) {
+  if (/[\\/]/.test(value) || /^[\w.-]+\.(?:c|cc|cpp|cs|go|h|hpp|java|js|jsx|mjs|php|py|rb|rs|scala|sh|swift|ts|tsx|vue)$/i.test(value)) {
     return 'path';
   }
   if (/::|->|#[\w$]+|\.[A-Za-z_$][\w$]*/.test(value)) return 'qualified-symbol';

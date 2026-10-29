@@ -15,7 +15,7 @@
       statusTitle: "Indexing status · live",
       statusIntro: "Files read, estimated tokens (UTF-8 bytes / 4) and embedded chunks versus totals, published in real time by the Kimono server. When available, worker lifecycle, warm indexes, embedding model, configured CPU budget and estimated memory are shown too. Lexical search works while the semantic index is being built.",
       noIndex: "No index yet. Kimono indexes automatically when an MCP client starts it, or start now.",
-      startIndex: "Start indexing now", indexing: "Indexing…", refresh: "Refresh", progressOf: "{name} indexing progress",
+      startIndex: "Update index", rebuildIndex: "Rebuild entirely", rebuildHint: "Regenerate all semantic vectors. Sources and snapshots are unchanged; the previous generation is kept until success.", indexing: "Indexing…", refresh: "Refresh", progressOf: "{name} indexing progress",
       searchTitle: "Test a search",
       searchIntro: "Query Kimono exactly as an agent would. All modes share one snapshot; latency is measured from {origin}. Nothing in your project is modified.",
       searchNote: "Enriched text splits phrases and uses the repository glossaries; exact text keeps the whole phrase. While the semantic index is being built, text search stays available and semantic search reports its state.",
@@ -40,7 +40,7 @@
       statusTitle: "État d'indexation · en direct",
       statusIntro: "Fichiers lus, tokens estimés (octets UTF-8 / 4) et passages vectorisés par rapport aux totaux, publiés en temps réel par le serveur Kimono. L'état du worker, les index gardés en mémoire, le modèle d'embedding, le budget CPU configuré et la mémoire estimée sont également affichés lorsqu'ils sont disponibles. La recherche lexicale fonctionne pendant la construction de l'index sémantique.",
       noIndex: "Pas encore d'index. Kimono indexe automatiquement quand un client MCP le démarre, ou lancez-le maintenant.",
-      startIndex: "Lancer l'indexation", indexing: "Indexation…", refresh: "Actualiser", progressOf: "Progression de l'indexation de {name}",
+      startIndex: "Mettre à jour l'index", rebuildIndex: "Reconstruire entièrement", rebuildHint: "Recalculer tous les vecteurs sémantiques. Sources et snapshots inchangés ; l'ancienne génération est conservée jusqu'à réussite.", indexing: "Indexation…", refresh: "Actualiser", progressOf: "Progression de l'indexation de {name}",
       searchTitle: "Tester une recherche",
       searchIntro: "Interrogez Kimono exactement comme un agent. Tous les modes partagent un même snapshot ; la latence est mesurée depuis {origin}. Aucun fichier du projet n'est modifié.",
       searchNote: "Le texte enrichi décompose les phrases et utilise les glossaires du dépôt ; le texte exact conserve la phrase entière. Pendant la construction de l'index sémantique, le texte reste disponible et la recherche sémantique indique son état.",
@@ -60,7 +60,7 @@
       footer: "Kimono fait partie des outils AI-KIDO : Tatami Agent, Tatami IDE, Tatami Core et la méthode AI-KIDO.", website: "Découvrir ai-kido.fr",
     },
   };
-  const order = ["status", "settings", "sharing", "server", "search", "governance"];
+  const order = ["status", "models", "settings", "sharing", "server", "search", "governance"];
 
   function language(value) {
     const raw = value ?? (typeof document !== "undefined" ? document.documentElement.lang || navigator.language : "en");
@@ -101,7 +101,7 @@
     const lang = language(options.language);
     const t = translator(lang);
     const prefix = options.idPrefix ?? "kimono";
-    const handlers = { start: options.onIndexStart, search: options.onSearch, refresh: options.onRefresh };
+    const handlers = { start: options.onIndexStart, rebuild: options.onIndexRebuild, search: options.onSearch, refresh: options.onRefresh };
     let folders = [], pending = false, enabled = true, timer, fetcher, intervals = { activeMs: 1500, idleMs: 15000 };
     root.classList.add("kv");
 
@@ -144,6 +144,109 @@
     const statusList = node("div", undefined, statusCard);
     const statusMessage = node("p", "", statusCard, "kv-muted");
 
+    // Model metadata is requested only on demand, never by the index-status poller.
+    const ml = (en, fr) => lang === "fr" ? fr : en;
+    const modelsCard = section("models", ml("Embedding models", "Modèles d'embedding"), { collapsible: true });
+    modelsCard.hidden = !options.onModelsRequest;
+    node("p", ml("Manage the connected server, not this browser. Downloads never upload your corpus. Speed and memory estimates are not proof of retrieval quality.",
+      "Gérez le serveur connecté, pas ce navigateur. Les téléchargements n'envoient jamais votre corpus. Vitesse et mémoire estimées ne prouvent pas la qualité de recherche."), modelsCard, "kv-muted");
+    const modelFolder = labelled(modelsCard, `${prefix}-model-folder`, t("folder"), document.createElement("select"));
+    const modelRefresh = node("button", t("refresh"), modelsCard);
+    modelRefresh.type = "button";
+    const modelOutput = node("div", undefined, modelsCard);
+    modelOutput.setAttribute("role", "status"); modelOutput.setAttribute("aria-live", "polite");
+    let modelsAvailable = false, modelsTimer;
+    function requestModels(input = { operation: "status" }) {
+      if (!modelsAvailable || !options.onModelsRequest) return;
+      if (pending) {
+        if (input.operation === "status" && modelsCard.open) {
+          clearTimeout(modelsTimer);
+          modelsTimer = setTimeout(() => requestModels(), 3000);
+        }
+        return;
+      }
+      options.onModelsRequest(input, modelFolder.value || undefined);
+    }
+    modelsCard.addEventListener("toggle", () => {
+      clearTimeout(modelsTimer);
+      if (modelsCard.open) requestModels();
+    });
+    modelRefresh.addEventListener("click", () => requestModels());
+    modelFolder.addEventListener("change", () => { modelOutput.replaceChildren(); requestModels(); });
+    function configureModels({ folders: choices = [], available = true } = {}) {
+      const previous = modelFolder.value;
+      const signature = JSON.stringify(choices);
+      if (modelFolder.dataset.choices !== signature) {
+        modelFolder.replaceChildren(...choices.map(choice => option(choice.id, choice.name)));
+        modelFolder.dataset.choices = signature;
+        if (choices.some(choice => choice.id === previous)) modelFolder.value = previous;
+        modelOutput.replaceChildren();
+      }
+      modelFolder.parentElement.hidden = choices.length < 2;
+      modelsAvailable = available;
+      modelRefresh.dataset.kvLocked = String(!available);
+      modelFolder.dataset.kvLocked = String(!available);
+      modelRefresh.disabled = !available;
+      if (!available) modelOutput.replaceChildren(node("p", ml("Enable and connect Kimono to manage its models.", "Activez et connectez Kimono pour gérer ses modèles.")));
+    }
+    const mib = bytes => Number.isFinite(bytes) ? `${Math.round(bytes / 1048576)} MiB` : "—";
+    function showModels(value) {
+      clearTimeout(modelsTimer);
+      modelOutput.replaceChildren();
+      if (!value) return;
+      const list = node("dl", undefined, modelOutput);
+      const rows = [
+        [ml("Requested policy", "Politique demandée"), value.requestedPolicy],
+        [ml("Active policy", "Politique active"), value.activePolicy ?? ml("Not active yet", "Pas encore active")],
+        [ml("Server reason", "Décision du serveur"), value.reason],
+        [ml("Phase", "État"), value.phase],
+        [ml("Corpus", "Corpus"), `${value.corpus?.codeFiles ?? "—"} code · ${value.corpus?.documentFiles ?? "—"} documents · ${mib(value.corpus?.bytes)}`],
+        [ml("Required models", "Modèles requis"), (value.requiredModels ?? []).join(", ") || "—"],
+        [ml("Missing downloads", "Téléchargements manquants"), (value.missingModels ?? []).join(", ") || "—"],
+        [ml("Rebuild required", "Reconstruction nécessaire"), value.reconstructionRequired ? ml("Yes", "Oui") : ml("No", "Non")],
+      ];
+      for (const [label, text] of rows) { node("dt", label, list); node("dd", String(text ?? "—"), list); }
+      if (value.error) node("p", value.error, modelOutput, "kv-error");
+      if (value.phase === "download-required" && (value.missingModels ?? []).some(id => ["code", "multilingual-fast"].includes(id))) node("p", ml(
+        "Download each missing model separately, then apply the desired policy again to start rebuilding.",
+        "Téléchargez chaque modèle manquant séparément, puis appliquez à nouveau la politique souhaitée pour lancer la reconstruction."), modelOutput, "kv-muted");
+      if ((value.missingModels ?? []).includes("e5")) node("p", ml(
+        "E5 is supplied only by the host bundle and cannot be downloaded here. Update the host bundle or choose another policy.",
+        "E5 est fourni uniquement par l'hôte et ne peut pas être téléchargé ici. Mettez à jour le paquet de l'hôte ou choisissez une autre politique."), modelOutput, "kv-muted");
+      for (const profile of value.profiles ?? []) node("p", `${profile.id}: ${profile.model} · ${profile.files} files`, modelOutput);
+      const select = labelled(modelOutput, `${prefix}-policy`, ml("Desired policy", "Politique souhaitée"), document.createElement("select"));
+      for (const [id, en, fr] of [
+        ["auto-balanced", "Auto balanced (recommended)", "Auto équilibré (recommandé)"],
+        ["auto-speed", "Auto speed", "Auto vitesse"],
+        ["code", "Code · very fast", "Code · très rapide"],
+        ["multilingual-fast", "Documents · multilingual fast (~531 MB download; table 489 MiB)", "Documents · multilingue rapide (~531 Mo à télécharger ; table 489 Mio)"],
+        ["e5", "Documents · multilingual E5 (slower, existing model)", "Documents · multilingue E5 (plus lent, modèle existant)"],
+      ]) option(id, ml(en, fr), select);
+      select.value = value.requestedPolicy;
+      const apply = node("button", ml("Switch policy / rebuild…", "Changer de politique / reconstruire…"), modelOutput);
+      apply.type = "button";
+      apply.disabled = value.phase === "building";
+      apply.dataset.kvLocked = String(apply.disabled);
+      apply.addEventListener("click", () => requestModels({ operation: "configure", policy: select.value }));
+      node("p", ml("A switch records the desired policy and schedules a safe rebuild. The previous generation remains active until success. Missing downloads require separate consent; no automatic fallback.",
+        "Le changement enregistre la politique souhaitée et programme une reconstruction sûre. L'ancienne génération reste active jusqu'à réussite. Chaque téléchargement manquant exige un accord distinct ; aucun repli automatique."), modelOutput, "kv-muted");
+      for (const model of value.models ?? []) {
+        const detail = node("details", undefined, modelOutput);
+        node("summary", `${model.id} · ${model.installed ? ml("installed", "installé") : ml("not installed", "non installé")} · ${mib(model.downloadBytes)}`, detail);
+        node("p", `${ml("Source", "Source")}: ${model.repository}\nRevision: ${model.revision}\nLicense: ${model.license}`, detail, "kv-path");
+        node("p", `${ml("Estimated model memory (not measured RSS)", "Mémoire modèle estimée (pas le RSS mesuré)")}: ${mib(model.estimatedMemoryBytes)} · ${model.backend} · ${model.dimensions} dimensions · ${model.chunkChars} chars/chunk`, detail);
+        if (!model.installed && ["code", "multilingual-fast"].includes(model.id)) {
+          const download = node("button", ml("Download only…", "Télécharger uniquement…"), detail);
+          download.type = "button";
+          download.addEventListener("click", () => requestModels({ operation: "install", model: model.id }));
+        }
+      }
+      setBusy(pending);
+      // Another MCP process can own the transition. Keep a slow metadata-only
+      // refresh while open even if this process reports ready/rebuild-required.
+      if (modelsCard.open) modelsTimer = setTimeout(() => requestModels(), value.phase === "building" ? 3000 : 15000);
+    }
+
     function renderStatus() {
       statusList.replaceChildren();
       for (const folder of folders) {
@@ -166,7 +269,15 @@
           start.type = "button";
           start.dataset.kvLocked = String(view.active || !enabled || folder.canStart === false);
           start.disabled = pending || start.dataset.kvLocked === "true";
-          start.addEventListener("click", () => { if (!pending) handlers.start(folder.id); });
+          start.addEventListener("click", () => { if (!start.disabled) handlers.start(folder.id); });
+        }
+        if (handlers.rebuild) {
+          const rebuild = node("button", t("rebuildIndex"), actions, "secondary");
+          rebuild.type = "button";
+          rebuild.title = t("rebuildHint");
+          rebuild.dataset.kvLocked = String(view.active || !enabled || folder.canStart === false);
+          rebuild.disabled = pending || rebuild.dataset.kvLocked === "true";
+          rebuild.addEventListener("click", () => { if (!rebuild.disabled) handlers.rebuild(folder.id); });
         }
         if (handlers.refresh) {
           const refresh = node("button", t("refresh"), actions, "secondary");
@@ -329,7 +440,7 @@
 
     function setBusy(value) {
       pending = Boolean(value);
-      root.querySelectorAll(".kv-slot-status button, .kv-slot-search button, .kv-slot-search input, .kv-slot-search select").forEach(element => {
+      root.querySelectorAll(".kv-slot-status button, .kv-slot-models button, .kv-slot-models select, .kv-slot-search button, .kv-slot-search input, .kv-slot-search select").forEach(element => {
         element.disabled = pending || element.dataset.kvLocked === "true";
       });
     }
@@ -337,11 +448,11 @@
     function setNotice(text) { notice.textContent = text ?? ""; if (text) failure.textContent = ""; }
     function setError(text) { failure.textContent = text ?? ""; if (text) notice.textContent = ""; }
     function focusSearch() { searchCard.scrollIntoView?.(); query.focus(); }
-    function dispose() { clearTimeout(timer); fetcher = undefined; }
+    function dispose() { clearTimeout(timer); clearTimeout(modelsTimer); fetcher = undefined; }
 
     setHeader(options);
     return { t, language: lang, section, setHeader, setStatus, poll, refreshStatus: tick, configureSearch, showSearch,
-      setBusy, setEnabled, setNotice, setError, focusSearch, dispose, get pending() { return pending; } };
+      configureModels, showModels, setBusy, setEnabled, setNotice, setError, focusSearch, dispose, get pending() { return pending; } };
   }
 
   return { create, language, strings, translator };

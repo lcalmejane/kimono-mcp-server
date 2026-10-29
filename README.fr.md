@@ -24,9 +24,14 @@ embeddings sont locaux ; le client peut transmettre les extraits récupérés à
 son fournisseur de modèle.
 
 L'indexation sémantique borne les lots de vecteurs en mémoire et équilibre les
-lots courts et longs. Au premier usage du modèle, Kimono compare le CPU aux
-fournisseurs CUDA/CoreML disponibles et réutilise le plus rapide mesuré pendant
-la session du serveur. Voir les [paramètres du moteur et de la mémoire](docs/local-rag.fr.md#moteur-dembedding-et-mémoire).
+lots courts et longs. Les modèles statiques code et multilingue utilisent le
+backend Rust CPU et des tables partagées mappées en mémoire, sans démarrage ONNX.
+Auto équilibré combine le statique code et E5 pour les documents ; Auto vitesse
+utilise le statique pour les deux. Téléchargements et changements de politique
+demandent des confirmations distinctes. Pour les modèles ONNX, Kimono compare
+le CPU aux fournisseurs CUDA/CoreML disponibles et réutilise le plus rapide
+mesuré pendant la session du serveur.
+Voir les [modèles, paramètres du moteur et de la mémoire](docs/local-rag.fr.md#moteur-dembedding-et-mémoire).
 
 ## Choisir comment utiliser Kimono
 
