@@ -20,6 +20,29 @@ In the current Copilot benchmark using Gemini 3.8 Flash, Kimono RAG measured:
 The comparison is standard Copilot search versus local Kimono RAG. See the
 [benchmark results](https://github.com/lcalmejane/kimono-mcp-server/blob/main/benchmarks/results/current.md).
 
+## Choose embedding models explicitly
+
+Open **Kimono → Embedding models** to inspect the connected server's requested
+and active policies, reason, corpus mix, profiles and missing downloads. This
+section loads metadata only while opened or explicitly refreshed, with a small
+status poll every 15 seconds (3 seconds during rebuilding), separate from the
+index poll. This also observes transitions owned by another MCP process.
+Choose **Auto balanced (recommended)**, **Auto speed**, **Code · very fast**,
+**Documents · multilingual fast** (~531 MB download, including a 489 MiB table), or the existing, slower
+**Documents · multilingual E5**. Speed and estimated memory do not establish
+retrieval quality; compare searches on your own corpus.
+
+Each approved model download has a native VS Code confirmation with its exact
+size, pinned revision, license and source. Downloading never activates a model
+or uploads your corpus. Switching policy requires a separate rebuild
+confirmation; the previous generation stays active until success. There is no
+automatic consent, download or fallback. Remote mode manages the configured
+server, not local models. Embedded launches use host-controlled persistent model
+storage and `kimono.embeddingPolicy=auto-balanced` as an initial default only:
+the server's saved policy for that ROOT takes precedence on restart.
+After installing missing static models, apply the desired policy again to start
+the rebuild. E5 remains host-bundled only and has no download action here.
+
 ## What you get
 
 - **Local RAG:** index and search your source code and documentation on your

@@ -3,7 +3,8 @@
 const fs = require("node:fs/promises");
 const path = require("node:path");
 const { randomBytes } = require("node:crypto");
-const { startMcpClient } = require("./mcp-client.cjs");
+const { startMcpClient, startRemoteMcpClient } = require("./mcp-client.cjs");
+const modelActions = require("./management/model-actions.js");
 const { runSearchBench } = require("./search.cjs");
 const { lines, readIndexStatus, summarize } = require("./status.cjs");
 
@@ -131,11 +132,11 @@ function registerManagement(vscode, context, host) {
     return config().update(message.key, message.value, vscode.ConfigurationTarget.Global);
   }
 
-  async function startIndex(id) {
+  async function startIndex(id, operation = "update") {
     trusted(); embedded();
     const selected = folderById(id);
     const started = await client(selected);
-    const value = await started.call("aikido_index", { operation: "update", mode: "semantic", background: true });
+    const value = await started.call("aikido_index", { operation, mode: "semantic", background: true });
     await refreshStatuses();
     return value;
   }
@@ -144,6 +145,37 @@ function registerManagement(vscode, context, host) {
     trusted(); embedded();
     const started = await client(folderById(id));
     return runSearchBench((name, args) => started.call(name, args), input);
+  }
+
+  async function models(message) {
+    trusted();
+    const action = modelActions.parse(message.input);
+    const mode = config().get("mode", "embedded");
+    let started, remote = false;
+    if (mode === "embedded") started = await client(folderById(message.folder));
+    else if (mode === "remote") {
+      const url = remoteUrl(config().get("url", ""));
+      if (!url) throw new Error("Configure a valid remote Kimono URL first.");
+      const stored = await context.secrets.get(tokenKey);
+      const secret = stored ? JSON.parse(stored) : undefined;
+      if (secret && (secret.url !== url || typeof secret.token !== "string" || !secret.token || /[\r\n]/.test(secret.token))) {
+        throw new Error("The Kimono endpoint changed. Set a token for this endpoint or clear the saved token.");
+      }
+      started = startRemoteMcpClient(url, secret?.token, { version });
+      remote = true;
+    } else throw new Error("Enable Kimono to manage models.");
+    try {
+      let value = await started.call("aikido_models", { operation: "status" });
+      if (action.operation !== "status") {
+        const accept = l("Confirm", "Confirmer");
+        if (await vscode.window.showWarningMessage(modelActions.confirmation(action, value, language),
+          { modal: true }, accept) === accept) {
+          await started.call("aikido_models", { ...action, confirmed: true });
+          value = await started.call("aikido_models", { operation: "status" });
+        }
+      }
+      return value;
+    } finally { if (remote) started.close(); }
   }
 
   async function openPanel(focus) {
@@ -177,6 +209,21 @@ function registerManagement(vscode, context, host) {
         try {
           if (message.action === "setting") { await updateSetting(message); await post({ type: "done", message: l("Setting saved. Kimono servers restart with the new configuration.", "Paramètre enregistré. Les serveurs Kimono redémarrent avec la nouvelle configuration.") }); }
           else if (message.action === "indexStart") { await startIndex(message.folder); await post({ type: "done", message: l("Indexing started. Progress updates live above.", "Indexation lancée. La progression s'affiche en direct ci-dessus.") }); }
+          else if (message.action === "indexRebuild") {
+            trusted(); embedded();
+            const selected = folderById(message.folder);
+            const confirm = l("Rebuild", "Reconstruire");
+            if (await vscode.window.showWarningMessage(
+              l(`Rebuild the entire semantic index for ${selected.name}? This recalculates all vectors and may take a long time. Sources and snapshots are unchanged; the previous generation is kept until success.`,
+                `Reconstruire tout l'index sémantique de ${selected.name} ? Tous les vecteurs seront recalculés, ce qui peut être long. Sources et snapshots inchangés ; l'ancienne génération est conservée jusqu'à réussite.`),
+              { modal: true }, confirm) !== confirm) {
+              await post({ type: "done", message: l("Rebuild cancelled.", "Reconstruction annulée.") });
+            } else {
+              await startIndex(message.folder, "rebuild");
+              await post({ type: "done", message: l("Rebuild started. Progress updates live above.", "Reconstruction lancée. La progression s'affiche en direct ci-dessus.") });
+            }
+          }
+          else if (message.action === "models") await post({ type: "models", value: await models(message) });
           else if (message.action === "search") await post({ type: "search", value: await search(message.folder, message.input) });
           else if (message.action === "setToken") { await vscode.commands.executeCommand("kimono.setToken"); await post({ type: "done" }); }
           else if (message.action === "clearToken") { await vscode.commands.executeCommand("kimono.clearToken"); await post({ type: "done" }); }

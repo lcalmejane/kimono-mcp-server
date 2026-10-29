@@ -17,6 +17,7 @@ import { KnowledgeCollaboration } from './collaboration.js';
 import { plannedSearch } from './planned-search.js';
 import { SERVER_INFO } from './server-info.js';
 import { searchCacheFor, type SearchResult } from './search-cache.js';
+import { EMBEDDING_POLICIES } from './embedding-models.js';
 
 export interface RuntimeRequestContext {
   gitProfile?: GitReadProfile | null;
@@ -42,13 +43,27 @@ export const SEARCH_PROPERTIES = {
 
 export const RUNTIME_TOOLS: Tool[] = [
   {
+    name: 'aikido_models',
+    description: 'Models: status, user-confirmed install/configure. ROOT unchanged.',
+    inputSchema: {
+      type: 'object', additionalProperties: false, required: ['operation'],
+      properties: {
+        operation: { type: 'string', enum: ['status', 'install', 'configure'] },
+        model: { type: 'string', enum: ['code', 'multilingual-fast'] },
+        policy: { type: 'string', enum: [...EMBEDDING_POLICIES] },
+        confirmed: { type: 'boolean' },
+      },
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
+  },
+  {
     name: 'aikido_snapshot',
     description: 'Begin/end an immutable snapshot; reuse snapshotId for search/read. TTL/budgets returned by begin.',
     inputSchema: {
       type: 'object', additionalProperties: false, required: ['operation'],
       properties: {
         operation: { type: 'string', enum: ['begin', 'end'] },
-        snapshotId: { type: 'string', description: 'end only; returned by begin.' },
+        snapshotId: { type: 'string', description: 'end: from begin.' },
         paths: { anyOf: [{ type: 'string', minLength: 1 }, { type: 'array', minItems: 1, maxItems: 256, items: { type: 'string', minLength: 1 } }],
           description: 'begin: ROOT-relative subtrees, no globs; omit for all.' },
       },
@@ -57,7 +72,7 @@ export const RUNTIME_TOOLS: Tool[] = [
   },
   {
     name: 'aikido_embed',
-    description: 'info: model identity/preprocessing/hashes, no inference. embed: local query/document vector; input truncates at model token cap. No ROOT/index changes.',
+    description: 'info: identity/preprocessing/hashes. embed: local query/document vector. No ROOT/index writes.',
     inputSchema: {
       type: 'object', additionalProperties: false,
       oneOf: [
@@ -66,7 +81,7 @@ export const RUNTIME_TOOLS: Tool[] = [
       ],
       properties: {
         operation: { type: 'string', enum: ['embed', 'info'], default: 'embed' },
-        text: { type: 'string', minLength: 1, description: 'Nonblank; max 32768 UTF-8 bytes.' },
+        text: { type: 'string', minLength: 1, description: 'Nonblank; <=32768 UTF-8 bytes.' },
         usage: { type: 'string', enum: ['query', 'document'], default: 'query' },
       },
     },
@@ -103,21 +118,21 @@ export const RUNTIME_TOOLS: Tool[] = [
   },
   {
     name: 'aikido_index',
-    description: 'Refresh external indexes, never ROOT. status requires mode=semantic.',
+    description: 'External indexes only. status: mode=semantic.',
     inputSchema: {
       type: 'object', additionalProperties: false, required: ['operation'],
       properties: {
-        operation: { type: 'string', enum: ['update', 'status'] },
+        operation: { type: 'string', enum: ['update', 'rebuild', 'status'] },
         mode: { type: 'string', enum: ['literal', 'semantic', 'all'], default: 'literal' },
-        background: { type: 'boolean', default: false, description: 'Full semantic update only; poll status.' },
+        background: { type: 'boolean', default: false, description: 'Full semantic only; poll status. Rebuild keeps old generation until success.' },
         paths: { anyOf: [{ type: 'string', minLength: 1 }, { type: 'array', minItems: 1, maxItems: 256, items: { type: 'string', minLength: 1 } }],
-          description: 'update: ROOT-relative subtrees/deletions; no globs/traversal.' },
+          description: 'update: relative subtrees/deletions, no globs.' },
       },
     },
   },
   {
     name: 'aikido_git',
-    description: 'AI-KIDO only. infos: guidance. retarget: explicit source URL. sync: read remote knowledge into ROOT, preserving local conflicts. No Git mutations; credentials stay host-managed.',
+    description: 'AI-KIDO: infos, retarget source URL, sync remote knowledge (preserve conflicts). No Git mutation; host credentials.',
     inputSchema: {
       type: 'object', additionalProperties: false, required: ['operation'],
       allOf: [{
@@ -139,7 +154,7 @@ export const RUNTIME_TOOLS: Tool[] = [
   },
   {
     name: 'aikido_collaboration',
-    description: 'AI-KIDO knowledge revisions, not Git. Call guidance first. Personal replicas: status, compare, pinned read, optimistic publish into ROOT; resolve conflicts explicitly. Verified same-ROOT stdio edits: index update instead. HTTP never implies same-ROOT.',
+    description: 'AI-KIDO revisions, not Git. guidance first; compare/read/publish replicas, resolve conflicts. Verified same-ROOT stdio: index update instead (never infer from HTTP).',
     inputSchema: {
       type: 'object', additionalProperties: false, required: ['operation'],
       properties: {
@@ -248,6 +263,15 @@ class RuntimeTools {
 
   private async execute(name: string, input: Record<string, unknown>, context: RuntimeRequestContext = {},
     semanticAvailability?: { error: string; index: unknown }): Promise<string> {
+    if (name === 'aikido_models') {
+      const operation = input.operation;
+      const allowed = operation === 'status' ? ['operation'] : operation === 'install'
+        ? ['operation', 'model', 'confirmed'] : operation === 'configure' ? ['operation', 'policy', 'confirmed'] : [];
+      if (!allowed.length || Object.keys(input).some(key => !allowed.includes(key))) throw new Error('Invalid model operation or parameters.');
+      if (operation === 'status') return JSON.stringify(await this.knowledge.semanticIndex.models());
+      if (operation === 'install') return JSON.stringify(await this.knowledge.semanticIndex.installModel(input.model, input.confirmed));
+      return JSON.stringify(await this.knowledge.semanticIndex.configureModels(input.policy, input.confirmed));
+    }
     if (this.knowledge.config.mode === 'rag' &&
       (name === 'aikido_collaboration' || name === 'aikido_git' && input.operation !== 'infos')) {
       throw new Error('RAG mode is local read-only retrieval: collaboration publication and remote Git sync are AI-KIDO-only. Use client tools for project edits and Git.');
@@ -359,17 +383,18 @@ class RuntimeTools {
     }
     if (name === 'aikido_index') {
       const operation = text(input, 'operation', true);
-      if (operation !== 'update') throw new Error('Only operation=update is available; index sync never mutates the knowledge ROOT');
+      if (operation !== 'update' && operation !== 'rebuild') throw new Error('Only operation=update or rebuild is available; index sync never mutates the knowledge ROOT');
       const mode = input.mode ?? 'literal';
       if (mode !== 'literal' && mode !== 'semantic' && mode !== 'all') throw new Error('Index mode must be literal, semantic or all');
       const paths = synchronizationPaths(input.paths);
+      if (paths && operation !== 'update') throw new Error('paths requires operation=update');
+      if (operation === 'rebuild' && mode !== 'semantic') throw new Error('rebuild requires mode=semantic');
       if (input.background !== undefined && typeof input.background !== 'boolean') throw new Error('background must be boolean');
       if (input.background === true) {
-        if (mode !== 'semantic' || paths) throw new Error('background requires mode=semantic and a full update');
-        this.knowledge.semanticIndex.warmup();
+        if (mode !== 'semantic' || paths) throw new Error('background requires mode=semantic and a full update or rebuild');
+        this.knowledge.semanticIndex.warmup(operation);
         return JSON.stringify(this.knowledge.semanticIndex.status());
       }
-      if (paths && operation !== 'update') throw new Error('paths requires operation=update');
       await this.knowledge.refresh(paths);
       await this.knowledge.vocabulary.refresh();
       const indexes: Record<string, unknown> = {};

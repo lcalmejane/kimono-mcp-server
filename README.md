@@ -21,9 +21,13 @@ Indexing and embeddings run locally; the client may send retrieved passages
 to its configured model provider.
 
 Semantic indexing uses bounded vector batches and balanced short/long batch
-scheduling. On first model use, Kimono benchmarks the CPU and available
-CUDA/CoreML providers, then reuses the fastest measured provider for that server
-session. See [runtime selection and memory settings](docs/local-rag.md#embedding-runtime-and-memory).
+scheduling. Static code and multilingual models use the Rust CPU backend with
+shared memory-mapped tables, without ONNX startup. Auto balanced combines static
+code embeddings with E5 for documents; Auto speed uses static models for both.
+Model downloads and policy changes require separate confirmations. For ONNX
+models, Kimono compares CPU and available CUDA/CoreML providers and reuses the
+fastest measured provider for that session.
+See [models, runtime selection and memory settings](docs/local-rag.md#embedding-runtime-and-memory).
 
 ## Choose how to use Kimono
 

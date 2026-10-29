@@ -20,10 +20,39 @@ type Result<T> = std::result::Result<T, Box<dyn Error>>;
 
 const INDEX_FORMAT_VERSION: &str = "kimono-semantic-v2";
 const CHUNKER_VERSION: &str =
-    "tree-sitter-0.25.10;c0.24.2;cpp0.23.4;go0.25.0;java0.23.5;js0.25.0;py0.25.0;rs0.24.2;ts0.23.2;lines-v4";
-const MAX_CHUNK_CHARS: usize = 500;
+    "tree-sitter-0.25.10;c0.24.2;cpp0.23.4;go0.25.0;java0.23.5;js0.25.0;php0.25.1;py0.25.0;rs0.24.2;ts0.23.2;lines-v7";
+const DEFAULT_CHUNK_CHARS: usize = 500;
 const MAX_TREE_SITTER_BYTES: usize = 1024 * 1024;
 const MAX_SEARCH_CANDIDATES: usize = 4096;
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct PassagePolicy {
+    max_chars: usize,
+}
+
+impl PassagePolicy {
+    fn from_config(config: &serde_json::Value) -> Result<Self> {
+        let max_chars = match config.get("chunk_chars") {
+            None => DEFAULT_CHUNK_CHARS,
+            Some(value) => value
+                .as_u64()
+                .filter(|value| (128..=2048).contains(value))
+                .ok_or("model.json chunk_chars must be an integer between 128 and 2048")?
+                as usize,
+        };
+        Ok(Self { max_chars })
+    }
+
+    fn from_model(model: &Path) -> Result<Self> {
+        Self::from_config(&serde_json::from_slice(&fs::read(
+            model.join("model.json"),
+        )?)?)
+    }
+
+    fn small_fragment_chars(self) -> usize {
+        self.max_chars * 2 / 5
+    }
+}
 
 fn candidate_limit(chunks: usize, limit: usize, filtered: bool) -> usize {
     let requested = if filtered {
@@ -44,6 +73,19 @@ fn requested_device(value: Option<&str>) -> Result<&str> {
 
 fn configure_runtime(model: &Path, device: &str) -> Result<Runtime> {
     let runtime = resources::detect(model, device)?;
+    if model::backend_for(model)? == model::Backend::Model2Vec {
+        if !matches!(device, "auto" | "cpu") {
+            return Err("The Model2Vec static backend runs on CPU; select auto or cpu".into());
+        }
+        eprintln!(
+            "KIMONO_PROGRESS {}",
+            serde_json::json!({"phase":"runtime_configured",
+            "completed":0, "total":0, "executionProvider":"cpu",
+            "backend":"model2vec", "workers":runtime.workers,
+            "threads":runtime.threads, "batch":runtime.batch})
+        );
+        return Ok(runtime);
+    }
     let providers = device::providers(device)?;
     // ONNX Runtime parallelises poorly inside one small-model run; throughput
     // comes from independent sessions (workers), each with a small intra pool.
@@ -131,14 +173,20 @@ fn embed_parallel<E: Embedder>(
                             Ok(vectors) if vectors.len() == batch.len() =>
                                 vectors.into_iter().map(|vector| Some(vector).filter(usable)).collect(),
                             // One bad passage must not discard the batch: retry each one alone.
-                            _ => input.iter().map(|text| match embedder.embed_batch(std::slice::from_ref(text)) {
+                            outcome => {
+                                match outcome {
+                                    Err(error) => eprintln!("kimono-semantic: batch embedding failed; retrying passages individually: {error}"),
+                                    Ok(vectors) => eprintln!("kimono-semantic: batch returned {} vectors for {} passages; retrying individually", vectors.len(), batch.len()),
+                                }
+                                input.iter().map(|text| match embedder.embed_batch(std::slice::from_ref(text)) {
                                 Ok(mut single) if single.len() == 1 => single.pop().filter(usable),
                                 Ok(_) => None,
                                 Err(error) => {
                                     eprintln!("kimono-semantic: passage not embeddable: {error}");
                                     None
                                 }
-                            }).collect(),
+                                }).collect()
+                            },
                         };
                         sender.send(batch.iter().copied().zip(vectors).collect::<Vec<_>>())
                             .map_err(|_| "Embedding result consumer closed")?;
@@ -306,16 +354,21 @@ fn serialized_hash(value: &impl Serialize) -> Result<String> {
 
 fn model_fingerprint(model: &Path) -> Result<String> {
     let mut identity = HashWriter(Sha256::new());
-    for file in ["model.onnx", "tokenizer.json", "model.json"] {
+    let backend = model::backend_for(model)?;
+    identity.write_all(format!("backend={};", backend.as_str()).as_bytes())?;
+    for file in backend.weight_files() {
         std::io::copy(&mut fs::File::open(model.join(file))?, &mut identity)?;
     }
     identity.write_all(INDEX_FORMAT_VERSION.as_bytes())?;
     identity.write_all(CHUNKER_VERSION.as_bytes())?;
-    identity.write_all(b"chunk_chars=500;embsearch-core=0.3.4")?;
+    identity.write_all(
+        format!("default_chunk_chars={DEFAULT_CHUNK_CHARS};small_fragment_ratio=2/5;embsearch-core=0.3.4")
+            .as_bytes(),
+    )?;
     Ok(format!("{:x}", identity.0.finalize()))
 }
 
-fn chunks(documents: Vec<Document>) -> BTreeMap<String, Chunk> {
+fn chunk_documents(documents: Vec<Document>, policy: PassagePolicy) -> BTreeMap<String, Chunk> {
     let mut result = BTreeMap::new();
     for document in documents {
         let code = is_code_source(&document.path);
@@ -324,25 +377,20 @@ fn chunks(documents: Vec<Document>) -> BTreeMap<String, Chunk> {
             .flatten();
         let mut text = String::new();
         let mut start = 1;
-        let mut ordinal = 0;
+        let mut passages = Vec::new();
         // Bound Unicode passages; the tokenizer independently caps tokens.
         let mut emit = |text: &mut String, line: usize| {
             if text.trim().is_empty() {
                 text.clear();
                 return;
             }
-            let id = format!("{}#{ordinal}", document.path);
-            ordinal += 1;
-            result.insert(
-                id,
-                Chunk {
-                    path: document.path.clone(),
-                    kind: document.kind.clone(),
-                    line,
-                    hash: hash(text.as_bytes()),
-                    text: std::mem::take(text),
-                },
-            );
+            passages.push(Chunk {
+                path: document.path.clone(),
+                kind: document.kind.clone(),
+                line,
+                hash: hash(text.as_bytes()),
+                text: std::mem::take(text),
+            });
         };
         for (line, value) in document.content.lines().enumerate() {
             let definition_start = if let Some(lines) = &syntax_lines {
@@ -350,16 +398,23 @@ fn chunks(documents: Vec<Document>) -> BTreeMap<String, Chunk> {
             } else {
                 code && is_definition_start(value)
             };
-            if value.trim().is_empty() || definition_start {
+            if definition_start {
                 emit(&mut text, start);
-                if value.trim().is_empty() {
-                    continue;
+            }
+            if value.trim().is_empty() {
+                if !text.is_empty() {
+                    if text.chars().count() < policy.max_chars {
+                        text.push('\n');
+                    } else {
+                        emit(&mut text, start);
+                    }
                 }
+                continue;
             }
             let mut chars = value.chars().peekable();
             while chars.peek().is_some() {
-                let piece: String = chars.by_ref().take(MAX_CHUNK_CHARS - 1).collect();
-                if text.chars().count() + piece.chars().count() + 1 > MAX_CHUNK_CHARS {
+                let piece: String = chars.by_ref().take(policy.max_chars - 1).collect();
+                if text.chars().count() + piece.chars().count() + 1 > policy.max_chars {
                     emit(&mut text, start);
                 }
                 if text.is_empty() {
@@ -370,8 +425,65 @@ fn chunks(documents: Vec<Document>) -> BTreeMap<String, Chunk> {
             }
         }
         emit(&mut text, start);
+        for (ordinal, chunk) in coalesce_small_chunks(passages, policy)
+            .into_iter()
+            .enumerate()
+        {
+            result.insert(format!("{}#{ordinal}", document.path), chunk);
+        }
     }
     result
+}
+
+fn coalesce_small_chunks(passages: Vec<Chunk>, policy: PassagePolicy) -> Vec<Chunk> {
+    let mut packed: Vec<Chunk> = Vec::new();
+    for mut chunk in passages {
+        if let Some(previous) = packed.last_mut() {
+            let previous_length = previous.text.chars().count();
+            let length = chunk.text.chars().count();
+            let adjacent = previous.line
+                + previous.text.bytes().filter(|&byte| byte == b'\n').count()
+                == chunk.line;
+            if adjacent
+                && previous_length + length <= policy.max_chars
+                && (previous_length < policy.small_fragment_chars()
+                    || length < policy.small_fragment_chars())
+            {
+                previous.text.push_str(&chunk.text);
+                previous.hash = hash(previous.text.as_bytes());
+                continue;
+            }
+            if adjacent && !has_chunk_content(&chunk.text) {
+                // Give a closing-delimiter tail real context without exceeding the cap.
+                if let Some((last_content, _)) = previous
+                    .text
+                    .char_indices()
+                    .rfind(|(_, value)| value.is_alphanumeric() || *value == '_')
+                {
+                    let split = previous.text[..last_content]
+                        .rfind('\n')
+                        .map_or(0, |index| index + 1);
+                    if split > 0
+                        && previous.text[split..].chars().count() + length <= policy.max_chars
+                    {
+                        let tail = previous.text.split_off(split);
+                        chunk.text.insert_str(0, &tail);
+                        chunk.line = previous.line
+                            + previous.text.bytes().filter(|&byte| byte == b'\n').count();
+                        previous.hash = hash(previous.text.as_bytes());
+                    }
+                }
+            }
+        }
+        chunk.hash = hash(chunk.text.as_bytes());
+        packed.push(chunk);
+    }
+    packed
+}
+
+fn has_chunk_content(text: &str) -> bool {
+    text.chars()
+        .any(|value| value.is_alphanumeric() || value == '_')
 }
 
 fn syntax_definition_lines(path: &str, content: &str) -> Option<BTreeSet<usize>> {
@@ -385,6 +497,7 @@ fn syntax_definition_lines(path: &str, content: &str) -> Option<BTreeSet<usize>>
         "go" => tree_sitter_go::LANGUAGE.into(),
         "java" => tree_sitter_java::LANGUAGE.into(),
         "js" | "jsx" | "mjs" => tree_sitter_javascript::LANGUAGE.into(),
+        "php" => tree_sitter_php::LANGUAGE_PHP.into(),
         "py" => tree_sitter_python::LANGUAGE.into(),
         "rs" => tree_sitter_rust::LANGUAGE.into(),
         "ts" => tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
@@ -428,14 +541,19 @@ fn is_syntax_definition(kind: &str) -> bool {
             | "method_definition"
             | "mod_item"
             | "struct_item"
+            | "trait_declaration"
             | "trait_item"
             | "type_alias_declaration"
     )
 }
 
 fn is_code_source(path: &str) -> bool {
+    let extension = Path::new(path)
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(str::to_ascii_lowercase);
     matches!(
-        Path::new(path).extension().and_then(|value| value.to_str()),
+        extension.as_deref(),
         Some(
             "c" | "cc"
                 | "cpp"
@@ -447,6 +565,7 @@ fn is_code_source(path: &str) -> bool {
                 | "js"
                 | "jsx"
                 | "mjs"
+                | "php"
                 | "py"
                 | "rb"
                 | "rs"
@@ -584,22 +703,35 @@ fn execute(
     fingerprint: &str,
     databases: &mut HashMap<PathBuf, CachedDatabase>,
 ) -> Result<serde_json::Value> {
+    let passage_policy = PassagePolicy::from_model(&request.model)?;
     let runtime_info = runtime_info(runtime, selection);
+    eprintln!(
+        "KIMONO_PROGRESS {}",
+        serde_json::json!({
+            "phase":"runtime_configured", "completed":0, "total":0,
+            "runtime": runtime_info
+        })
+    );
     if request.operation == "info" {
         let spec = ModelSpec::from_json(&fs::read(request.model.join("model.json"))?)?;
+        let backend = model::backend_for(&request.model)?;
         let mut files = BTreeMap::new();
-        for file in ["model.onnx", "tokenizer.json", "model.json"] {
+        for file in backend.weight_files() {
             let mut writer = HashWriter(Sha256::new());
             std::io::copy(&mut fs::File::open(request.model.join(file))?, &mut writer)?;
             files.insert(file, format!("{:x}", writer.0.finalize()));
         }
         return Ok(serde_json::json!({
             "engine": "embsearch-core", "version": "0.3.4",
+            "backend": backend.as_str(),
+            "truncation": backend != model::Backend::Model2Vec,
             "model": embedder.model_id(), "name": spec.name,
             "dimensions": embedder.dim(), "normalized": spec.normalize,
             "maxTokens": spec.max_tokens, "pooling": spec.pooling,
             "queryPrefix": spec.query_prefix, "documentPrefix": spec.document_prefix,
             "indexVersion": INDEX_FORMAT_VERSION, "chunkerVersion": CHUNKER_VERSION,
+            "passageChars": passage_policy.max_chars,
+            "smallFragmentChars": passage_policy.small_fragment_chars(),
             "sha256": files,
             "runtime": runtime_info,
             "compatibility": "Reuse model as embeddingModel for vector search. Dimensions and model labels alone cannot prove vector provenance; retain these file hashes and matching preprocessing settings to reproduce embeddings."
@@ -609,7 +741,9 @@ fn execute(
         return Ok(serde_json::json!({
             "engine": "embsearch-core", "version": "0.3.4",
             "model": embedder.model_id(), "fingerprint": fingerprint,
-            "indexVersion": INDEX_FORMAT_VERSION, "chunkerVersion": CHUNKER_VERSION
+            "indexVersion": INDEX_FORMAT_VERSION, "chunkerVersion": CHUNKER_VERSION,
+            "passageChars": passage_policy.max_chars,
+            "smallFragmentChars": passage_policy.small_fragment_chars()
         }));
     }
     if request.operation == "embed" {
@@ -630,8 +764,10 @@ fn execute(
         if vector.len() != embedder.dim() || vector.iter().any(|value| !value.is_finite()) {
             return Err("Invalid embedding vector".into());
         }
+        let backend = model::backend_for(&request.model)?;
         return Ok(serde_json::json!({
             "engine": "embsearch-core", "version": "0.3.4",
+            "backend": backend.as_str(), "truncation": backend != model::Backend::Model2Vec,
             "model": embedder.model_id(), "usage": usage,
             "dimensions": embedder.dim(), "normalized": spec.normalize,
             "maxTokens": spec.max_tokens, "vector": vector
@@ -812,7 +948,7 @@ fn execute(
                 }
         })
         .collect();
-    current.extend(chunks(request.documents));
+    current.extend(chunk_documents(request.documents, passage_policy));
     let reuse = previous.model == fingerprint
         && !previous.generation.is_empty()
         && request.operation != "rebuild";
@@ -1183,6 +1319,65 @@ fn main() {
 mod tests {
     use super::*;
 
+    const MAX_CHUNK_CHARS: usize = 750;
+
+    fn chunks(documents: Vec<Document>) -> BTreeMap<String, Chunk> {
+        chunk_documents(
+            documents,
+            PassagePolicy {
+                max_chars: MAX_CHUNK_CHARS,
+            },
+        )
+    }
+
+    #[test]
+    fn passage_policy_is_model_specific_and_rejects_invalid_limits() {
+        assert_eq!(
+            PassagePolicy::from_config(&serde_json::json!({}))
+                .unwrap()
+                .max_chars,
+            500
+        );
+        for (limit, threshold) in [(384, 153), (500, 200), (750, 300)] {
+            let policy =
+                PassagePolicy::from_config(&serde_json::json!({"chunk_chars": limit})).unwrap();
+            assert_eq!(policy.max_chars, limit);
+            assert_eq!(policy.small_fragment_chars(), threshold);
+            let content = "A paragraph about indexing and local code retrieval.\n\n".repeat(100);
+            let chunks = chunk_documents(
+                vec![Document {
+                    path: "notes.txt".into(),
+                    kind: "knowledge".into(),
+                    content: content.clone(),
+                }],
+                policy,
+            );
+            assert!(chunks
+                .values()
+                .all(|chunk| chunk.text.chars().count() <= limit));
+            let mut ordered: Vec<_> = chunks.iter().collect();
+            ordered.sort_by_key(|(id, _)| id.rsplit_once('#').unwrap().1.parse::<usize>().unwrap());
+            assert_eq!(
+                ordered
+                    .iter()
+                    .map(|(_, chunk)| chunk.text.as_str())
+                    .collect::<String>(),
+                content
+            );
+        }
+        for value in [
+            serde_json::json!(null),
+            serde_json::json!("750"),
+            serde_json::json!(127),
+            serde_json::json!(2049),
+            serde_json::json!(750.5),
+        ] {
+            assert!(
+                PassagePolicy::from_config(&serde_json::json!({"chunk_chars": value})).is_err()
+            );
+        }
+    }
+
     #[test]
     fn hot_index_estimate_accounts_for_vectors_and_corpus_metadata() {
         let chunk = Chunk {
@@ -1207,17 +1402,17 @@ mod tests {
         let result = chunks(vec![Document {
             path: "prompts/doc.md".into(),
             kind: "knowledge".into(),
-            content: format!("{}\nsecond line\n", "é".repeat(700)),
+            content: format!("{}\nsecond line\n", "é".repeat(1000)),
         }]);
         assert!(result.len() >= 2);
         assert!(result
             .values()
-            .all(|chunk| chunk.text.chars().count() <= 500));
+            .all(|chunk| chunk.text.chars().count() <= MAX_CHUNK_CHARS));
         assert!(result.values().all(|chunk| chunk.line > 0));
         let lines = chunks(vec![Document {
             path: "lines.md".into(),
             kind: "knowledge".into(),
-            content: format!("{}\nsecond line\n", "a".repeat(499)),
+            content: format!("{}\nsecond line\n", "a".repeat(MAX_CHUNK_CHARS - 1)),
         }]);
         assert!(lines
             .values()
@@ -1227,17 +1422,49 @@ mod tests {
             kind: "knowledge".into(),
             content: "fn first() {\n    return 1;\n}\npub fn second() {\n    return 2;\n}".into(),
         }]);
-        assert!(code
-            .values()
-            .any(|chunk| chunk.text.contains("fn first()")
-                && !chunk.text.contains("pub fn second()")));
+        assert_eq!(code.len(), 1);
         assert!(code
             .values()
             .any(|chunk| chunk.text.contains("pub fn second()")));
     }
 
     #[test]
-    fn tree_sitter_boundaries_split_supported_languages_at_definitions() {
+    fn blank_lines_do_not_multiply_embedding_work() {
+        let paragraph = "A paragraph about local retrieval, indexing and project search.";
+        for path in ["notes.md", "notes.txt"] {
+            let result = chunks(vec![Document {
+                path: path.into(),
+                kind: "knowledge".into(),
+                content: format!("{paragraph}\n\n").repeat(100),
+            }]);
+            assert!(
+                result.len() <= 10,
+                "excessive chunks for {path}: {}",
+                result.len()
+            );
+            assert_eq!(
+                result
+                    .values()
+                    .map(|chunk| chunk.text.matches(paragraph).count())
+                    .sum::<usize>(),
+                100
+            );
+            for chunk in result.values() {
+                assert!(chunk.text.chars().count() <= MAX_CHUNK_CHARS);
+                assert_eq!(chunk.line % 2, 1);
+            }
+        }
+        let result = chunks(vec![Document {
+            path: "notes.txt".into(),
+            kind: "knowledge".into(),
+            content: "first\n\nthird\n".into(),
+        }]);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result.values().next().unwrap().text, "first\n\nthird\n");
+    }
+
+    #[test]
+    fn tree_sitter_detects_boundaries_and_retains_small_definitions_when_coalesced() {
         let cases = [
             (
                 "src/lib.rs",
@@ -1282,6 +1509,18 @@ mod tests {
                 3,
             ),
             (
+                "src/lib.php",
+                "<?php\nclass Sample {\n    public function first() { return 1; }\n    public function second() { return 2; }\n}",
+                "public function second()",
+                4,
+            ),
+            (
+                "src/lib.PHP",
+                "<?php\nnamespace App;\ntrait Sample {\n    public function first() { return 1; }\n    public function second() { return 2; }\n}",
+                "public function second()",
+                5,
+            ),
+            (
                 "src/lib.js",
                 "function first() { return 1; }\nfunction second() { return 2; }",
                 "function second()",
@@ -1289,19 +1528,150 @@ mod tests {
             ),
         ];
         for (path, content, second_definition, line) in cases {
+            assert!(is_code_source(path), "not recognized as code: {path}");
+            assert!(
+                syntax_definition_lines(path, content)
+                    .unwrap()
+                    .contains(&line),
+                "missing Tree-sitter definition for {path}"
+            );
             let result = chunks(vec![Document {
                 path: path.into(),
                 kind: "knowledge".into(),
                 content: content.into(),
             }]);
+            assert_eq!(result.len(), 1, "small definitions not packed for {path}");
+            let chunk = result.values().next().unwrap();
             assert!(
-                result.values().any(|chunk| {
-                    chunk.text.contains(second_definition)
-                        && chunk.line == line
-                        && !chunk.text.contains("first()")
-                }),
-                "missing syntax boundary for {path}"
+                chunk.text.contains(second_definition),
+                "missing definition for {path}"
             );
+            assert_eq!(chunk.line, 1, "wrong packed source line for {path}");
+            assert_eq!(chunk.text.trim_end(), content, "lost source for {path}");
+        }
+    }
+
+    #[test]
+    fn substantial_definitions_remain_separate_and_small_symbols_are_retained() {
+        let body = format!("    // {}\n", "explanation ".repeat(25));
+        let content = format!("fn first() {{\n{body}}}\nfn second() {{\n{body}}}\n");
+        let result = chunks(vec![Document {
+            path: "src/lib.rs".into(),
+            kind: "knowledge".into(),
+            content,
+        }]);
+        assert_eq!(result.len(), 2);
+        assert!(result["src/lib.rs#0"].text.contains("fn first()"));
+        assert!(!result["src/lib.rs#0"].text.contains("fn second()"));
+        assert_eq!(result["src/lib.rs#1"].line, 4);
+
+        let content = "import { x } from './x';\n\n// Keep this explanation.\nexport type Id = string;\nexport const zero = 0;\nexport const disabled = false;\n";
+        let result = chunks(vec![Document {
+            path: "src/types.ts".into(),
+            kind: "knowledge".into(),
+            content: content.into(),
+        }]);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result["src/types.ts#0"].text, content);
+        assert_eq!(result["src/types.ts#0"].hash, hash(content.as_bytes()));
+    }
+
+    #[test]
+    fn many_tiny_definitions_share_bounded_passages_without_losing_symbols() {
+        let content: String = (0..100)
+            .map(|index| format!("export function symbol_{index}() {{ return {index}; }}\n"))
+            .collect();
+        let result = chunks(vec![Document {
+            path: "src/symbols.ts".into(),
+            kind: "knowledge".into(),
+            content: content.clone(),
+        }]);
+        assert!(
+            result.len() <= 7,
+            "tiny definitions fragmented into {} passages",
+            result.len()
+        );
+        for index in 0..100 {
+            let definition = format!("export function symbol_{index}()");
+            assert_eq!(
+                result
+                    .values()
+                    .map(|chunk| chunk.text.matches(&definition).count())
+                    .sum::<usize>(),
+                1
+            );
+        }
+        let lines: Vec<_> = content.lines().collect();
+        for chunk in result.values() {
+            assert_eq!(chunk.text.lines().next().unwrap(), lines[chunk.line - 1]);
+            assert!(chunk.text.chars().count() <= MAX_CHUNK_CHARS);
+        }
+    }
+
+    #[test]
+    fn closing_delimiters_get_context_without_dropping_source_or_exceeding_limit() {
+        let content = format!("{}\n{}\n}}\n", "a".repeat(398), "b".repeat(350));
+        let result = chunks(vec![Document {
+            path: "notes.txt".into(),
+            kind: "knowledge".into(),
+            content: content.clone(),
+        }]);
+        assert_eq!(result.len(), 2);
+        assert_eq!(result["notes.txt#0"].line, 1);
+        assert_eq!(result["notes.txt#1"].line, 2);
+        assert_eq!(
+            format!(
+                "{}{}",
+                result["notes.txt#0"].text, result["notes.txt#1"].text
+            ),
+            content
+        );
+        for chunk in result.values() {
+            assert!(has_chunk_content(&chunk.text));
+            assert!(chunk.text.chars().count() <= MAX_CHUNK_CHARS);
+            assert_eq!(chunk.hash, hash(chunk.text.as_bytes()));
+        }
+        let result = chunks(vec![Document {
+            path: "symbols.txt".into(),
+            kind: "knowledge".into(),
+            content: "{}\n🙂\n---\n".into(),
+        }]);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result["symbols.txt#0"].text, "{}\n🙂\n---\n");
+    }
+
+    #[test]
+    fn chunk_packing_preserves_unicode_source_order_and_line_offsets() {
+        let content = format!(
+            "\n{}\n\n{}\nlast line\n",
+            "é".repeat(1600),
+            "界".repeat(300)
+        );
+        let result = chunks(vec![Document {
+            path: "unicode.txt".into(),
+            kind: "knowledge".into(),
+            content: content.clone(),
+        }]);
+        let mut ordered: Vec<_> = result.iter().collect();
+        ordered.sort_by_key(|(id, _)| id.rsplit_once('#').unwrap().1.parse::<usize>().unwrap());
+        let joined: String = ordered
+            .iter()
+            .map(|(_, chunk)| chunk.text.as_str())
+            .collect();
+        assert_eq!(
+            joined
+                .chars()
+                .filter(|value| !value.is_whitespace())
+                .collect::<String>(),
+            content
+                .chars()
+                .filter(|value| !value.is_whitespace())
+                .collect::<String>()
+        );
+        let lines: Vec<_> = content.lines().collect();
+        for (_, chunk) in ordered {
+            assert!(chunk.text.chars().count() <= MAX_CHUNK_CHARS);
+            assert!(lines[chunk.line - 1].contains(chunk.text.lines().next().unwrap()));
         }
     }
 

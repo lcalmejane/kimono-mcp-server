@@ -20,7 +20,7 @@ const createTransport = options => {
 try {
   const pkg = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'));
   const target = `${process.platform}-${process.arch}`;
-  const archive = path.join(root, 'vscode', `kimono-rag-mcp-${pkg.version}-${target}.vsix`);
+  const archive = path.resolve(process.env.KIMONO_VSIX_OUTPUT ?? path.join(root, 'vscode', `kimono-rag-mcp-${pkg.version}-${target}.vsix`));
   const extracted = path.join(scratch, 'unpacked');
   await mkdir(extracted);
   // Test the installed archive, including ZIP permissions, not the build staging tree.
@@ -34,7 +34,7 @@ try {
   await mkdir(path.join(knowledge, 'prompts'), { recursive: true });
   await writeFile(path.join(knowledge, 'prompts/index.md'), '# Knowledge\n\nKimono integration distribution evidence.\n');
   let provider;
-  const settings = { corpusMode: 'aikido' };
+  const settings = { corpusMode: 'aikido', embeddingPolicy: 'e5' };
   const noop = () => ({ dispose() {} });
   const uri = file => ({ scheme: 'file', fsPath: file });
   const vscode = {
@@ -67,7 +67,7 @@ try {
   const client = new Client({ name: 'kimono-vsix-smoke', version: '1.0.0' });
   await client.connect(transport);
   const tools = await client.listTools();
-  for (const name of ['aikido', 'aikido_snapshot', 'aikido_search', 'aikido_embed', 'aikido_collaboration']) {
+  for (const name of ['aikido', 'aikido_models', 'aikido_snapshot', 'aikido_search', 'aikido_embed', 'aikido_collaboration']) {
     assert.ok(tools.tools.some(tool => tool.name === name), `Missing tool ${name}`);
   }
   const status = await client.callTool({ name: 'aikido_root', arguments: { operation: 'status' } });
@@ -78,6 +78,15 @@ try {
   assert.equal(embeddingData.dimensions, 384);
   assert.equal(embeddingData.vector.length, 384);
   assert.ok(embeddingData.vector.every(Number.isFinite));
+  const catalogue = await client.callTool({ name: 'aikido_models', arguments: { operation: 'status' } });
+  assert.ok(!catalogue.isError, JSON.stringify(catalogue));
+  const models = JSON.parse(catalogue.content.find(item => item.type === 'text').text);
+  assert.equal(models.requestedPolicy, 'e5');
+  assert.equal(models.models.find(model => model.id === 'code').installed, false);
+  assert.equal(models.models.find(model => model.id === 'multilingual-fast').installed, false);
+  const refused = await client.callTool({ name: 'aikido_models', arguments: { operation: 'install', model: 'code' } });
+  assert.equal(refused.isError, true, 'packaged server never infers download consent');
+  assert.ok((await readFile(path.join(stage, 'management/kimono.html'), 'utf8')).includes('model-actions.js'));
   const snapshot = await client.callTool({ name: 'aikido_snapshot', arguments: { operation: 'begin' } });
   assert.ok(!snapshot.isError, JSON.stringify(snapshot));
   const snapshotData = JSON.parse(snapshot.content.find(item => item.type === 'text').text);

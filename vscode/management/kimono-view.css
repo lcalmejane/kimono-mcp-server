@@ -24,4 +24,7 @@
 .kv-output pre,.kv-card pre{white-space:pre-wrap;font-family:var(--vscode-editor-font-family,monospace);font-size:.9em;max-height:12rem;overflow:auto;background:var(--kv-code);padding:6px;margin:4px 0 10px}
 .kv-output details{border:1px solid var(--kv-border);border-radius:8px;margin:10px 0;padding:10px}.kv-output summary{cursor:pointer;font-weight:600}
 .kv-footer{margin-top:24px}
+.kv-slot-models button,.kv-slot-models select,.kv-slot-models summary{min-height:28px;max-width:100%;box-sizing:border-box}
+.kv-slot-models summary,.kv-slot-models p{overflow-wrap:anywhere}
+.kv-slot-models :is(button,select,summary):focus-visible{outline:2px solid var(--vscode-focusBorder,var(--kv-accent));outline-offset:2px}
 @media(max-width:520px){.kv-header h1,.kv-header h2{font-size:20px}.kv dl{grid-template-columns:1fr}.kv-card label.kv-inline{flex-wrap:wrap}}

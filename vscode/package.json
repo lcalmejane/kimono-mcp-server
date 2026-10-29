@@ -2,96 +2,211 @@
   "name": "kimono-rag-mcp",
   "displayName": "Kimono RAG MCP",
   "description": "Local RAG for code and documentation with lexical and semantic search over MCP.",
-  "version": "0.9.0",
+  "version": "0.9.1",
   "publisher": "ai-kido",
   "license": "MIT",
   "repository": {
     "type": "git",
     "url": "https://github.com/lcalmejane/kimono-mcp-server.git"
   },
-  "engines": { "vscode": "^1.106.0" },
-  "categories": ["AI", "Machine Learning", "Other"],
-  "keywords": ["mcp", "rag", "semantic search", "code search", "local indexing"],
+  "engines": {
+    "vscode": "^1.106.0"
+  },
+  "categories": [
+    "AI",
+    "Machine Learning",
+    "Other"
+  ],
+  "keywords": [
+    "mcp",
+    "rag",
+    "semantic search",
+    "code search",
+    "local indexing"
+  ],
   "icon": "media/icon.png",
-  "galleryBanner": { "color": "#0f1220", "theme": "dark" },
+  "galleryBanner": {
+    "color": "#0f1220",
+    "theme": "dark"
+  },
   "main": "./extension.cjs",
-  "files": ["extension.cjs", "native.cjs", "stdio.cjs", "panel.cjs", "mcp-client.cjs", "search.cjs", "status.cjs", "management/**", "media/**", "native/**", "runtime/**", "server/**", "README.md", "LICENSE", "THIRD_PARTY_NOTICES.md"],
-  "extensionKind": ["workspace"],
-  "activationEvents": ["onStartupFinished"],
+  "files": [
+    "extension.cjs",
+    "native.cjs",
+    "stdio.cjs",
+    "panel.cjs",
+    "mcp-client.cjs",
+    "search.cjs",
+    "status.cjs",
+    "management/**",
+    "media/**",
+    "native/**",
+    "runtime/**",
+    "server/**",
+    "README.md",
+    "LICENSE",
+    "THIRD_PARTY_NOTICES.md"
+  ],
+  "extensionKind": [
+    "workspace"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
   "capabilities": {
     "untrustedWorkspaces": {
       "supported": false,
       "description": "Kimono requires a trusted workspace before starting a knowledge server."
     },
-    "virtualWorkspaces": { "supported": false }
+    "virtualWorkspaces": {
+      "supported": false
+    }
   },
   "contributes": {
     "mcpServerDefinitionProviders": [
-      { "id": "kimono.mcp", "label": "Kimono MCP" }
+      {
+        "id": "kimono.mcp",
+        "label": "Kimono MCP"
+      }
     ],
     "viewsContainers": {
       "activitybar": [
-        { "id": "kimono", "title": "Kimono MCP", "icon": "media/kimono.svg" }
+        {
+          "id": "kimono",
+          "title": "Kimono MCP",
+          "icon": "media/kimono.svg"
+        }
       ]
     },
     "views": {
       "kimono": [
-        { "id": "kimono.status", "name": "Kimono MCP", "icon": "media/kimono.svg" }
+        {
+          "id": "kimono.status",
+          "name": "Kimono MCP",
+          "icon": "media/kimono.svg"
+        }
       ]
     },
     "menus": {
       "view/title": [
-        { "command": "kimono.openPanel", "when": "view == kimono.status", "group": "navigation" }
+        {
+          "command": "kimono.openPanel",
+          "when": "view == kimono.status",
+          "group": "navigation"
+        }
       ]
     },
     "commands": [
-      { "command": "kimono.openPanel", "title": "Kimono: Open Management Panel", "icon": "media/kimono.svg" },
-      { "command": "kimono.testSearch", "title": "Kimono: Test a Search" },
-      { "command": "kimono.startIndex", "title": "Kimono: Start Indexing Now" },
-      { "command": "kimono.configure", "title": "Kimono: Open Settings" },
-      { "command": "kimono.setToken", "title": "Kimono: Set Remote Bearer Token" },
-      { "command": "kimono.clearToken", "title": "Kimono: Clear Remote Bearer Token" }
+      {
+        "command": "kimono.openPanel",
+        "title": "Kimono: Open Management Panel",
+        "icon": "media/kimono.svg"
+      },
+      {
+        "command": "kimono.testSearch",
+        "title": "Kimono: Test a Search"
+      },
+      {
+        "command": "kimono.startIndex",
+        "title": "Kimono: Start Indexing Now"
+      },
+      {
+        "command": "kimono.configure",
+        "title": "Kimono: Open Settings"
+      },
+      {
+        "command": "kimono.setToken",
+        "title": "Kimono: Set Remote Bearer Token"
+      },
+      {
+        "command": "kimono.clearToken",
+        "title": "Kimono: Clear Remote Bearer Token"
+      }
     ],
     "configuration": {
       "title": "Kimono MCP",
       "properties": {
         "kimono.logLevel": {
           "type": "string",
-          "enum": ["error", "debug"],
+          "enum": [
+            "error",
+            "debug"
+          ],
           "default": "error",
           "scope": "machine",
           "description": "Errors only by default, without trace files. Debug enables detailed stderr diagnostics; native diagnostics are rate-limited per operation. The host controls log retention."
         },
+        "kimono.embeddingPolicy": {
+          "type": "string",
+          "enum": [
+            "auto-balanced",
+            "auto-speed",
+            "code",
+            "multilingual-fast",
+            "e5"
+          ],
+          "default": "auto-balanced",
+          "scope": "machine",
+          "description": "Initial embedded-server embedding policy only. The server's saved per-root policy takes precedence. Change active policy with confirmation in the Kimono panel. Remote servers ignore this local setting; downloads always require separate consent."
+        },
         "kimono.semanticDevice": {
           "type": "string",
-          "enum": ["auto", "cpu", "cuda", "coreml"],
+          "enum": [
+            "auto",
+            "cpu",
+            "cuda",
+            "coreml"
+          ],
           "default": "auto",
           "scope": "machine",
           "description": "Auto benchmarks CPU and available CUDA/CoreML providers once per local server session and selects the fastest measured embedding provider. Explicit providers fail if unavailable. An ONNX runtime with the requested provider is required."
         },
         "kimono.semanticCpuPercent": {
-          "type": "integer", "minimum": 1, "maximum": 100, "default": 80, "scope": "machine",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100,
+          "default": 80,
+          "scope": "machine",
           "description": "Per-process automatic CPU budget, respecting the host/container CPU allocation. Not a hard CPU utilization limit."
         },
         "kimono.semanticMemoryPercent": {
-          "type": "integer", "minimum": 1, "maximum": 100, "default": 80, "scope": "machine",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100,
+          "default": 80,
+          "scope": "machine",
           "description": "Percentage of currently available host/container RAM used to plan model sessions and batches. Estimates are not a hard memory limit or a GPU VRAM budget."
         },
         "kimono.semanticWorkers": {
-          "type": "integer", "minimum": 0, "maximum": 32, "default": 0, "scope": "machine",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 32,
+          "default": 0,
+          "scope": "machine",
           "description": "Parallel CPU model sessions. 0 = size to CPU and memory budgets. Accelerators use one session."
         },
         "kimono.semanticThreads": {
-          "type": "integer", "minimum": 0, "maximum": 32, "default": 0, "scope": "machine",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 32,
+          "default": 0,
+          "scope": "machine",
           "description": "ONNX inference threads. 0 = one thread per CPU session, using independent workers for parallelism."
         },
         "kimono.semanticBatch": {
-          "type": "integer", "minimum": 0, "maximum": 256, "default": 0, "scope": "machine",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 256,
+          "default": 0,
+          "scope": "machine",
           "description": "Passages per embedding batch. 0 = size to available RAM after accounting for model sessions."
         },
         "kimono.corpusMode": {
           "type": "string",
-          "enum": ["rag", "aikido"],
+          "enum": [
+            "rag",
+            "aikido"
+          ],
           "default": "rag",
           "scope": "machine",
           "description": "RAG (default) indexes source code and documentation locally. Select aikido only for a compatible knowledge base with an index entry point. Both modes respect .gitignore and dependency/build exclusions."
@@ -104,7 +219,11 @@
         },
         "kimono.mode": {
           "type": "string",
-          "enum": ["embedded", "remote", "disabled"],
+          "enum": [
+            "embedded",
+            "remote",
+            "disabled"
+          ],
           "default": "embedded",
           "scope": "machine",
           "description": "Embedded uses the bundled local server. Remote connects to an existing HTTP MCP. Disabled removes the definitions."

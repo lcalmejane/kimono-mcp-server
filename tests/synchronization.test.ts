@@ -123,7 +123,8 @@ describe.skipIf(!process.env.KIMONO_MODEL_DIR)('real engines: targeted synchroni
     for (const operation of ['status']) {
       await expect(runtime.call('aikido_index', { operation, mode: 'semantic', paths: ['prompts'] })).rejects.toThrow('paths');
     }
-    for (const operation of ['stats', 'compact', 'rebuild']) {
+    await expect(runtime.call('aikido_index', { operation: 'rebuild', mode: 'semantic', paths: ['prompts'] })).rejects.toThrow('paths requires operation=update');
+    for (const operation of ['stats', 'compact']) {
       await expect(runtime.call('aikido_index', { operation, mode: 'semantic', paths: ['prompts'] })).rejects.toThrow('Only operation=update');
     }
   }, 120_000);

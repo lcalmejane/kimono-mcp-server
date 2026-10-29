@@ -12,7 +12,7 @@ type Branch = { mode: string; status: 'ok' | 'not-ready' | 'error'; ms: number; 
   results: RankedHit[]; error?: string; index?: unknown; model?: string; candidatesTruncated?: boolean;
   chunks?: number; embedded?: number; changes?: unknown; candidates?: number };
 const round = (value: number) => Math.round(value * 10000) / 10000;
-const codeFile = /\.(?:c|cc|cpp|cs|go|h|hpp|java|js|jsx|mjs|py|rb|rs|scala|sh|swift|ts|tsx|vue)$/i;
+const codeFile = /\.(?:c|cc|cpp|cs|go|h|hpp|java|js|jsx|mjs|php|py|rb|rs|scala|sh|swift|ts|tsx|vue)$/i;
 
 function codeNoisePenalty(file: string, excerpt: string, plan: QueryPlan): number {
   const requestedNoise = [...plan.terms, ...identifierTerms(plan.original)]
@@ -23,7 +23,7 @@ function codeNoisePenalty(file: string, excerpt: string, plan: QueryPlan): numbe
   }
   if (/(?:^|\/)generated(?:\/|$)|\.generated\.[^.]+$/i.test(file)) return -0.2;
   const basename = path.posix.basename(file);
-  if (/^index\.(?:c|cc|cpp|cs|go|h|hpp|java|js|jsx|mjs|py|rb|rs|scala|sh|swift|ts|tsx|vue)$/i.test(basename)
+  if (/^index\.(?:c|cc|cpp|cs|go|h|hpp|java|js|jsx|mjs|php|py|rb|rs|scala|sh|swift|ts|tsx|vue)$/i.test(basename)
     && excerpt.split('\n').filter(line => line.trim()).every(line => /^\s*(?:export|import|from|use)\b/.test(line))) {
     return -0.12;
   }

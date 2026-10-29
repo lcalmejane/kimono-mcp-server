@@ -1,15 +1,88 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
 import { AikidoKnowledgeBase } from '../src/knowledge.js';
 import { corpusConfig } from '../src/corpus-config.js';
 import { runtimeFor } from '../src/runtime-tools.js';
+import { shutdownSemanticWorkers } from '../src/semantic-worker.js';
 
 const scratch: string[] = [];
 afterEach(async () => {
   vi.unstubAllEnvs();
   await Promise.all(scratch.splice(0).map(directory => rm(directory, { recursive: true, force: true })));
 });
+
+it('vectorizes and searches PHP, Markdown and plain text with the persistent native worker', async () => {
+  const parent = await mkdtemp(path.join(process.cwd(), '.local-runtime-rag-content-'));
+  scratch.push(parent);
+  vi.stubEnv('KIMONO_CACHE_DIR', path.join(parent, 'cache'));
+  vi.stubEnv('KIMONO_SEMANTIC_PERSISTENT_WORKER', 'true');
+  vi.stubEnv('KIMONO_SEMANTIC_DEVICE', 'cpu');
+  const root = path.join(parent, 'repo');
+  await mkdir(root);
+  const files = {
+    'service.php': '<?php\nclass Authentication {\n    public function authenticate() { return true; }\n}',
+    'guide.md': '# Authentication guide\n\nCheck credentials before granting access.',
+    'notes.txt': 'Rotate credentials and keep passwords in a vault.',
+  };
+  for (const [file, content] of Object.entries(files)) await writeFile(path.join(root, file), content);
+  const knowledge = new AikidoKnowledgeBase(root, false, corpusConfig());
+  await knowledge.initialize();
+  try {
+    const updated = await knowledge.semanticIndex.run('update');
+    expect(updated.changes.added).toEqual(Object.keys(files).sort());
+    expect(updated.embedded).toBeGreaterThanOrEqual(3);
+    expect(updated.skippedChunks ?? 0).toBe(0);
+    expect(knowledge.semanticIndex.status().runtime).toMatchObject({ executionProvider: 'cpu' });
+    for (const file of Object.keys(files)) {
+      const result = await knowledge.semanticIndex.run('search', {
+        query: 'Authentication credentials passwords', paths: [file], limit: 1,
+      });
+      expect(result.results[0].path).toBe(file);
+      expect(result.results[0].score).toBeGreaterThan(0);
+      expect(result.embedded).toBe(0);
+    }
+  } finally { await shutdownSemanticWorkers(); }
+}, 60_000);
+
+it('packs small code definitions without dropping source and reuses the resulting native index', async () => {
+  const parent = await mkdtemp(path.join(process.cwd(), '.local-runtime-rag-packing-'));
+  scratch.push(parent);
+  vi.stubEnv('KIMONO_CACHE_DIR', path.join(parent, 'cache'));
+  vi.stubEnv('KIMONO_SEMANTIC_PERSISTENT_WORKER', 'true');
+  vi.stubEnv('KIMONO_SEMANTIC_DEVICE', 'cpu');
+  const root = path.join(parent, 'repo');
+  await mkdir(root);
+  const content = Array.from({ length: 20 }, (_, index) =>
+    `export function symbol_${index}() { return ${index}; }\n`).join('');
+  await writeFile(path.join(root, 'symbols.ts'), content);
+  const knowledge = new AikidoKnowledgeBase(root, false, corpusConfig({ mode: 'rag' }));
+  await knowledge.initialize();
+  try {
+    expect(await knowledge.semanticIndex.info()).toMatchObject({
+      passageChars: 500, smallFragmentChars: 200,
+    });
+    const updated = await knowledge.semanticIndex.run('update');
+    expect(updated.chunkerVersion).toContain('lines-v7');
+    expect(updated.chunks).toBeLessThanOrEqual(3);
+    expect(updated.embedded).toBe(updated.chunks);
+    expect(updated.skippedChunks ?? 0).toBe(0);
+    const manifest = JSON.parse(await readFile(
+      path.join(knowledge.searchIndex.directory, 'semantic/state.json'), 'utf8')) as {
+      chunks: Record<string, { line: number; text: string }>;
+    };
+    const chunks = Object.entries(manifest.chunks).sort(([a], [b]) =>
+      Number(a.slice(a.lastIndexOf('#') + 1)) - Number(b.slice(b.lastIndexOf('#') + 1)));
+    expect(chunks.map(([, chunk]) => chunk.text).join('')).toBe(content);
+    for (const [, chunk] of chunks) {
+      expect([...chunk.text].length).toBeLessThanOrEqual(500);
+      expect(content.split('\n')[chunk.line - 1]).toBe(chunk.text.split('\n')[0]);
+    }
+    const reused = await knowledge.semanticIndex.run('update');
+    expect(reused.embedded).toBe(0);
+    expect(reused.chunks).toBe(updated.chunks);
+  } finally { await shutdownSemanticWorkers(); }
+}, 60_000);
 
 it('searches native lexical and semantic generic code, including scoped snapshots without AI-KIDO entry points', async () => {
   const parent = await mkdtemp(path.join(process.cwd(), '.local-runtime-rag-'));

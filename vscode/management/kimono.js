@@ -5,6 +5,8 @@ const script = document.currentScript;
 const view = KimonoView.create(document.getElementById("kimono"), {
   icon: script.dataset.icon, origin: "VS Code", language: document.documentElement.lang,
   onIndexStart: folder => send({ action: "indexStart", folder }, view.t("indexing")),
+  onIndexRebuild: folder => send({ action: "indexRebuild", folder }, view.t("indexing")),
+  onModelsRequest: (input, folder) => send({ action: "models", input, folder }),
   onSearch: ({ folder, input }) => send({ action: "search", folder, input }, text.searchingPrivate),
   onWebsite: () => vscode.postMessage({ action: "website" }),
 });
@@ -144,6 +146,8 @@ function render(value) {
     element.dataset.locked = String(action === "settings" ? false : !value.trusted || Boolean(action && value.actions[action] === false));
   });
   const available = value.trusted && value.settings.mode === "embedded" && value.folders.length > 0;
+  view.configureModels({ folders: value.settings.mode === "embedded" ? value.folders : [],
+    available: value.trusted && (available || value.settings.mode === "remote") });
   view.setEnabled(available);
   view.configureSearch({ folders: value.folders, kinds: value.settings.corpusMode === "aikido", available,
     reason: statusMessage(value) ?? text.searchEmbedded });
@@ -163,6 +167,7 @@ window.addEventListener("message", event => {
   if (message.type === "status" && state) { state.folders = message.value; showStatus(state); }
   if (message.type === "focus" && message.value === "search") view.focusSearch();
   if (message.type === "search") { setBusy(false); view.setNotice(""); view.showSearch(message.value); }
+  if (message.type === "models") { setBusy(false); view.setNotice(message.cancelled ? text.done : ""); view.showModels(message.value); }
   if (message.type === "done") { setBusy(false); view.setNotice(message.message ?? text.done); vscode.postMessage({ action: "refresh" }); }
   if (message.type === "error") { setBusy(false); view.setError(message.message); }
 });

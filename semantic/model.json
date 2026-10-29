@@ -4,6 +4,7 @@
   "pooling": "mean",
   "normalize": true,
   "max_tokens": 512,
+  "chunk_chars": 500,
   "query_prefix": "query: ",
   "document_prefix": "passage: "
 }

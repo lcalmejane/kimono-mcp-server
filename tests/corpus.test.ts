@@ -77,6 +77,23 @@ it('indexes common source languages and extensionless files, with custom replace
   expect(configured.searchIndex.directory).not.toBe(knowledge.searchIndex.directory);
 });
 
+it('reads PHP, Markdown and plain text content together without metadata-only substitution', async () => {
+  const { knowledge, write } = await fixture();
+  const files = {
+    'src/service.php': '<?php\nclass Service { public function retrieve() { return 42; } }',
+    'docs/guide.md': '# Retrieval guide\n\nProject documentation.',
+    'notes.txt': 'Plain text notes for the project.',
+  };
+  for (const [file, content] of Object.entries(files)) await write(file, content);
+  await knowledge.initialize();
+  expect(knowledge.list().map(entry => entry.path).sort()).toEqual(Object.keys(files).sort());
+  expect(knowledge.corpusStatus.metadataOnly).toBe(0);
+  for (const [file, content] of Object.entries(files)) {
+    expect(knowledge.list().find(entry => entry.path === file)?.metadata).toBeUndefined();
+    expect((await knowledge.read(file)).content).toBe(content);
+  }
+});
+
 it('preserves gitignore and non-overridable secret/dependency exclusions, skips symlinks and binary samples', async () => {
   const { parent, root, knowledge, write } = await fixture();
   await write('.gitignore', 'src/ignored/**\n*.generated.ts\n');
