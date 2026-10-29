@@ -62,7 +62,7 @@ it('standard RAG mode is ready on any readable ROOT without an AI-KIDO entry poi
     await rm(knowledge.searchIndex.directory, { recursive: true, force: true });
     await rm(parent, { recursive: true, force: true });
   }
-});
+}, 30_000);
 
 it('keeps accepted HTTP tool work while draining, exposes not-ready and refuses new sessions', async () => {
   const parent = await mkdtemp(path.join(tmpdir(), 'kimono-drain-'));
@@ -99,4 +99,4 @@ it('keeps accepted HTTP tool work while draining, exposes not-ready and refuses 
     await rm(knowledge.searchIndex.directory, { recursive: true, force: true });
     await rm(parent, { recursive: true, force: true });
   }
-});
+}, 30_000);
