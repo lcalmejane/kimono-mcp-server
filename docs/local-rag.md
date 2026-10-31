@@ -196,6 +196,17 @@ The MCP equivalent is `aikido_index` with
 the full semantic scope (no `paths`); poll `operation:"status"` to see completion
 or an explicit error. Deploy the updated MCP server along with the panels.
 
+The same card also offers **Stop** and **Delete the index**. Stop requests
+cancellation of the running indexing; it is not destructive, needs no
+confirmation, and the status keeps being followed until the worker has really
+stopped. Delete asks for confirmation and removes the whole semantic index of
+the connected ROOT; sources, snapshots, the lexical index and the embedding
+policy are kept, and the index is rebuilt on the next update. For a shared
+server both actions affect all users of that index. The MCP equivalents are
+`aikido_index` with `{"operation":"cancel","mode":"semantic"}` and
+`{"operation":"reset","mode":"semantic"}`; both answer immediately, so they take
+no `background` flag.
+
 The default `KIMONO_SEMANTIC_DEVICE=auto` benchmarks the CPU and each available
 CUDA/CoreML execution provider when the server first uses a model. Each probe
 runs in a separate process, loads the same local model, warms up short and long

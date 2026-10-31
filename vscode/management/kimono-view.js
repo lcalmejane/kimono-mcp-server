@@ -16,6 +16,8 @@
       statusIntro: "Files read, estimated tokens (UTF-8 bytes / 4) and embedded chunks versus totals, published in real time by the Kimono server. When available, worker lifecycle, warm indexes, embedding model, configured CPU budget and estimated memory are shown too. Lexical search works while the semantic index is being built.",
       noIndex: "No index yet. Kimono indexes automatically when an MCP client starts it, or start now.",
       startIndex: "Update index", rebuildIndex: "Rebuild entirely", rebuildHint: "Regenerate all semantic vectors. Sources and snapshots are unchanged; the previous generation is kept until success.", indexing: "Indexing…", refresh: "Refresh", progressOf: "{name} indexing progress",
+      stopIndex: "Stop indexing", stopHint: "Interrupt the running indexation. The previous index is kept and a later update resumes from it.",
+      resetIndex: "Delete semantic index", resetHint: "Delete every semantic vector generation. Sources, snapshots, text search and the chosen embedding policy are kept; the index is rebuilt on the next update.",
       searchTitle: "Test a search",
       searchIntro: "Query Kimono exactly as an agent would. All modes share one snapshot; latency is measured from {origin}. Nothing in your project is modified.",
       searchNote: "Enriched text splits phrases and uses the repository glossaries; exact text keeps the whole phrase. While the semantic index is being built, text search stays available and semantic search reports its state.",
@@ -41,6 +43,8 @@
       statusIntro: "Fichiers lus, tokens estimés (octets UTF-8 / 4) et passages vectorisés par rapport aux totaux, publiés en temps réel par le serveur Kimono. L'état du worker, les index gardés en mémoire, le modèle d'embedding, le budget CPU configuré et la mémoire estimée sont également affichés lorsqu'ils sont disponibles. La recherche lexicale fonctionne pendant la construction de l'index sémantique.",
       noIndex: "Pas encore d'index. Kimono indexe automatiquement quand un client MCP le démarre, ou lancez-le maintenant.",
       startIndex: "Mettre à jour l'index", rebuildIndex: "Reconstruire entièrement", rebuildHint: "Recalculer tous les vecteurs sémantiques. Sources et snapshots inchangés ; l'ancienne génération est conservée jusqu'à réussite.", indexing: "Indexation…", refresh: "Actualiser", progressOf: "Progression de l'indexation de {name}",
+      stopIndex: "Arrêter l'indexation", stopHint: "Interrompt l'indexation en cours. L'index précédent est conservé et une mise à jour ultérieure repart de celui-ci.",
+      resetIndex: "Supprimer l'index sémantique", resetHint: "Supprime toutes les générations de vecteurs sémantiques. Sources, snapshots, recherche textuelle et politique d'embedding choisie sont conservés ; l'index est reconstruit à la prochaine mise à jour.",
       searchTitle: "Tester une recherche",
       searchIntro: "Interrogez Kimono exactement comme un agent. Tous les modes partagent un même snapshot ; la latence est mesurée depuis {origin}. Aucun fichier du projet n'est modifié.",
       searchNote: "Le texte enrichi décompose les phrases et utilise les glossaires du dépôt ; le texte exact conserve la phrase entière. Pendant la construction de l'index sémantique, le texte reste disponible et la recherche sémantique indique son état.",
@@ -101,7 +105,8 @@
     const lang = language(options.language);
     const t = translator(lang);
     const prefix = options.idPrefix ?? "kimono";
-    const handlers = { start: options.onIndexStart, rebuild: options.onIndexRebuild, search: options.onSearch, refresh: options.onRefresh };
+    const handlers = { start: options.onIndexStart, rebuild: options.onIndexRebuild, stop: options.onIndexStop, reset: options.onIndexReset,
+      search: options.onSearch, refresh: options.onRefresh };
     let folders = [], pending = false, enabled = true, timer, fetcher, intervals = { activeMs: 1500, idleMs: 15000 };
     root.classList.add("kv");
 
@@ -207,6 +212,23 @@
       ];
       for (const [label, text] of rows) { node("dt", label, list); node("dd", String(text ?? "—"), list); }
       if (value.error) node("p", value.error, modelOutput, "kv-error");
+      const downloads = Array.isArray(value.downloads) ? value.downloads : [];
+      const downloading = id => downloads.some(item => item?.model === id && (item.state === "downloading" || item.state === "verifying"));
+      for (const item of downloads) {
+        if (!item || typeof item.model !== "string") continue;
+        const running = item.state === "downloading" || item.state === "verifying";
+        const known = Number.isFinite(item.bytes) && Number.isFinite(item.totalBytes) && item.totalBytes > 0;
+        const state = { downloading: ml("Downloading", "Téléchargement"), verifying: ml("Verifying checksum", "Vérification de l'empreinte"),
+          done: ml("Downloaded", "Téléchargé"), error: ml("Failed", "Échec") }[item.state] ?? item.state;
+        const block = node("div", undefined, modelOutput, "kv-folder");
+        node("p", `${item.model} · ${state}${known ? ` · ${Math.floor(Math.min(1, item.bytes / item.totalBytes) * 100)}% · ${mib(item.bytes)} / ${mib(item.totalBytes)}` : ""}${running && item.file ? ` · ${item.file} (${item.fileIndex}/${item.fileCount})` : ""}`, block);
+        if (known && item.state !== "error") {
+          const bar = node("progress", undefined, block);
+          bar.max = 1; bar.value = Math.min(1, item.bytes / item.totalBytes);
+          bar.setAttribute("aria-label", `${ml("Download of", "Téléchargement de")} ${item.model}`);
+        }
+        if (item.state === "error" && item.error) node("p", String(item.error), block, "kv-error");
+      }
       if (value.phase === "download-required" && (value.missingModels ?? []).some(id => ["code", "multilingual-fast"].includes(id))) node("p", ml(
         "Download each missing model separately, then apply the desired policy again to start rebuilding.",
         "Téléchargez chaque modèle manquant séparément, puis appliquez à nouveau la politique souhaitée pour lancer la reconstruction."), modelOutput, "kv-muted");
@@ -236,15 +258,19 @@
         node("p", `${ml("Source", "Source")}: ${model.repository}\nRevision: ${model.revision}\nLicense: ${model.license}`, detail, "kv-path");
         node("p", `${ml("Estimated model memory (not measured RSS)", "Mémoire modèle estimée (pas le RSS mesuré)")}: ${mib(model.estimatedMemoryBytes)} · ${model.backend} · ${model.dimensions} dimensions · ${model.chunkChars} chars/chunk`, detail);
         if (!model.installed && ["code", "multilingual-fast"].includes(model.id)) {
-          const download = node("button", ml("Download only…", "Télécharger uniquement…"), detail);
+          const busy = downloading(model.id);
+          const download = node("button", busy ? ml("Downloading…", "Téléchargement en cours…") : ml("Download only…", "Télécharger uniquement…"), detail);
           download.type = "button";
+          download.disabled = busy;
+          download.dataset.kvLocked = String(busy);
           download.addEventListener("click", () => requestModels({ operation: "install", model: model.id }));
         }
       }
       setBusy(pending);
       // Another MCP process can own the transition. Keep a slow metadata-only
       // refresh while open even if this process reports ready/rebuild-required.
-      if (modelsCard.open) modelsTimer = setTimeout(() => requestModels(), value.phase === "building" ? 3000 : 15000);
+      if (modelsCard.open) modelsTimer = setTimeout(() => requestModels(),
+        downloads.some(item => item?.state === "downloading" || item?.state === "verifying") ? 2000 : value.phase === "building" ? 3000 : 15000);
     }
 
     function renderStatus() {
@@ -278,6 +304,23 @@
           rebuild.dataset.kvLocked = String(view.active || !enabled || folder.canStart === false);
           rebuild.disabled = pending || rebuild.dataset.kvLocked === "true";
           rebuild.addEventListener("click", () => { if (!rebuild.disabled) handlers.rebuild(folder.id); });
+        }
+        if (handlers.stop) {
+          // Only meaningful while an indexation runs; stays enabled even then because `pending` ends once the background job is accepted.
+          const stop = node("button", t("stopIndex"), actions, "secondary");
+          stop.type = "button";
+          stop.title = t("stopHint");
+          stop.dataset.kvLocked = String(!view.active || !enabled);
+          stop.disabled = pending || stop.dataset.kvLocked === "true";
+          stop.addEventListener("click", () => { if (!stop.disabled) handlers.stop(folder.id); });
+        }
+        if (handlers.reset) {
+          const reset = node("button", t("resetIndex"), actions, "secondary");
+          reset.type = "button";
+          reset.title = t("resetHint");
+          reset.dataset.kvLocked = String(view.active || !enabled || folder.canStart === false);
+          reset.disabled = pending || reset.dataset.kvLocked === "true";
+          reset.addEventListener("click", () => { if (!reset.disabled) handlers.reset(folder.id); });
         }
         if (handlers.refresh) {
           const refresh = node("button", t("refresh"), actions, "secondary");

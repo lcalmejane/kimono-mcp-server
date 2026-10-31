@@ -1,6 +1,6 @@
 {
   "name": "kimono-mcp-server",
-  "version": "0.9.1",
+  "version": "0.9.2",
   "description": "Local RAG for source code and documentation with lexical and semantic retrieval over MCP",
   "license": "MIT",
   "repository": {
@@ -23,12 +23,14 @@
     "start": "node dist/index.js",
     "test": "vitest run",
     "typecheck": "tsc --noEmit -p tsconfig.json && npm run typecheck:bench",
-    "typecheck:bench": "tsc --noEmit --strict --skipLibCheck --module NodeNext --target ES2022 --types node scripts/bench-harness.ts",
+    "typecheck:bench": "tsc --noEmit --strict --skipLibCheck --module NodeNext --target ES2022 --types node scripts/bench-harness.ts scripts/bench-db.ts",
     "bundle:native": "node scripts/package-native-bundle.mjs",
     "test:vscode": "node --test vscode/test/*.cjs",
     "package:vscode": "node scripts/package-vscode.mjs",
     "test:vscode:integration": "node scripts/test-vscode-package.mjs",
-    "bench:harness": "tsx scripts/bench-harness.ts"
+    "bench:harness": "tsx scripts/bench-harness.ts",
+    "bench:db": "tsx scripts/bench-db.ts",
+    "bench:db:check": "tsx scripts/bench-db.ts validate --check-index"
   },
   "engines": {
     "node": ">=24"
@@ -42,6 +44,7 @@
   "devDependencies": {
     "@vscode/vsce": "^3.6.0",
     "esbuild": "^0.28.2",
+    "ajv": "^8.20.0",
     "@types/node": "^24.0.0",
     "@types/yauzl": "^2.10.3",
     "tsx": "^4.19.0",

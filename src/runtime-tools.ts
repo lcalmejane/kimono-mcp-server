@@ -66,6 +66,7 @@ export const RUNTIME_TOOLS: Tool[] = [
         snapshotId: { type: 'string', description: 'end: from begin.' },
         paths: { anyOf: [{ type: 'string', minLength: 1 }, { type: 'array', minItems: 1, maxItems: 256, items: { type: 'string', minLength: 1 } }],
           description: 'begin: ROOT-relative subtrees, no globs; omit for all.' },
+        owner: { type: 'string', description: 'begin: merge this user overlay.' },
       },
     },
     annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
@@ -118,11 +119,11 @@ export const RUNTIME_TOOLS: Tool[] = [
   },
   {
     name: 'aikido_index',
-    description: 'External indexes only. status: mode=semantic.',
+    description: 'External indexes only. status/cancel/reset: mode=semantic.',
     inputSchema: {
       type: 'object', additionalProperties: false, required: ['operation'],
       properties: {
-        operation: { type: 'string', enum: ['update', 'rebuild', 'status'] },
+        operation: { type: 'string', enum: ['update', 'rebuild', 'status', 'cancel', 'reset'] },
         mode: { type: 'string', enum: ['literal', 'semantic', 'all'], default: 'literal' },
         background: { type: 'boolean', default: false, description: 'Full semantic only; poll status. Rebuild keeps old generation until success.' },
         paths: { anyOf: [{ type: 'string', minLength: 1 }, { type: 'array', minItems: 1, maxItems: 256, items: { type: 'string', minLength: 1 } }],
@@ -154,24 +155,25 @@ export const RUNTIME_TOOLS: Tool[] = [
   },
   {
     name: 'aikido_collaboration',
-    description: 'AI-KIDO revisions, not Git. guidance first; compare/read/publish replicas, resolve conflicts. Verified same-ROOT stdio: index update instead (never infer from HTTP).',
+    description: 'AI-KIDO revisions, not Git. guidance first. mode: same-root (nothing staged; sync reindexes) vs replica (sync = stage+publish).',
     inputSchema: {
       type: 'object', additionalProperties: false, required: ['operation'],
       properties: {
-        operation: { type: 'string', enum: ['guidance', 'status', 'compare', 'read', 'publish'] },
+        operation: { type: 'string', enum: ['guidance', 'mode', 'status', 'compare', 'read', 'publish', 'stage', 'overlay', 'sync', 'discard'] },
+        clientRoot: { type: 'string', description: 'Absolute client workspace; ROOT => same-root.' },
+        owner: { type: 'string', description: 'Overlay id (default "default").' },
         localManifest: { type: 'object', maxProperties: 2000, additionalProperties: { type: 'string', pattern: '^[a-f0-9]{64}$' },
-          description: 'Eligible path -> SHA-256; omit for ROOT snapshot.' },
-        baseVersion: { type: 'string', pattern: '^[a-f0-9]{64}$', description: 'Replica starting revision.' },
-        expectedSharedVersion: { type: 'string', pattern: '^[a-f0-9]{64}$', description: 'publish: required current revision guard.' },
-        sharedVersion: { type: 'string', pattern: '^[a-f0-9]{64}$', description: 'read: exact revision required; status: historical revision.' },
-        paths: { type: 'array', minItems: 1, maxItems: 100, items: { type: 'string' }, description: 'Read paths at sharedVersion.' },
+          description: 'Path -> SHA-256; omit for ROOT.' },
+        baseVersion: { type: 'string', pattern: '^[a-f0-9]{64}$' },
+        expectedSharedVersion: { type: 'string', pattern: '^[a-f0-9]{64}$' },
+        sharedVersion: { type: 'string', pattern: '^[a-f0-9]{64}$' },
+        paths: { type: 'array', minItems: 1, maxItems: 100, items: { type: 'string' }, description: 'read/discard paths.' },
         offset: { type: 'integer', minimum: 0, default: 0 },
         limit: { type: 'integer', minimum: 1, maximum: 100, default: 100 },
         changes: { type: 'array', maxItems: 2000, items: { type: 'object', additionalProperties: false, required: ['path', 'content'],
           properties: { path: { type: 'string' }, content: { type: ['string', 'null'] } } },
-          description: 'UTF-8; null deletes. Hashes must match localManifest.' },
-        resolutions: { type: 'object', maxProperties: 2000, additionalProperties: { type: 'string', enum: ['local', 'shared'] },
-          description: 'Explicit conflict choices; no last-write-wins.' },
+          description: 'UTF-8; null deletes.' },
+        resolutions: { type: 'object', maxProperties: 2000, additionalProperties: { type: 'string', enum: ['local', 'shared'] } },
       },
     },
     annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
@@ -247,9 +249,13 @@ class RuntimeTools {
         return compact ? result : decorateSnapshotResult(result, snapshot);
       });
     }
-    if (name === 'aikido_index' && input.operation === 'status') {
+    if (name === 'aikido_index' && (input.operation === 'status' || input.operation === 'cancel' || input.operation === 'reset')) {
+      const operation = input.operation;
       if (input.paths !== undefined) throw new Error('paths requires operation=update');
-      if (input.mode !== 'semantic') throw new Error('Index status requires mode=semantic');
+      if (input.mode !== 'semantic') throw new Error(`Index ${operation} requires mode=semantic`);
+      // These bypass the serialized queue on purpose: cancel must act while an index operation holds it.
+      if (operation === 'cancel') return JSON.stringify(await this.knowledge.semanticIndex.cancel());
+      if (operation === 'reset') return JSON.stringify(await this.knowledge.semanticIndex.reset());
       return JSON.stringify(this.knowledge.semanticIndex.status());
     }
     return this.dispatch(name, input, context);
@@ -281,7 +287,7 @@ class RuntimeTools {
       const manager = snapshotsFor(this.knowledge);
       if (operation === 'begin') {
         if (input.snapshotId !== undefined) throw new Error('begin does not accept snapshotId');
-        return JSON.stringify(await manager.begin(synchronizationPaths(input.paths)));
+        return JSON.stringify(await manager.begin(synchronizationPaths(input.paths), text(input, 'owner', false)));
       }
       if (operation === 'end') {
         if (input.paths !== undefined) throw new Error('end does not accept paths');
@@ -406,7 +412,22 @@ class RuntimeTools {
       return JSON.stringify({ ...(mode === 'all' ? {} : indexes[mode] as object), operation, mode, scope: paths ?? null, indexes });
     }
     if (name === 'aikido_collaboration') {
-      return JSON.stringify(await this.collaboration.call(input));
+      const result = await this.collaboration.call(input);
+      if (input.operation === 'sync' && Object.hasOwn(result, 'reindexPaths')) {
+        // Files are already in (or now published to) the shared ROOT: refresh the external literal index so searches
+        // see them. null = same-root, the changed paths are unknown -> full incremental update. Failures never undo a sync.
+        const paths = result.reindexPaths as string[] | null;
+        if (paths === null || paths.length) {
+          try {
+            await this.execute('aikido_index', { operation: 'update', mode: 'literal', ...(paths ? { paths } : {}) });
+            result.reindexed = true;
+          } catch (error) {
+            result.reindexed = false;
+            result.reindexError = error instanceof Error ? error.message : String(error);
+          }
+        }
+      }
+      return JSON.stringify(result);
     }
     if (name === 'aikido_git') {
       if (input.operation === 'infos') {

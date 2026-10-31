@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AikidoKnowledgeBase } from '../src/knowledge.js';
 import { corpusConfig } from '../src/corpus-config.js';
 import {
-  EMBEDDING_CATALOGUE, embeddingPolicy, installEmbeddingModel, modelDescriptor, modelDirectory,
+  EMBEDDING_CATALOGUE, downloadProgress, embeddingPolicy, installEmbeddingModel, modelDescriptor, modelDirectory,
   modelInstalled, modelsDirectory, readEmbeddingSettings, resolveEmbedding, saveEmbeddingSettings,
 } from '../src/embedding-models.js';
 import * as models from '../src/embedding-models.js';
@@ -117,6 +117,9 @@ describe('confirmed pinned downloads', () => {
     try {
       await installEmbeddingModel(knowledge.root, 'code', true);
       expect(await modelInstalled(knowledge.root, 'code')).toBe(true);
+      expect(downloadProgress().find(item => item.model === 'code')).toMatchObject({
+        state: 'done', bytes: data.length, totalBytes: data.length, fileIndex: 1, fileCount: 1 });
+      expect(await knowledge.semanticIndex.status().downloads).toEqual(expect.arrayContaining([expect.objectContaining({ model: 'code', state: 'done' })]));
       expect(JSON.parse(await readFile(path.join(modelDirectory(knowledge.root, 'code'), 'model.json'), 'utf8')))
         .toEqual(modelDescriptor(model));
       expect(fetch.mock.calls).toHaveLength(1);
@@ -125,6 +128,7 @@ describe('confirmed pinned downloads', () => {
       await rm(modelDirectory(knowledge.root, 'code'), { recursive: true });
       model.files = [{ name: 'model.safetensors', bytes: data.length, sha256: '0'.repeat(64) }];
       await expect(installEmbeddingModel(knowledge.root, 'code', true)).rejects.toThrow('checksum');
+      expect(downloadProgress().find(item => item.model === 'code')).toMatchObject({ state: 'error', error: expect.stringContaining('checksum') });
       expect(await readdir(modelsDirectory(knowledge.root))).toEqual([]);
     } finally { model.files = original; }
   });

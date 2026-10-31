@@ -23,12 +23,13 @@ export async function runProcess(
   environment: NodeJS.ProcessEnv = process.env,
   maxBuffer = 4 * 1024 * 1024,
   streamStderr = false,
+  signal?: AbortSignal,
 ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
   const redact = (value: string) => environment.KIMONO_GIT_TOKEN
     ? value.replaceAll(environment.KIMONO_GIT_TOKEN, '[REDACTED]') : value;
   try {
     if (streamStderr) {
-      const result = await streamingProcess(executable, args, cwd, environment, timeout, maxBuffer, allowedExitCodes, onStderr);
+      const result = await streamingProcess(executable, args, cwd, environment, timeout, maxBuffer, allowedExitCodes, onStderr, signal);
       return { ...result, stdout: redact(result.stdout), stderr: redact(result.stderr) };
     }
     const execution = execute(executable, args, {
@@ -53,6 +54,7 @@ export async function runProcess(
 function streamingProcess(
   executable: string, args: string[], cwd: string, environment: NodeJS.ProcessEnv,
   timeout: number, maxBuffer: number, allowedExitCodes: number[], onStderr?: (chunk: string) => void,
+  signal?: AbortSignal,
 ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
   return new Promise((resolve, reject) => {
     const child = spawn(executable, args, { cwd, env: {
@@ -67,6 +69,8 @@ function streamingProcess(
     };
     const timer = setTimeout(() => stop(new Error(`Process timed out after ${timeout} ms`)), timeout);
     timer.unref();
+    const aborted = () => stop(new Error('Process cancelled'));
+    if (signal?.aborted) aborted(); else signal?.addEventListener('abort', aborted, { once: true });
     child.stdout.setEncoding('utf8');
     child.stderr.setEncoding('utf8');
     child.stdout.on('data', (chunk: string) => {
@@ -80,10 +84,11 @@ function streamingProcess(
       onStderr?.(chunk);
     });
     child.once('error', error => { failure ??= error; });
-    child.once('close', (code, signal) => {
+    child.once('close', (code, exitSignal) => {
       clearTimeout(timer);
+      signal?.removeEventListener('abort', aborted);
       if (failure) reject(new Error(`${failure.message}\n${stderr}`, { cause: failure }));
-      else if (code === null || !allowedExitCodes.includes(code)) reject(new Error(`Process exited with ${code ?? signal}\n${stderr}`));
+      else if (code === null || !allowedExitCodes.includes(code)) reject(new Error(`Process exited with ${code ?? exitSignal}\n${stderr}`));
       else resolve({ stdout, stderr, exitCode: code });
     });
   });

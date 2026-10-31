@@ -136,7 +136,10 @@ function registerManagement(vscode, context, host) {
     trusted(); embedded();
     const selected = folderById(id);
     const started = await client(selected);
-    const value = await started.call("aikido_index", { operation, mode: "semantic", background: true });
+    // cancel/reset answer immediately; update/rebuild run in the background and are followed through the status.
+    const immediate = operation === "cancel" || operation === "reset";
+    const value = await started.call("aikido_index", immediate
+      ? { operation, mode: "semantic" } : { operation, mode: "semantic", background: true });
     await refreshStatuses();
     return value;
   }
@@ -221,6 +224,21 @@ function registerManagement(vscode, context, host) {
             } else {
               await startIndex(message.folder, "rebuild");
               await post({ type: "done", message: l("Rebuild started. Progress updates live above.", "Reconstruction lancée. La progression s'affiche en direct ci-dessus.") });
+            }
+          }
+          else if (message.action === "indexStop") { await startIndex(message.folder, "cancel"); await post({ type: "done", message: l("Indexing stopped.", "Indexation arrêtée.") }); }
+          else if (message.action === "indexReset") {
+            trusted(); embedded();
+            const selected = folderById(message.folder);
+            const confirm = l("Delete", "Supprimer");
+            if (await vscode.window.showWarningMessage(
+              l(`Delete the entire semantic index for ${selected.name}? Sources, snapshots, text search and the embedding policy are kept; the index is rebuilt on the next update.`,
+                `Supprimer tout l'index sémantique de ${selected.name} ? Sources, snapshots, recherche textuelle et politique d'embedding sont conservés ; l'index sera reconstruit à la prochaine mise à jour.`),
+              { modal: true }, confirm) !== confirm) {
+              await post({ type: "done", message: l("Deletion cancelled.", "Suppression annulée.") });
+            } else {
+              await startIndex(message.folder, "reset");
+              await post({ type: "done", message: l("Semantic index deleted.", "Index sémantique supprimé.") });
             }
           }
           else if (message.action === "models") await post({ type: "models", value: await models(message) });

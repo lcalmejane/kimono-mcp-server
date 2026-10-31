@@ -1,5 +1,7 @@
 node_modules/
 .local-runtime*/
+.bench-models/
+.bench-corpus/
 dist/
 coverage/
 .env

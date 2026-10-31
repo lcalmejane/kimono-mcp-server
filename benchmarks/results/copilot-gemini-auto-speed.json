@@ -1,0 +1,235 @@
+{
+  "schemaVersion": 1,
+  "campaign": "copilot-gemini-auto-speed-hybrid-20261031",
+  "generatedAt": "2026-10-31T16:20:00Z",
+  "protocol": {
+    "harness": "GitHub Copilot CLI 1.0.103 (@github/copilot@1.0.103)",
+    "requestedModel": "gemini-3.8-flash",
+    "repetitions": 1,
+    "indexMode": "all (lexical + semantic, hybrid search)",
+    "embeddingPolicy": "auto-speed (code: potion-code-16M-v2, documents: potion-multilingual-128M)",
+    "searchDetail": "compact",
+    "timeoutMs": 900000,
+    "config": "benchmarks/copilot-gemini-auto-speed.json",
+    "image": "tatami-core-kimono (local build, not an immutable release)",
+    "isolation": "same as current.md: grep/glob/view in both arms, Kimono added in the with arm, no custom instructions, per-cell HOME"
+  },
+  "corpus": {
+    "sha256": "5f7d502d8483bcd37b87ca7acf58ea93fa09cc24f765ff102a00eae63f0e2e07",
+    "sameInBothRuns": true,
+    "fileCount": 77,
+    "bytes": 854952
+  },
+  "warmupMs": {
+    "run-1": 4251,
+    "run-2": 4333
+  },
+  "runs": {
+    "run-1": "Interrupted by the tool time limit before plan-config-addon without completed; 3 cells kept.",
+    "run-2": "Re-run of plan-config-addon only (without, then with); 2 cells."
+  },
+  "cells": [
+    {
+      "run": "run-1",
+      "task": "find-ignore-policy",
+      "variant": "without",
+      "status": "ok",
+      "wallMs": 117243,
+      "mcpUsed": false,
+      "usage": {
+        "models": [
+          "gemini-3.8-flash"
+        ],
+        "inputTokens": 291884,
+        "outputTokens": 1744,
+        "cacheReadTokens": 209338,
+        "cacheWriteTokens": 0,
+        "reasoningTokens": 6290,
+        "uncachedInputTokens": 82546,
+        "apiMs": 111527
+      },
+      "toolCalls": {
+        "glob": 3,
+        "grep": 9,
+        "view": 9
+      },
+      "isolationPassed": true,
+      "quality": {
+        "formatValid": true,
+        "evidenceValid": true,
+        "expectedPathCoverage": 0.5,
+        "humanReview": "pending"
+      }
+    },
+    {
+      "run": "run-1",
+      "task": "find-ignore-policy",
+      "variant": "with",
+      "status": "ok",
+      "wallMs": 115951,
+      "mcpUsed": true,
+      "usage": {
+        "models": [
+          "gemini-3.8-flash"
+        ],
+        "inputTokens": 308832,
+        "outputTokens": 2191,
+        "cacheReadTokens": 227859,
+        "cacheWriteTokens": 0,
+        "reasoningTokens": 6262,
+        "uncachedInputTokens": 80973,
+        "apiMs": 109138
+      },
+      "toolCalls": {
+        "kimono-aikido_snapshot": 2,
+        "kimono-aikido_search": 1,
+        "glob": 1,
+        "grep": 7,
+        "kimono-aikido_file": 7
+      },
+      "isolationPassed": true,
+      "quality": {
+        "formatValid": true,
+        "evidenceValid": true,
+        "expectedPathCoverage": 1,
+        "humanReview": "pending"
+      }
+    },
+    {
+      "run": "run-1",
+      "task": "plan-config-addon",
+      "variant": "with",
+      "status": "ok",
+      "wallMs": 190114,
+      "mcpUsed": true,
+      "usage": {
+        "models": [
+          "gemini-3.8-flash"
+        ],
+        "inputTokens": 745204,
+        "outputTokens": 3643,
+        "cacheReadTokens": 580142,
+        "cacheWriteTokens": 0,
+        "reasoningTokens": 11445,
+        "uncachedInputTokens": 165062,
+        "apiMs": 183189
+      },
+      "toolCalls": {
+        "kimono-aikido_snapshot": 2,
+        "kimono-aikido_search": 13,
+        "kimono-aikido_file": 13
+      },
+      "isolationPassed": true,
+      "quality": {
+        "formatValid": true,
+        "evidenceValid": true,
+        "expectedPathCoverage": 1,
+        "humanReview": "pending"
+      }
+    },
+    {
+      "run": "run-2",
+      "task": "plan-config-addon",
+      "variant": "without",
+      "status": "ok",
+      "wallMs": 338684,
+      "mcpUsed": false,
+      "usage": {
+        "models": [
+          "gemini-3.8-flash"
+        ],
+        "inputTokens": 1668213,
+        "outputTokens": 3744,
+        "cacheReadTokens": 1368028,
+        "cacheWriteTokens": 0,
+        "reasoningTokens": 17479,
+        "uncachedInputTokens": 300185,
+        "apiMs": 332291
+      },
+      "toolCalls": {
+        "glob": 1,
+        "grep": 28,
+        "view": 31
+      },
+      "isolationPassed": true,
+      "quality": {
+        "formatValid": true,
+        "evidenceValid": true,
+        "expectedPathCoverage": 0.75,
+        "humanReview": "pending"
+      }
+    },
+    {
+      "run": "run-2",
+      "task": "plan-config-addon",
+      "variant": "with",
+      "status": "ok",
+      "wallMs": 232763,
+      "mcpUsed": true,
+      "usage": {
+        "models": [
+          "gemini-3.8-flash"
+        ],
+        "inputTokens": 937977,
+        "outputTokens": 3244,
+        "cacheReadTokens": 789908,
+        "cacheWriteTokens": 0,
+        "reasoningTokens": 10947,
+        "uncachedInputTokens": 148069,
+        "apiMs": 225523
+      },
+      "toolCalls": {
+        "kimono-aikido_snapshot": 2,
+        "kimono-aikido_search": 3,
+        "glob": 1,
+        "kimono-aikido_file": 1,
+        "grep": 13,
+        "view": 16
+      },
+      "isolationPassed": true,
+      "quality": {
+        "formatValid": true,
+        "evidenceValid": true,
+        "expectedPathCoverage": 1,
+        "humanReview": "pending"
+      }
+    }
+  ],
+  "pairs": [
+    {
+      "task": "find-ignore-policy",
+      "withoutRun": "run-1",
+      "withRun": "run-1",
+      "sameRun": true,
+      "inputChangePercent": 5.8,
+      "uncachedInputChangePercent": -1.9,
+      "wallChangePercent": -1.1
+    },
+    {
+      "task": "plan-config-addon",
+      "withoutRun": "run-2",
+      "withRun": "run-2",
+      "sameRun": true,
+      "inputChangePercent": -43.8,
+      "uncachedInputChangePercent": -50.7,
+      "wallChangePercent": -31.3
+    },
+    {
+      "task": "plan-config-addon",
+      "withoutRun": "run-2",
+      "withRun": "run-1",
+      "sameRun": false,
+      "inputChangePercent": -55.3,
+      "uncachedInputChangePercent": -45.0,
+      "wallChangePercent": -43.9
+    }
+  ],
+  "limitations": [
+    "One run per cell; run-to-run variance is large (plan-config-addon with Kimono: 745k vs 938k input tokens).",
+    "Only the run-2 plan-config-addon pair and the run-1 find-ignore-policy pair are same-run pairs; the run-1 with / run-2 without comparison crosses two runs.",
+    "Human quality review pending; automatic checks validate format, path bounds and coverage only.",
+    "Provider/OS caches and model variability uncontrolled; input tokens include cached input, not a bill.",
+    "Hybrid auto-speed, a different task set from current.md; figures are not comparable to the lexical report.",
+    "Local development image tag."
+  ]
+}

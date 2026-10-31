@@ -112,17 +112,20 @@ export class SemanticWorker {
     private readonly environment: NodeJS.ProcessEnv,
   ) {}
 
-  request(requestPath: string, timeout: number, onStderr?: (chunk: string) => void): Promise<unknown> {
+  /** `signal` interrupts this request only: queued, it never starts; active, the child is killed (a native batch cannot be paused). */
+  request(requestPath: string, timeout: number, onStderr?: (chunk: string) => void, signal?: AbortSignal): Promise<unknown> {
     if (this.closing) return Promise.reject(new Error('Semantic worker is shutting down'));
+    if (signal?.aborted) return Promise.reject(abortReason(signal));
     if (this.queued >= MAX_QUEUED_REQUESTS) {
       return Promise.reject(new Error(`Semantic worker queue is full (maximum ${MAX_QUEUED_REQUESTS})`));
     }
     this.queued++;
     const deadline = Date.now() + timeout;
     const result = this.queue.then(() => {
+      if (signal?.aborted) throw abortReason(signal);
       const remaining = deadline - Date.now();
       if (remaining <= 0) throw new Error(`Semantic worker request timed out after waiting in the queue`);
-      return this.send({ version: 1, id: randomUUID(), operation: 'request', requestPath }, remaining, onStderr);
+      return this.send({ version: 1, id: randomUUID(), operation: 'request', requestPath }, remaining, onStderr, signal);
     });
     this.queue = result.then(() => undefined, () => undefined).finally(() => { this.queued--; });
     return result;
@@ -154,6 +157,7 @@ export class SemanticWorker {
     message: { version: 1; id: string; operation: string; requestPath?: string },
     timeout: number,
     onStderr?: (chunk: string) => void,
+    signal?: AbortSignal,
   ): Promise<unknown> {
     const child = this.ensureChild();
     if (this.active) throw new Error('Semantic worker already has an active request');
@@ -164,6 +168,19 @@ export class SemanticWorker {
       timer.unref();
       this.active = { id: message.id, resolve, reject, onStderr, timer };
     });
+    if (signal) {
+      const interrupt = () => {
+        if (this.active?.id !== message.id) return;
+        this.fail(abortReason(signal), true);
+        // A deliberate stop is not a worker fault: do not report it as an error.
+        this.lastError = undefined;
+        this.warmed = false;
+        this.setPhase('stopped');
+      };
+      signal.addEventListener('abort', interrupt, { once: true });
+      void result.then(() => undefined, () => undefined).finally(() => signal.removeEventListener('abort', interrupt));
+      if (signal.aborted) interrupt();
+    }
     try {
       if (!child.stdin.write(`${JSON.stringify(message)}\n`)) await once(child.stdin, 'drain');
     } catch (error) {
@@ -281,6 +298,10 @@ function isResponse(value: unknown): value is WorkerResponse {
     && ((value as WorkerResponse).ok
       ? 'result' in value
       : typeof (value as WorkerResponse).error === 'string');
+}
+
+function abortReason(signal: AbortSignal): Error {
+  return signal.reason instanceof Error ? signal.reason : new Error('Semantic worker request cancelled');
 }
 
 function delay(milliseconds: number): Promise<void> {

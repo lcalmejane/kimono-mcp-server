@@ -1,0 +1,243 @@
+{
+  "schemaVersion": 1,
+  "id": "copilot-gemini-lexical-20261025",
+  "kind": "harness",
+  "createdAt": "2026-10-25T08:43:46.351Z",
+  "contributor": {
+    "name": "Kimono maintainers"
+  },
+  "llm": {
+    "harness": "GitHub Copilot CLI",
+    "harnessVersion": "GitHub Copilot CLI 1.0.103",
+    "model": "gemini-3.8-flash",
+    "notes": "Lexical (text) retrieval with batched queries[] / ranges[]. Input tokens are cumulative provider-reported input including cache reads. Converted from benchmarks/results/current.json."
+  },
+  "arms": {
+    "without": "GitHub Copilot CLI native read/search tools only (grep, glob, view)",
+    "with": "Native tools plus Kimono MCP (aikido_snapshot, aikido_search, aikido_file)"
+  },
+  "environment": {
+    "os": "darwin",
+    "arch": "arm64",
+    "node": "v26.12.1"
+  },
+  "kimono": {
+    "version": "0.6.0-unreleased",
+    "commit": "4a50e4422ffce75139c06a5f597d800d44b8d84d",
+    "dirty": true,
+    "runtimeSha256": "1a0aee36bf83230b7b6f01f21b4795507be75829a76fbf43a60c2f9985e84e48",
+    "image": "local development build",
+    "embeddingPolicy": "none (lexical index)",
+    "indexMode": "literal",
+    "searchDetail": "compact"
+  },
+  "corpus": {
+    "sha256": "8b8931e1d072001adf659a31c43c862bef60f92032efa2402c3d38ddaf0409d4",
+    "fileCount": 51,
+    "bytes": 558634
+  },
+  "protocol": {
+    "repetitions": 1,
+    "timeoutMs": 600000,
+    "tasks": [
+      {
+        "id": "find-ignore-policy",
+        "kind": "research",
+        "expectedPaths": [
+          "src/knowledge.ts",
+          "tests/corpus.test.ts"
+        ]
+      },
+      {
+        "id": "plan-config-addon",
+        "kind": "addon-plan",
+        "expectedPaths": [
+          "src/corpus-config.ts",
+          "src/knowledge.ts",
+          "src/snapshots.ts",
+          "tests/corpus.test.ts"
+        ]
+      }
+    ],
+    "notes": "Kimono prewarmed once, shared between treatment cells; OS/provider caches uncontrolled"
+  },
+  "status": "exploratory",
+  "cells": [
+    {
+      "task": "find-ignore-policy",
+      "kind": "research",
+      "repetition": 1,
+      "variant": "without",
+      "status": "ok",
+      "failure": null,
+      "wallMs": 111212,
+      "mcpUsed": false,
+      "isolationPassed": true,
+      "usage": {
+        "models": [
+          "gemini-3.8-flash"
+        ],
+        "inputTokens": 323368,
+        "outputTokens": 2475,
+        "cacheReadTokens": 233126,
+        "cacheWriteTokens": 0,
+        "reasoningTokens": 5807,
+        "uncachedInputTokens": 90242,
+        "apiMs": 105937
+      },
+      "toolCalls": {
+        "glob": 2,
+        "grep": 8,
+        "view": 12
+      },
+      "quality": {
+        "formatValid": false,
+        "evidenceValid": false,
+        "expectedPathCoverage": 0,
+        "humanReview": "pending"
+      }
+    },
+    {
+      "task": "find-ignore-policy",
+      "kind": "research",
+      "repetition": 1,
+      "variant": "with",
+      "status": "ok",
+      "failure": null,
+      "wallMs": 79077,
+      "mcpUsed": true,
+      "isolationPassed": true,
+      "usage": {
+        "models": [
+          "gemini-3.8-flash"
+        ],
+        "inputTokens": 105223,
+        "outputTokens": 2270,
+        "cacheReadTokens": 65285,
+        "cacheWriteTokens": 0,
+        "reasoningTokens": 4026,
+        "uncachedInputTokens": 39938,
+        "apiMs": 72979
+      },
+      "toolCalls": {
+        "kimono-aikido_snapshot": 2,
+        "kimono-aikido_search": 2,
+        "kimono-aikido_file": 4
+      },
+      "quality": {
+        "formatValid": true,
+        "evidenceValid": true,
+        "expectedPathCoverage": 1,
+        "humanReview": "pending"
+      }
+    },
+    {
+      "task": "plan-config-addon",
+      "kind": "addon-plan",
+      "repetition": 1,
+      "variant": "with",
+      "status": "ok",
+      "failure": null,
+      "wallMs": 84034,
+      "mcpUsed": true,
+      "isolationPassed": true,
+      "usage": {
+        "models": [
+          "gemini-3.8-flash"
+        ],
+        "inputTokens": 130244,
+        "outputTokens": 2433,
+        "cacheReadTokens": 81630,
+        "cacheWriteTokens": 0,
+        "reasoningTokens": 3446,
+        "uncachedInputTokens": 48614,
+        "apiMs": 77677
+      },
+      "toolCalls": {
+        "kimono-aikido_snapshot": 2,
+        "kimono-aikido_search": 2,
+        "kimono-aikido_file": 4
+      },
+      "quality": {
+        "formatValid": true,
+        "evidenceValid": true,
+        "expectedPathCoverage": 1,
+        "humanReview": "pending"
+      }
+    },
+    {
+      "task": "plan-config-addon",
+      "kind": "addon-plan",
+      "repetition": 1,
+      "variant": "without",
+      "status": "ok",
+      "failure": null,
+      "wallMs": 175224,
+      "mcpUsed": false,
+      "isolationPassed": true,
+      "usage": {
+        "models": [
+          "gemini-3.8-flash"
+        ],
+        "inputTokens": 454796,
+        "outputTokens": 3347,
+        "cacheReadTokens": 316443,
+        "cacheWriteTokens": 0,
+        "reasoningTokens": 9300,
+        "uncachedInputTokens": 138353,
+        "apiMs": 170105
+      },
+      "toolCalls": {
+        "glob": 1,
+        "grep": 14,
+        "view": 15
+      },
+      "quality": {
+        "formatValid": true,
+        "evidenceValid": true,
+        "expectedPathCoverage": 1,
+        "humanReview": "pending"
+      }
+    }
+  ],
+  "pairs": [
+    {
+      "task": "find-ignore-policy",
+      "repetition": 1,
+      "eligibleForClaim": false,
+      "reasons": [
+        "without: human quality review pending/failed",
+        "without: incomplete automatic evidence checks",
+        "with: human quality review pending/failed",
+        "fewer than 3 repetitions; pilot only"
+      ],
+      "inputChangePercent": -67.5,
+      "uncachedInputChangePercent": -55.7,
+      "outputChangePercent": -8.3,
+      "wallChangePercent": -28.9
+    },
+    {
+      "task": "plan-config-addon",
+      "repetition": 1,
+      "eligibleForClaim": false,
+      "reasons": [
+        "without: human quality review pending/failed",
+        "with: human quality review pending/failed",
+        "fewer than 3 repetitions; pilot only"
+      ],
+      "inputChangePercent": -71.4,
+      "uncachedInputChangePercent": -64.9,
+      "outputChangePercent": -27.3,
+      "wallChangePercent": -52.0
+    }
+  ],
+  "limitations": [
+    "One pair per task; no confidence interval or universal savings claim.",
+    "Human quality review pending; automated checks validate format, path bounds and coverage only.",
+    "Malformed answers are preserved, not repaired or rerun.",
+    "Single-agent read-only RAG; no code implementation, multi-agent ROI or semantic-retrieval measurement.",
+    "Provider/OS caches and model variability uncontrolled; input tokens include cached input, not a bill.",
+    "Diagnostic tool_tokens is not an exact additive provider billing partition.",
+    "Frozen dirty checkout; development image uses a local tag, not a published immutable release."
+  ]
+}

@@ -53,6 +53,7 @@ COPY --chown=node:node src ./src
 COPY --chown=node:node tests ./tests
 COPY --chown=node:node semantic ./semantic
 COPY --chown=node:node scripts ./scripts
+COPY --chown=node:node benchmarks ./benchmarks
 RUN chown node:node /app
 USER node
 CMD ["npm", "test"]

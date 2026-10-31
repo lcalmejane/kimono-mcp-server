@@ -1,0 +1,172 @@
+{
+  "schemaVersion": 1,
+  "id": "embedding-policies-20261031",
+  "kind": "embedding",
+  "createdAt": "2026-10-31T15:44:00.000Z",
+  "contributor": {
+    "name": "Kimono maintainers"
+  },
+  "environment": {
+    "os": "darwin",
+    "arch": "arm64"
+  },
+  "kimono": {
+    "image": "tatami-core-kimono"
+  },
+  "corpus": {
+    "description": "Kimono src/, tests/, docs/, README.md and package.json: 79 files, about 1 MiB"
+  },
+  "status": "exploratory",
+  "queries": 16,
+  "policies": [
+    {
+      "policy": "e5",
+      "error": null,
+      "startupMs": 708.2390419999999,
+      "lexicalIndexMs": 172.79108399999996,
+      "semanticIndexMs": 18823.680708,
+      "modes": {
+        "text": {
+          "firstCallMs": 116.51891599999726,
+          "medianMs": 21.38233399999808,
+          "meanMs": 27.16254418750009,
+          "warmMs": 0.6872909999983676,
+          "meanBytes": 581.4375,
+          "meanTokens": 145.359375,
+          "hitAt1": 7,
+          "hitAt3": 9,
+          "hitAt10": 13,
+          "failed": 0,
+          "mrr": 0.5427083333333333
+        },
+        "semantic": {
+          "firstCallMs": 17.770667000000685,
+          "medianMs": 10.926791999998386,
+          "meanMs": 11.230672062500162,
+          "warmMs": 0.4723340000018652,
+          "meanBytes": 572.5625,
+          "meanTokens": 143.140625,
+          "hitAt1": 5,
+          "hitAt3": 12,
+          "hitAt10": 14,
+          "failed": 0,
+          "mrr": 0.5260416666666667
+        },
+        "hybrid": {
+          "firstCallMs": 17.916791999999987,
+          "medianMs": 20.955667000001995,
+          "meanMs": 21.199992187500584,
+          "warmMs": 0.6402080000007118,
+          "meanBytes": 561.8125,
+          "meanTokens": 140.453125,
+          "hitAt1": 5,
+          "hitAt3": 10,
+          "hitAt10": 12,
+          "failed": 0,
+          "mrr": 0.496875
+        }
+      }
+    },
+    {
+      "policy": "auto-balanced",
+      "error": null,
+      "startupMs": 617.5605409999989,
+      "lexicalIndexMs": 152.00291699999798,
+      "semanticIndexMs": 4532.480499999998,
+      "modes": {
+        "text": {
+          "firstCallMs": 101.87145800000144,
+          "medianMs": 21.22179099999994,
+          "meanMs": 26.06646331250022,
+          "warmMs": 0.6282089999986056,
+          "meanBytes": 581.4375,
+          "meanTokens": 145.359375,
+          "hitAt1": 7,
+          "hitAt3": 9,
+          "hitAt10": 13,
+          "failed": 0,
+          "mrr": 0.5427083333333333
+        },
+        "semantic": {
+          "firstCallMs": 18.361125000003085,
+          "medianMs": 11.444625000000087,
+          "meanMs": 11.829013125000756,
+          "warmMs": 0.46645899999930407,
+          "meanBytes": 596.25,
+          "meanTokens": 149.0625,
+          "hitAt1": 2,
+          "hitAt3": 11,
+          "hitAt10": 13,
+          "failed": 0,
+          "mrr": 0.4166666666666667
+        },
+        "hybrid": {
+          "firstCallMs": 21.228416999998444,
+          "medianMs": 24.01799999999639,
+          "meanMs": 23.82209118749938,
+          "warmMs": 0.5790000000015425,
+          "meanBytes": 565.0625,
+          "meanTokens": 141.265625,
+          "hitAt1": 4,
+          "hitAt3": 11,
+          "hitAt10": 15,
+          "failed": 0,
+          "mrr": 0.5020833333333333
+        }
+      }
+    },
+    {
+      "policy": "auto-speed",
+      "error": null,
+      "startupMs": 519.915958000005,
+      "lexicalIndexMs": 164.69108399999823,
+      "semanticIndexMs": 2471.326832999999,
+      "modes": {
+        "text": {
+          "firstCallMs": 100.23991699999897,
+          "medianMs": 20.715874999994412,
+          "meanMs": 27.783851499999855,
+          "warmMs": 0.7122910000034608,
+          "meanBytes": 581.4375,
+          "meanTokens": 145.359375,
+          "hitAt1": 7,
+          "hitAt3": 9,
+          "hitAt10": 13,
+          "failed": 0,
+          "mrr": 0.5427083333333333
+        },
+        "semantic": {
+          "firstCallMs": 22.215791000002355,
+          "medianMs": 9.275083999993512,
+          "meanMs": 10.098869750000176,
+          "warmMs": 0.5467920000010054,
+          "meanBytes": 611.25,
+          "meanTokens": 152.8125,
+          "hitAt1": 2,
+          "hitAt3": 10,
+          "hitAt10": 13,
+          "failed": 0,
+          "mrr": 0.41145833333333337
+        },
+        "hybrid": {
+          "firstCallMs": 19.08066699999472,
+          "medianMs": 21.458917000003566,
+          "meanMs": 21.533450562499183,
+          "warmMs": 0.6112499999944703,
+          "meanBytes": 577.0625,
+          "meanTokens": 144.265625,
+          "hitAt1": 4,
+          "hitAt3": 10,
+          "hitAt10": 15,
+          "failed": 0,
+          "mrr": 0.4864583333333333
+        }
+      }
+    }
+  ],
+  "limitations": [
+    "Hand-written queries with author-chosen expected files; indicative only.",
+    "One cold run per policy for indexing; no confidence interval.",
+    "Tokens are estimated as response bytes / 4."
+  ]
+}

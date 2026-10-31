@@ -2,7 +2,8 @@ import { createHash, randomUUID } from 'node:crypto';
 import { lstat, mkdir, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { AikidoKnowledgeBase, FileMetadata } from './knowledge.js';
-import { AikidoKnowledgeBase as KnowledgeBase } from './knowledge.js';
+import { AikidoKnowledgeBase as KnowledgeBase, classify } from './knowledge.js';
+import { UserOverlay, validateOwner } from './overlay.js';
 import { sourceSnapshot } from './index-basis.js';
 import { readRemoteSourceMetadata } from './project-policy.js';
 import { synchronizationPaths, within } from './synchronization.js';
@@ -35,6 +36,8 @@ export interface KnowledgeSnapshot {
       indexedAt?: string;
       corpusFingerprint: string;
     } | null;
+    /** Present when the snapshot merges the shared ROOT with a user's staged overlay. */
+    overlay?: { owner: string; files: number };
   };
   readonly knowledge: AikidoKnowledgeBase;
   readonly bytes: number;
@@ -55,14 +58,15 @@ export class SnapshotManager {
     this.snapshotsRoot = path.join(source.searchIndex.directory, 'snapshots');
   }
 
-  async begin(paths?: string[]): Promise<Record<string, unknown>> {
+  async begin(paths?: string[], owner?: string): Promise<Record<string, unknown>> {
     const scopes = synchronizationPaths(paths);
-    const action = this.pending.then(() => this.capture(scopes));
+    const user = owner === undefined ? undefined : validateOwner(owner);
+    const action = this.pending.then(() => this.capture(scopes, user));
     this.pending = action.then(() => undefined, () => undefined);
     return action;
   }
 
-  private async capture(paths?: string[]): Promise<Record<string, unknown>> {
+  private async capture(paths?: string[], owner?: string): Promise<Record<string, unknown>> {
     const limits = this.source.config;
     await this.collectExpired();
     if (this.snapshots.size >= limits.maxSnapshots) throw new Error(`Snapshot limit reached (maximum ${limits.maxSnapshots}); end an unused snapshot`);
@@ -88,26 +92,55 @@ export class SnapshotManager {
       const canonicalCorpus = await realpath(corpusRoot);
       if (!isWithin(canonicalSnapshotRoot, canonicalCorpus)) throw new Error('Snapshot corpus escaped its cache directory');
 
-      const fingerprint = createHash('sha256');
-      for (const entry of entries) {
-        const document = await this.source.tryRead(entry.path);
-        if (!document) continue;
-        const { content } = document;
+      // The user's staged overlay (replica workflow) is merged over the shared ROOT: puts replace or add files,
+      // deletes hide them. Stability is still checked against the ROOT alone, so the shared state is what must not move.
+      const overlay = owner === undefined ? undefined : new UserOverlay(this.cacheRoot_(), owner);
+      const staged = overlay ? await overlay.entries() : {};
+      const stagedPaths = Object.keys(staged).filter(file => within(file, paths)).sort();
+      const store = async (file: string, content: string) => {
         bytes += Buffer.byteLength(content);
         if (bytes > limits.snapshotMaxBytes) throw new Error(`Snapshot exceeds the ${limits.snapshotMaxBytes} byte corpus limit; use begin paths or raise snapshotMaxBytes`);
         if (inUseBytes + bytes > limits.snapshotsTotalBytes) throw new Error(`Active snapshots exceed the ${limits.snapshotsTotalBytes} byte total limit`);
-        const destination = path.resolve(canonicalCorpus, entry.path);
-        if (!isWithin(canonicalCorpus, destination)) throw new Error(`Unsafe snapshot document path: ${entry.path}`);
+        const destination = path.resolve(canonicalCorpus, file);
+        if (!isWithin(canonicalCorpus, destination)) throw new Error(`Unsafe snapshot document path: ${file}`);
         await mkdir(path.dirname(destination), { recursive: true, mode: 0o700 });
         await writeFile(destination, content, { mode: 0o600, flag: 'wx' });
         documents++;
-        if (document.entry.metadata) metadata.set(entry.path, { ...document.entry.metadata });
-        fingerprint.update(JSON.stringify([entry.path, entry.kind, content]));
+      };
+
+      const fingerprint = createHash('sha256');
+      const merged: Array<{ path: string; kind: string; content: string }> = [];
+      const handled = new Set<string>();
+      for (const entry of entries) {
+        const document = await this.source.tryRead(entry.path);
+        if (!document) continue;
+        handled.add(entry.path);
+        fingerprint.update(JSON.stringify([entry.path, entry.kind, document.content]));
+        const change = Object.hasOwn(staged, entry.path) ? staged[entry.path] : undefined;
+        if (change?.op === 'delete') continue;
+        const content = change ? (await overlay!.content(entry.path)) as string : document.content;
+        await store(entry.path, content);
+        if (!change && document.entry.metadata) metadata.set(entry.path, { ...document.entry.metadata });
+        merged.push({ path: entry.path, kind: entry.kind, content });
+      }
+      for (const file of stagedPaths) {
+        if (handled.has(file) || staged[file].op === 'delete') continue;
+        const content = (await overlay!.content(file)) as string;
+        await store(file, content);
+        merged.push({ path: file, kind: classify(file), content });
       }
 
-      const version = fingerprint.digest('hex');
+      const rootVersion = fingerprint.digest('hex');
+      let version = rootVersion;
+      if (stagedPaths.length) {
+        const combined = createHash('sha256');
+        for (const item of merged.sort((a, b) => a.path.localeCompare(b.path))) {
+          combined.update(JSON.stringify([item.path, item.kind, item.content]));
+        }
+        version = combined.digest('hex');
+      }
       const after = await sourceSnapshot(this.source, paths);
-      if (JSON.stringify(before) !== JSON.stringify(after) || before.corpusFingerprint !== version) {
+      if (JSON.stringify(before) !== JSON.stringify(after) || before.corpusFingerprint !== rootVersion) {
         throw new Error('Knowledge base changed while the snapshot was being captured; retry');
       }
       const remoteSource = paths ? null : await readRemoteSourceMetadata(this.source.searchIndex.directory);
@@ -133,6 +166,7 @@ export class SnapshotManager {
           dirty: before.dirty,
           statusFingerprint: before.statusFingerprint,
           indexedSource,
+          ...(overlay && stagedPaths.length ? { overlay: { owner: overlay.owner, files: stagedPaths.length } } : {}),
         },
         knowledge,
         bytes,
@@ -183,6 +217,10 @@ export class SnapshotManager {
     const snapshot = this.snapshots.get(snapshotId);
     if (!snapshot) throw new Error(`Snapshot ${snapshotId} is unknown or stale; begin a new snapshot`);
     return snapshot;
+  }
+
+  private cacheRoot_(): string {
+    return this.source.searchIndex.directory;
   }
 
   private describe(snapshot: KnowledgeSnapshot) {

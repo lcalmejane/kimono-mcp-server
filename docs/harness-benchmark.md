@@ -18,7 +18,7 @@ ne se généralisent pas automatiquement à tous les harnais, modèles ou projet
 
 La [campagne Gemini 3.8 Flash](../benchmarks/copilot-gemini-compact.json) fixe
 le modèle et utilise `mcp.searchDetail: "compact"` (chemins/plages sans code).
-Le [seul rapport courant](../benchmarks/results/current.md) porte sur le runtime
+Le [rapport lexical courant](../benchmarks/results/current.md) porte sur le runtime
 à schémas allégés et recherches `queries[]` / lectures `ranges[]` groupées.
 Limite identique de 600 secondes par cellule. À la demande du propriétaire,
 ce pilote remplace les anciennes campagnes de développement : leurs rapports
@@ -321,6 +321,131 @@ Persister les traces propres au harnais dans le répertoire de la cellule.
 Ce contrat permet d'ajouter Claude Code, Codex ou Antigravity sans réécrire le
 protocole. **Aucun de ces adaptateurs n'est fourni ou certifié ici.** Ne pas
 comparer directement les compteurs de deux fournisseurs sans vérifier leur sens.
+
+## Rejouer les mesures (autre LLM, autre machine)
+
+Les mesures de toute campagne, quel que soit le LLM, s'ajoutent à une base de
+fiches JSON validées par un schéma : voir [benchmark-database.md](benchmark-database.md)
+(modèle de configuration `benchmarks/external-template.json`, adaptateur
+`benchmarks/adapters/adapter-template.mjs`, import `npm run bench:db`).
+
+Trois rapports vivent dans `benchmarks/results/`, chacun avec son JSON :
+
+| Rapport | Outil | Appelle un LLM |
+| --- | --- | --- |
+| [`current.md`](../benchmarks/results/current.md) : Copilot/Gemini, recherche lexicale | `npm run bench:harness -- benchmarks/copilot-gemini-compact.json DIR` | oui |
+| [`copilot-gemini-auto-speed.md`](../benchmarks/results/copilot-gemini-auto-speed.md) : même harnais, recherche hybride `auto-speed` | `npm run bench:harness -- benchmarks/copilot-gemini-auto-speed.json DIR` | oui |
+| [`embedding-policies.md`](../benchmarks/results/embedding-policies.md) : `e5` / `auto-balanced` / `auto-speed` | `node scripts/bench-embedding.mjs …` | non |
+
+**Autre LLM.** Le runner mesure un harnais, pas un modèle précis : changer de LLM
+revient à changer `harness` et `model` dans une copie du JSON de campagne.
+Copilot CLI est le seul adaptateur fourni. Pour Claude Code, Codex, Zoo Code ou un
+autre client, écrire un adaptateur `harness.kind: "external"` (section précédente).
+Les tâches, le corpus, la politique d'inclusion et le protocole d'isolation restent
+identiques, ce qui rend les paires comparables. Les compteurs de tokens de deux
+fournisseurs n'ont pas forcément le même sens (cache inclus ou non) : ne pas les
+comparer directement sans le vérifier.
+
+**Campagne hybride `auto-speed`.** `copilot-gemini-auto-speed.json` lance l'image
+Docker `tatami-core-kimono` (à construire ou à remplacer par une image publiée) et
+monte en lecture seule `{server}/.bench-models`, ignoré par Git. Ce dossier a la
+disposition de `KIMONO_MODELS_DIR` ; y copier les dossiers `code-…` et
+`multilingual-fast-…` du volume d'état de Kimono (ou d'un téléchargement confirmé).
+Rien n'est téléchargé pendant la mesure. Pour tester `e5` ou `auto-balanced`,
+changer `KIMONO_EMBEDDING_POLICY` dans `mcp.args`, et `mcp.indexMode` en `literal`
+pour une campagne lexicale.
+
+**Politiques d'embedding.** Sans LLM, donc sans crédit :
+
+```sh
+node scripts/bench-embedding.mjs --corpus DIR --models DIR --out DIR \
+  [--image tatami-core-kimono] [--policies e5,auto-balanced,auto-speed] \
+  [--runs 5] [--limit 10] [--cases cases.json] \
+  [--workers 2] [--modes text,semantic,hybrid]
+```
+
+`--workers N` fixe `KIMONO_SEMANTIC_WORKERS` dans le conteneur : sur un gros corpus,
+le défaut (un worker par cœur) peut dépasser la mémoire de la VM Docker et le
+processus sémantique est tué (`SIGKILL`). `--modes` limite les modes mesurés ; le
+mode `text` est bien plus lent que `semantic` sur un grand corpus, les séparer permet
+d'obtenir le sémantique rapidement. Le snapshot de recherche est renouvelé avant son
+expiration (15 minutes par défaut), faute de quoi une longue passe lexicale invalide
+les modes suivants.
+
+`--corpus` désigne n'importe quel dossier (une copie du dépôt à mesurer), `--models`
+le dossier de modèles ci-dessus, `--cases` un JSON `[{"query": "…", "expected":
+["chemin/fichier.ts"]}]` pour remplacer les 16 requêtes par défaut. Chaque
+politique tourne dans un conteneur jetable à cache vide ; le rapport indique la
+première exécution de chaque requête (les suivantes passent par le cache de
+recherche) et estime les tokens à octets / 4.
+
+**Corpus de documents d'entreprise (avec et sans Kimono).** Pour mesurer le temps, les
+tokens et la consommation d'un agent avec et sans Kimono sur un gros corpus de
+documents, on utilise les documents du jeu public
+[onyx-dot-app/EnterpriseRAG-Bench](https://github.com/onyx-dot-app/EnterpriseRAG-Bench)
+(code MIT) **uniquement comme contenu** : ni ses questions, ni ses tests, ni son
+évaluation. Les tâches sont les nôtres, dans
+`benchmarks/enterprise-rag-docs.json` (trois tâches de recherche, une répétition,
+Copilot CLI avec Gemini 3.8 Flash). Le jeu contient un GUID « canary » demandant de ne
+pas l'inclure dans des corpus d'entraînement : le garder hors du dépôt et ne jamais le
+committer ni le publier. `.bench-corpus/` est ignoré par Git.
+
+Préparer le corpus (13 241 documents GitHub et Confluence) : extraire les archives de
+la release du jeu sous `/tmp/erb/docs`, puis, depuis `kimono-mcp-server/` :
+
+```sh
+mkdir -p .bench-corpus/enterprise-rag/github .bench-corpus/enterprise-rag/confluence
+for d in /tmp/erb/docs/github_slice_*/github;         do cp -R "$d/." .bench-corpus/enterprise-rag/github/; done
+for d in /tmp/erb/docs/confluence_slice_*/confluence; do cp -R "$d/." .bench-corpus/enterprise-rag/confluence/; done
+git -C .bench-corpus/enterprise-rag init -q && git -C .bench-corpus/enterprise-rag add -A \
+  && git -C .bench-corpus/enterprise-rag -c user.name=bench -c user.email=bench@example.invalid commit -qm corpus
+```
+
+Le runner exige un dépôt Git propre comme corpus (commit et état `dirty` consignés).
+Vérifier la campagne sans appeler de LLM, puis la lancer (plusieurs minutes, hors
+`/tmp` si besoin) :
+
+```sh
+npm run bench:harness -- benchmarks/enterprise-rag-docs.json /tmp/erb/harness-dry --dry-run
+npm run bench:harness -- benchmarks/enterprise-rag-docs.json /tmp/erb/harness-run
+```
+
+`KIMONO_SEMANTIC_WORKERS=2` est fixé dans la configuration MCP : sur ce corpus (89 Mo,
+140 289 morceaux) le défaut d'un worker par cœur dépasse la mémoire de la VM Docker et
+le worker est tué (`SIGKILL`) pendant le préchauffage. Le préchauffage et les 6
+cellules (3 tâches × avec et sans Kimono) ont été validés jusqu'au lancement de
+Copilot ; l'état au 2026-10-31 est que les cellules échouent en
+`402 additional_spend_limit_reached` (limite d'usage supplémentaire du plan Copilot
+atteinte), donc **aucune mesure n'a encore été obtenue** pour cette campagne. Après un
+échec, supprimer le dossier de sortie avant de relancer : le runner refuse un dossier
+existant. Importer ensuite le résultat avec `npm run bench:db -- import-harness DIR …`.
+
+**Qualité de la recherche seule (sans LLM).** Cette mesure répond à une autre
+question : la bonne source est-elle retrouvée, et en combien de temps ? Elle n'inclut
+ni agent, ni bras sans Kimono, ni consommation de tokens, et ne répond donc pas à la
+question « avec ou sans Kimono ». Elle utilise les questions du jeu et leurs documents
+attendus :
+
+```sh
+# Questions : questions.jsonl ; archives GitHub et Confluence extraites sous DIR/docs
+node scripts/enterprise-rag-cases.mjs --questions questions.jsonl --corpus DIR/docs \
+  --out cases.json [--sources github,confluence] [--types basic,semantic] [--limit N]
+node scripts/bench-embedding.mjs --corpus DIR/docs --models .bench-models --out OUT \
+  --policies auto-speed --runs 1 --cases cases.json --workers 2
+node scripts/enterprise-rag-report.mjs --results OUT/results.json --cases cases.json
+```
+
+`enterprise-rag-cases.mjs` associe les `expected_doc_ids` aux fichiers `dsid_<id>__…`
+et ignore les questions sans document attendu (`high_level`, `info_not_found`), celles
+d'une source absente du corpus et celles dont un document manque. Le rapport par
+catégorie joint les lignes aux cas par le texte de la requête. Un seul document
+attendu suffit pour compter un succès : c'est plus indulgent que le rappel complet
+pour les catégories `completeness` et `project_related`. Le mode texte est très lent
+sur ce corpus (environ 10 s par requête) : mesurer le sémantique à part avec
+`--modes semantic`.
+
+Toute campagne reste exploratoire tant que la revue humaine et au moins trois
+répétitions manquent : le runner marque les paires non admissibles.
 
 ## Références
 

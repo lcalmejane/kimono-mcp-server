@@ -44,6 +44,15 @@ export const EMBEDDING_CATALOGUE: readonly CatalogueModel[] = [
 export const isCodeSource = (file: string): boolean =>
   /\.(?:c|cc|cpp|cs|h|hpp|fs|fsx|go|java|kt|kts|js|jsx|mjs|cjs|ts|tsx|vue|svelte|astro|css|scss|sass|less|html|php|py|rb|rake|rs|scala|swift|m|mm|sql|graphql|gql|proto|ex|exs|erl|hrl|clj|cljs|dart|lua|r|jl|pl|pm|sh|ps1|bat|cmd|bash|zsh|fish|dockerfile|gradle|tf|tfvars|hcl|cmake)$/i.test(file)
   || /^(?:Dockerfile|Containerfile|Makefile|GNUmakefile|Justfile|Jenkinsfile|Gemfile|Rakefile|Procfile|CMakeLists\.txt)$/i.test(path.posix.basename(file));
+/**
+ * Policy used when a ROOT has no saved choice and the host sets no KIMONO_EMBEDDING_POLICY.
+ * Selected by content type (code, documents or both); the matching model still needs a confirmed download.
+ * An explicit `e5` keeps the bundled legacy model, and an existing legacy index is never migrated implicitly.
+ */
+export const DEFAULT_EMBEDDING_POLICY: EmbeddingPolicy = 'auto-speed';
+export function configuredEmbeddingPolicy(): EmbeddingPolicy {
+  return embeddingPolicy(process.env.KIMONO_EMBEDDING_POLICY || DEFAULT_EMBEDDING_POLICY);
+}
 export function embeddingPolicy(value: unknown): EmbeddingPolicy {
   if (!EMBEDDING_POLICIES.some(policy => policy === value)) throw new Error('Invalid embedding policy.');
   return value as EmbeddingPolicy;
@@ -190,6 +199,22 @@ async function digest(file: string): Promise<string> {
   for await (const chunk of createReadStream(file)) hash.update(chunk);
   return hash.digest('hex');
 }
+/** Live state of a model download, published in `aikido_index status` and `aikido_models status` (in-process). */
+export interface ModelDownload {
+  model: ModelId; state: 'downloading' | 'verifying' | 'done' | 'error';
+  file?: string; fileIndex: number; fileCount: number; bytes: number; totalBytes: number;
+  startedAt: string; updatedAt: string; error?: string;
+}
+const downloads = new Map<ModelId, ModelDownload>();
+const FINISHED_DOWNLOAD_VISIBLE_MS = 60_000;
+/** Running downloads, plus finished or failed ones for one minute so a panel can show the outcome. */
+export function downloadProgress(): ModelDownload[] {
+  const now = Date.now();
+  for (const [id, item] of downloads) {
+    if ((item.state === 'done' || item.state === 'error') && now - Date.parse(item.updatedAt) > FINISHED_DOWNLOAD_VISIBLE_MS) downloads.delete(id);
+  }
+  return [...downloads.values()].map(item => ({ ...item }));
+}
 export async function installEmbeddingModel(root: string, id: unknown, confirmed: unknown): Promise<void> {
   if (confirmed !== true) throw new Error('Explicit confirmation is required before downloading an embedding model.');
   const model = catalogueModel(id);
@@ -203,10 +228,20 @@ export async function installEmbeddingModel(root: string, id: unknown, confirmed
     throw error;
   });
   const pending = `${directory}.${randomUUID()}.pending`;
+  const started = new Date().toISOString();
+  const progress: ModelDownload = { model: model.id, state: 'downloading', fileIndex: 0, fileCount: model.files.length,
+    bytes: 0, totalBytes: model.files.reduce((sum, item) => sum + item.bytes, 0), startedAt: started, updatedAt: started };
+  const publish = (patch: Partial<ModelDownload>): void => {
+    Object.assign(progress, patch, { updatedAt: new Date().toISOString() });
+    downloads.set(model.id, progress);
+  };
   try {
     if (await modelInstalled(root, model.id)) return;
     await mkdir(pending, { mode: 0o700 });
-    for (const item of model.files) {
+    publish({});
+    let completed = 0;
+    for (const [index, item] of model.files.entries()) {
+      publish({ file: item.name, fileIndex: index + 1, state: 'downloading', bytes: completed });
       const response = await fetch(`https://huggingface.co/${model.repository}/resolve/${model.revision}/${item.name}`,
         { signal: AbortSignal.timeout(15 * 60_000) });
       if (!response.ok || !response.body) throw new Error(`Model download failed (${response.status}): ${item.name}`);
@@ -219,12 +254,20 @@ export async function installEmbeddingModel(root: string, id: unknown, confirmed
           bytes += chunk.byteLength;
           if (bytes > item.bytes) throw new Error(`Model download exceeds pinned size: ${item.name}`);
           await handle.writeFile(chunk);
+          publish({ bytes: completed + bytes });
         }
       } finally { await handle.close(); }
+      publish({ state: 'verifying' });
       if (bytes !== item.bytes || await digest(target) !== item.sha256) throw new Error(`Model checksum/size mismatch: ${item.name}`);
+      completed += item.bytes;
+      publish({ bytes: completed, state: 'downloading' });
     }
     await writeFile(path.join(pending, 'model.json'), JSON.stringify(modelDescriptor(model)), { flag: 'wx', mode: 0o600 });
     await rename(pending, directory);
+    publish({ state: 'done', bytes: progress.totalBytes });
+  } catch (error) {
+    publish({ state: 'error', error: (error instanceof Error ? error.message : String(error)).slice(0, 300) });
+    throw error;
   } finally {
     await rm(pending, { recursive: true, force: true });
     await lock.close();
