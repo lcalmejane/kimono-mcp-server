@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.9.3 - 2026-10-31
+
+- Fix the packaged VSIX smoke test: the generic stdio session now pins the bundled `e5` model, because the new `auto-speed` default needs a confirmed model download and logged a semantic preparation failure. No runtime change; 0.9.2 shipped only the container image.
+
 ## 0.9.2 - 2026-10-31
 
 - Add `benchmarks/enterprise-rag-docs.json`, a with/without-Kimono harness campaign
