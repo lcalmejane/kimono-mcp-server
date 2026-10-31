@@ -8,11 +8,11 @@ import { runProcess } from './process.js';
 import { within, type ChangeReport } from './synchronization.js';
 import { IndexLockedError, indexInfos, processAlive, trackIndex } from './index-basis.js';
 import { nativeDiagnostics } from './diagnostics.js';
-import { semanticWorkerEnabled, semanticWorkerFor, semanticWorkerStatus, type SemanticWorkerStatus } from './semantic-worker.js';
+import { semanticWorkerEnabled, semanticWorkerFor, semanticWorkerStatus, shutdownSemanticWorkers, type SemanticWorkerStatus } from './semantic-worker.js';
 import {
-  EMBEDDING_CATALOGUE, assertEmbeddingMemory, corpusComposition, embeddingPolicy,
+  EMBEDDING_CATALOGUE, assertEmbeddingMemory, configuredEmbeddingPolicy, corpusComposition, downloadProgress, embeddingPolicy,
   installEmbeddingModel, isCodeSource, modelInstalled, readEmbeddingSettings, resolveEmbedding,
-  saveEmbeddingSettings, type EmbeddingPolicy, type EmbeddingSelection,
+  saveEmbeddingSettings, type EmbeddingPolicy, type EmbeddingSelection, type ModelDownload,
 } from './embedding-models.js';
 
 export interface SemanticRuntime {
@@ -80,8 +80,27 @@ interface SemanticManifest {
   chunks: Record<string, unknown>;
   complete: boolean;
 }
+/** One embedding profile of the active selection; `mixed` selections run a documents and a code profile in turn. */
+export interface SemanticEmbeddingProfile {
+  id: 'multilingual' | 'code'; model: string; scope: 'all' | 'code' | 'documents';
+  state: 'pending' | 'running' | 'done' | 'error';
+  chunks?: number; embedded?: Count;
+}
+export interface SemanticEmbedding {
+  policy: string; reason?: string; mixed: boolean; current?: 'multilingual' | 'code';
+  profiles: SemanticEmbeddingProfile[];
+}
+const embeddingOf = (selection: EmbeddingSelection, state: SemanticEmbeddingProfile['state']): SemanticEmbedding => ({
+  policy: selection.policy, reason: selection.reason, mixed: selection.profiles.length > 1,
+  profiles: selection.profiles.map(profile => ({ id: profile.id, model: profile.model, scope: profile.scope, state })),
+});
+
 export interface SemanticStatus {
   phase: 'unknown' | 'running' | 'waiting' | 'ready' | 'error' | 'disabled';
+  /** Embedding mode and per-profile state (Mixed = documents + code). */
+  embedding?: SemanticEmbedding;
+  /** Model downloads in progress, or finished within the last minute. */
+  downloads?: ModelDownload[];
   operation?: string; stage?: string; startedAt?: string; completedAt?: string; indexedAt?: string;
   progress?: Count; error?: string;
   chunks?: number; model?: string;
@@ -94,6 +113,11 @@ export interface SemanticStatus {
   chunksPerSecond?: number; etaSeconds?: number; updatedAt?: string;
   source?: 'this-process' | 'another-process';
   worker?: SemanticWorkerStatus;
+}
+
+/** Raised when the user stops an index operation; it is a normal outcome, not a failure to log. */
+export class CancelledError extends Error {
+  constructor() { super('Semantic indexing was cancelled; the previous index generation is unchanged.'); this.name = 'CancelledError'; }
 }
 
 const estimateTokens = (bytes: number) => Math.ceil(bytes / 4);
@@ -123,6 +147,8 @@ export class SemanticIndex {
   private snapshotSelection: EmbeddingSelection | undefined;
   private managedDocuments: Record<string, string> | undefined;
   private modelTransition = false;
+  private controller: AbortController | undefined;
+  private knownEmbedding: SemanticEmbedding | undefined;
   constructor(private readonly knowledge: AikidoKnowledgeBase) {}
 
   private async activeSelection(): Promise<EmbeddingSelection | undefined> {
@@ -134,7 +160,7 @@ export class SemanticIndex {
     const active = await this.activeSelection();
     if (active || this.knowledge.immutable) return active;
     const saved = await readEmbeddingSettings(this.knowledge);
-    const policy = saved?.requestedPolicy ?? embeddingPolicy(process.env.KIMONO_EMBEDDING_POLICY ?? 'e5');
+    const policy = saved?.requestedPolicy ?? configuredEmbeddingPolicy();
     if (!saved && policy === 'e5') return undefined;
     try {
       await stat(path.join(this.knowledge.searchIndex.directory, 'semantic', 'state.json'));
@@ -154,8 +180,8 @@ export class SemanticIndex {
   async models(): Promise<Record<string, unknown>> {
     const saved = this.knowledge.immutable ? undefined : await readEmbeddingSettings(this.knowledge);
     const active = this.knowledge.immutable ? this.snapshotSelection : saved?.active;
-    const requestedPolicy = saved?.requestedPolicy
-      ?? embeddingPolicy(process.env.KIMONO_EMBEDDING_POLICY ?? 'e5');
+    if (active && !this.state.embedding) this.knownEmbedding = embeddingOf(active, 'done');
+    const requestedPolicy = saved?.requestedPolicy ?? configuredEmbeddingPolicy();
     const resolved = resolveEmbedding(this.knowledge, requestedPolicy);
     const models = await Promise.all(EMBEDDING_CATALOGUE.map(async ({ files: _files, ...model }) =>
       ({ ...model, installed: await modelInstalled(this.knowledge.root, model.id) })));
@@ -173,6 +199,7 @@ export class SemanticIndex {
     return {
       requestedPolicy, activePolicy: active?.policy ?? (legacy ? 'e5' : null), reason: resolved.reason,
       corpus: corpusComposition(this.knowledge), requiredModels, missingModels, reconstructionRequired, models,
+      downloads: downloadProgress(),
       profiles: (active ?? resolved).profiles.map(profile => ({
         id: profile.id, model: profile.model, files: this.knowledge.list().filter(entry =>
           profile.scope === 'all' || isCodeSource(entry.path) === (profile.scope === 'code')).length,
@@ -183,10 +210,18 @@ export class SemanticIndex {
     };
   }
 
+  /**
+   * Starts the pinned download and returns without waiting for it: a 500 MB model outlives any RPC timeout.
+   * Immediate failures (missing consent, held lock, bad cache location) are still thrown; later ones are published
+   * in `downloads` of the index status for a minute. Poll `aikido_index status` to follow the progress.
+   */
   async installModel(model: unknown, confirmed: unknown): Promise<Record<string, unknown>> {
     if (this.knowledge.immutable) throw new Error('Snapshot models are immutable.');
-    await installEmbeddingModel(this.knowledge.root, model, confirmed);
-    return this.models();
+    const run = installEmbeddingModel(this.knowledge.root, model, confirmed);
+    run.catch(error => console.error('Embedding model download failed:', error instanceof Error ? error.message : String(error)));
+    let settled = false;
+    await Promise.race([run.finally(() => { settled = true; }), new Promise(resolve => setTimeout(resolve, 750))]);
+    return { ...await this.models(), installing: !settled };
   }
 
   async configureModels(policy: unknown, confirmed: unknown): Promise<Record<string, unknown>> {
@@ -251,6 +286,9 @@ export class SemanticIndex {
     }
     const worker = this.workerStatus();
     if (worker) status = { ...status, worker };
+    if (!status.embedding && this.knownEmbedding) status = { ...status, embedding: structuredClone(this.knownEmbedding) };
+    const downloads = downloadProgress();
+    if (downloads.length) status = { ...status, downloads };
     return status;
   }
 
@@ -304,6 +342,60 @@ export class SemanticIndex {
 
   async idle(): Promise<void> { await this.pending; }
 
+  /** Runs one maintenance operation under a cancellation signal. Operations are serialized by `pending`, so one slot suffices. */
+  private async cancellable<T>(task: () => Promise<T>): Promise<T> {
+    const controller = new AbortController();
+    this.controller = controller;
+    try { return await task(); }
+    finally { if (this.controller === controller) this.controller = undefined; }
+  }
+
+  /**
+   * Stops the index operation running in this process (native batch included) or the wait for another indexer.
+   * The previous generation stays active. An operation owned by another process cannot be stopped from here.
+   */
+  async cancel(): Promise<SemanticStatus & { cancelRequested: boolean }> {
+    if (this.knowledge.immutable) throw new Error('Snapshot indexes cannot be cancelled.');
+    let cancelRequested = false;
+    if (this.retry) { clearTimeout(this.retry); this.retry = undefined; }
+    const controller = this.controller;
+    if (controller && !controller.signal.aborted) {
+      controller.abort(new CancelledError());
+      cancelRequested = true;
+    } else if (this.state.phase === 'waiting') {
+      this.update({ phase: 'error', stage: 'cancelled', operation: this.state.operation, error: new CancelledError().message });
+      cancelRequested = true;
+    }
+    if (cancelRequested) await Promise.race([this.pending, new Promise<void>(resolve => { setTimeout(resolve, 5000).unref(); })]);
+    return { ...this.status(), cancelRequested };
+  }
+
+  /** Deletes every semantic generation of this ROOT (the lexical index and the embedding policy are kept). */
+  async reset(): Promise<SemanticStatus> {
+    if (this.knowledge.immutable) throw new Error('Snapshot indexes are immutable.');
+    const status = this.status();
+    if (this.modelTransition || status.phase === 'running' || status.phase === 'waiting') {
+      throw new Error('An index operation is running: cancel it (aikido_index operation=cancel) before deleting the semantic index.');
+    }
+    const result = this.pending.then(async () => {
+      // Workers keep hot indexes in memory and open files: stop them before deleting, they restart on demand.
+      await shutdownSemanticWorkers();
+      const directory = this.knowledge.searchIndex.directory;
+      for (const name of ['semantic', 'semantic-code', 'semantic-models', 'semantic-basis.json']) {
+        await rm(path.join(directory, name), { recursive: true, force: true });
+      }
+      const settings = await readEmbeddingSettings(this.knowledge);
+      // The chosen policy survives; only the built generation is forgotten so the next build starts clean.
+      if (settings?.active || settings?.error) await saveEmbeddingSettings(this.knowledge, { version: 1, requestedPolicy: settings.requestedPolicy });
+      rmSync(this.statusFile, { force: true });
+      this.knownEmbedding = undefined;
+      this.state = { phase: 'unknown', stage: 'reset' };
+    });
+    this.pending = result.then(() => undefined, () => undefined);
+    await result;
+    return this.status();
+  }
+
   warmup(operation: 'update' | 'rebuild' = 'update'): void {
     if (operation === 'rebuild' && this.rebuildRequested) throw new Error('Semantic rebuild is already running or queued.');
     if (operation === 'update' && this.state.phase === 'running') return;
@@ -311,7 +403,7 @@ export class SemanticIndex {
     if (operation === 'rebuild') this.rebuildRequested = true;
     const startedAt = new Date().toISOString();
     this.update({ phase: 'running', operation, stage: 'checking_index', startedAt });
-    const result = this.pending.then(async () => {
+    const result = this.pending.then(() => this.cancellable(async () => {
       try {
         const settings = await readEmbeddingSettings(this.knowledge);
         const active = settings?.active;
@@ -320,7 +412,7 @@ export class SemanticIndex {
           else await this.performManaged(operation, active);
           return;
         }
-        if (settings || process.env.KIMONO_EMBEDDING_POLICY && process.env.KIMONO_EMBEDDING_POLICY !== 'e5') {
+        if (settings || configuredEmbeddingPolicy() !== 'e5') {
           if (!settings) {
             try {
               await stat(path.join(this.knowledge.searchIndex.directory, 'semantic', 'state.json'));
@@ -330,7 +422,7 @@ export class SemanticIndex {
               if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
             }
           }
-          const policy = settings?.requestedPolicy ?? embeddingPolicy(process.env.KIMONO_EMBEDDING_POLICY);
+          const policy = settings?.requestedPolicy ?? configuredEmbeddingPolicy();
           const desired = resolveEmbedding(this.knowledge, policy);
           for (const profile of desired.profiles) {
             if (!await modelInstalled(this.knowledge.root, profile.model)) {
@@ -377,11 +469,15 @@ export class SemanticIndex {
           this.retry.unref();
           return;
         }
+        if (error instanceof CancelledError) {
+          this.update({ phase: 'error', operation, stage: 'cancelled', startedAt, completedAt: new Date().toISOString(), error: error.message });
+          return;
+        }
         this.update({ phase: 'error', operation, startedAt, completedAt: new Date().toISOString(),
           error: error instanceof Error ? error.message : String(error) });
         throw error;
       }
-    }).finally(() => { if (operation === 'rebuild') this.rebuildRequested = false; });
+    })).finally(() => { if (operation === 'rebuild') this.rebuildRequested = false; });
     this.pending = result.then(() => undefined, () => undefined);
     void result.catch(error => {
       console.error('Semantic index preparation failed:', error instanceof Error ? error.message : String(error));
@@ -472,7 +568,7 @@ export class SemanticIndex {
     operation: 'search' | 'update' | 'rebuild' | 'compact' | 'stats',
     options: SemanticOptions = {},
   ): Promise<SemanticResult> {
-    const result = this.pending.then(async () => {
+    const result = this.pending.then(() => this.cancellable(async () => {
       const selection = await this.selectionForOperation();
       const result = selection ? operation === 'rebuild' && !this.knowledge.immutable
         ? await this.rebuildManaged(selection, options) : await this.performManaged(operation, selection, options)
@@ -482,7 +578,7 @@ export class SemanticIndex {
         await saveEmbeddingSettings(this.knowledge, { version: 1, requestedPolicy: selection.policy, active: selection });
       }
       return result;
-    });
+    }));
     this.pending = result.then(() => undefined, () => undefined);
     return result;
   }
@@ -523,7 +619,10 @@ export class SemanticIndex {
     this.selection = selection;
     const maintenance = operation !== 'search' && operation !== 'stats';
     const startedAt = new Date().toISOString();
-    if (maintenance) this.update({ phase: 'running', operation, stage: operation, startedAt });
+    if (maintenance) {
+      this.knownEmbedding = undefined;
+      this.update({ phase: 'running', operation, stage: operation, startedAt, embedding: embeddingOf(selection, 'pending') });
+    }
     try {
       const execute = async (observed?: (fingerprint: string, partial?: boolean) => void,
         reusableFingerprint?: string, reusableDocuments?: Record<string, string>) => {
@@ -536,13 +635,30 @@ export class SemanticIndex {
           const scope = this.knowledge.list().filter(entry => profile.scope === 'all'
             || isCodeSource(entry.path) === (profile.scope === 'code')).map(entry => entry.path);
           const paths = operation === 'search' ? scope.filter(file => !options.paths || options.paths.includes(file)) : options.paths;
-          outputs.push(await this.execute(operation, { ...options, profile: profile.id === 'code' ? 'code' : undefined,
-            refreshed: true, ...(paths ? { paths } : {}) }, undefined, reusableFingerprint, reusableDocuments));
+          const published = maintenance ? this.state.embedding?.profiles.find(item => item.id === profile.id) : undefined;
+          if (maintenance && this.state.embedding && published) {
+            // Each profile restarts its own counters; the embedding guard in execute() would otherwise freeze the second bar.
+            published.state = 'running';
+            this.state.embedding.current = profile.id;
+            delete this.state.progress; delete this.state.embedded; delete this.state.etaSeconds; delete this.state.chunksPerSecond;
+            this.state.stage = 'checking_index';
+            this.embeddingStarted = 0;
+            this.persist();
+          }
+          const output = await this.execute(operation, { ...options, profile: profile.id === 'code' ? 'code' : undefined,
+            refreshed: true, ...(paths ? { paths } : {}) }, undefined, reusableFingerprint, reusableDocuments);
+          outputs.push(output);
+          if (published) {
+            published.state = 'done'; published.chunks = output.chunks;
+            published.embedded = { completed: output.embedded, total: output.chunks };
+            this.persist();
+          }
         }
         const result = combineProfiles(outputs, options.limit ?? 25);
         observed?.(semanticBasisFingerprint(this.managedDocuments), Boolean(result.skippedChunks));
         if (maintenance) {
           if (result.skippedChunks) throw new Error('Embedding profile generation is incomplete; the active model selection was retained.');
+          if (this.state.embedding) delete this.state.embedding.current;
           this.update({ ...this.state, phase: 'ready', operation, startedAt, completedAt: new Date().toISOString(),
             indexedAt: new Date().toISOString(), chunks: result.chunks, model: result.model, etaSeconds: 0,
             embedded: { completed: result.chunks, total: result.chunks },
@@ -552,7 +668,13 @@ export class SemanticIndex {
       };
       return maintenance ? await trackIndex(this.knowledge, 'semantic', options.syncPaths, execute) : await execute();
     } catch (error) {
-      if (maintenance) this.update({ phase: 'error', operation, startedAt, error: error instanceof Error ? error.message : String(error) });
+      if (maintenance) {
+        const embedding = this.state.embedding;
+        const failed = embedding?.profiles.find(item => item.id === embedding.current);
+        if (failed) failed.state = 'error';
+        this.update({ phase: 'error', operation, startedAt, error: error instanceof Error ? error.message : String(error),
+          ...(error instanceof CancelledError ? { stage: 'cancelled' } : {}), ...(embedding ? { embedding } : {}) });
+      }
       throw error;
     } finally { this.selection = undefined; this.managedDocuments = undefined; }
   }
@@ -647,6 +769,7 @@ export class SemanticIndex {
       return output;
     } catch (error) {
       const next: SemanticStatus = { ...this.state, phase: 'error', completedAt: new Date().toISOString(),
+        ...(error instanceof CancelledError ? { stage: 'cancelled' } : {}),
         error: error instanceof Error ? error.message : String(error) };
       if (tracked) this.update(next); else this.state = next;
       throw error;
@@ -755,10 +878,12 @@ export class SemanticIndex {
     let indexedFingerprint: string | undefined;
     let readSkipped = false;
     const managedDocuments = this.managedDocuments;
+    const signal = this.controller?.signal;
     async function* documents() {
       let bytes = 0;
       const currentDocuments: Record<string, string> = {};
       for (const entry of selected) {
+        if (signal?.aborted) throw signal.reason instanceof Error ? signal.reason : new CancelledError();
         const reusable = reusableDocumentFingerprints[entry.path];
         if (reusable) {
           currentDocuments[entry.path] = reusable;
@@ -806,7 +931,7 @@ export class SemanticIndex {
           this.state.etaSeconds = Math.ceil((progress.total - progress.completed) / rate);
         }
         this.persist(progress.completed === progress.total);
-      }, operation === 'search' ? 60_000 : 3_600_000, maintenance ? documents() : undefined);
+      }, operation === 'search' ? 60_000 : 3_600_000, maintenance ? documents() : undefined, maintenance ? signal : undefined);
     }
     if (!record(raw) || raw.engine !== 'embsearch-core' || typeof raw.model !== 'string'
       || typeof raw.version !== 'string' || typeof raw.chunks !== 'number'
@@ -864,6 +989,7 @@ async function invokeSemantic(
   progress?: (value: { completed: number; total: number; stage?: string; batchMs?: number; runtime?: SemanticRuntime }) => void,
   timeout = 60_000,
   documents?: AsyncIterable<{ path: string; kind: string; content: string }>,
+  signal?: AbortSignal,
 ): Promise<unknown> {
   const diagnostics = nativeDiagnostics();
   const workingDirectoryExists = await stat(cwd).then(info => {
@@ -941,12 +1067,12 @@ async function invokeSemantic(
     if (useWorker) {
       if (!workerModel) throw new Error('Persistent semantic worker requires a model directory');
       const worker = semanticWorkerFor(workerModel, workingDirectory, process.env, onWorkerStatus);
-      raw = await worker.request(request, automatic && !worker.ready ? Math.max(timeout, 120_000) : timeout, handleStderr);
+      raw = await worker.request(request, automatic && !worker.ready ? Math.max(timeout, 120_000) : timeout, handleStderr, signal);
     } else {
       const response = await runProcess(process.env.KIMONO_SEMANTIC_BIN ?? 'kimono-semantic',
         [request], workingDirectory, [0], automatic && !selected ? Math.max(timeout, 120_000) : timeout, handleStderr,
         selected ? { ...process.env, KIMONO_SEMANTIC_DEVICE: selected.executionProvider } : process.env,
-        4 * 1024 * 1024, true);
+        4 * 1024 * 1024, true, signal);
       raw = JSON.parse(response.stdout);
     }
     if (record(raw)) {
@@ -959,6 +1085,10 @@ async function invokeSemantic(
       }
     }
     return raw;
+  } catch (error) {
+    // Whatever the transport reports (killed child, worker queue), a requested stop surfaces as one recognizable error.
+    if (signal?.aborted && signal.reason instanceof Error) throw signal.reason;
+    throw error;
   } finally {
     diagnostics.flush();
     if (finishSelection) {

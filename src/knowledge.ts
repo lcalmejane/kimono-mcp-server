@@ -409,7 +409,7 @@ export function isSensitiveKnowledgePath(filePath: string): boolean {
     || /^(?:id_(?:rsa|ed25519)(?:\.pub)?|credentials(?:\.[^.]+)?|\.netrc|\.npmrc|\.pypirc)$/i.test(basename);
 }
 
-function classify(filePath: string): KnowledgeKind {
+export function classify(filePath: string): KnowledgeKind {
   const normalized = filePath.toLowerCase();
   if (/(^|\/)commands\//.test(normalized) || /(^|\/)commands_list\.md$/.test(normalized)) return 'command';
   if (/(^|\/)workflows\//.test(normalized)) return 'workflow';

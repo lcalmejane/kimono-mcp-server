@@ -6,6 +6,8 @@ const view = KimonoView.create(document.getElementById("kimono"), {
   icon: script.dataset.icon, origin: "VS Code", language: document.documentElement.lang,
   onIndexStart: folder => send({ action: "indexStart", folder }, view.t("indexing")),
   onIndexRebuild: folder => send({ action: "indexRebuild", folder }, view.t("indexing")),
+  onIndexStop: folder => send({ action: "indexStop", folder }, view.t("indexing")),
+  onIndexReset: folder => send({ action: "indexReset", folder }, view.t("indexing")),
   onModelsRequest: (input, folder) => send({ action: "models", input, folder }),
   onSearch: ({ folder, input }) => send({ action: "search", folder, input }, text.searchingPrivate),
   onWebsite: () => vscode.postMessage({ action: "website" }),

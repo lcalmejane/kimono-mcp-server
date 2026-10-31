@@ -1,0 +1,46 @@
+{
+  "schemaVersion": 1,
+  "id": "enterprise-rag-semantic-20261031",
+  "kind": "embedding",
+  "createdAt": "2026-10-31T18:16:43.282Z",
+  "contributor": {
+    "name": "Tatami"
+  },
+  "environment": {
+    "os": "darwin",
+    "arch": "arm64"
+  },
+  "kimono": {
+    "image": "tatami-core-kimono"
+  },
+  "corpus": {},
+  "status": "exploratory",
+  "queries": 104,
+  "policies": [
+    {
+      "policy": "auto-speed",
+      "error": null,
+      "startupMs": 35906.773916,
+      "lexicalIndexMs": 31086.073958,
+      "semanticIndexMs": 21328.079666000005,
+      "modes": {
+        "semantic": {
+          "firstCallMs": 2844.4710420000047,
+          "medianMs": 779.933165999988,
+          "meanMs": 874.710034028846,
+          "meanBytes": 1736.1057692307693,
+          "meanTokens": 434.0264423076923,
+          "hitAt1": 28,
+          "hitAt3": 38,
+          "hitAt10": 53,
+          "failed": 0,
+          "mrr": 0.3371108058608058
+        }
+      }
+    }
+  ],
+  "limitations": [
+    "Hand-written queries with author-chosen expected files; indicative only.",
+    "One cold run per policy for indexing; no confidence interval."
+  ]
+}

@@ -65,6 +65,37 @@ status, comparison, revision-pinned reads and publication. Check the current
 shared version before making changes, review conflicts and publish only with
 an expected version. Collaboration does not commit or push Git changes.
 
+### Automatic delta synchronization
+
+`aikido_collaboration` also automates the per-user flow. Call `mode` with the
+absolute `clientRoot` of the client workspace:
+
+- `same-root`: the client edits this exact ROOT (verified embedded stdio only,
+  never inferred over HTTP). Files are already shared; `stage`, `overlay` and
+  `discard` are skipped and `sync` only refreshes the literal index.
+- `replica`: the client has a separate workspace. Changes go through a
+  persistent per-user overlay (`owner`, default `default`).
+
+Replica flow:
+
+1. `stage` with `changes` (`content: null` deletes) **when the file is edited**.
+   Staging records the shared revision each change started from; syncing
+   without staging first loses that base and cannot detect a concurrent edit.
+2. `overlay` lists each staged item with a status: `pending`, `integrated`
+   (the shared copy already matches) or `conflict` (the shared file moved since
+   the change started).
+3. `sync` publishes pending items, drops integrated ones, reports conflicts
+   explicitly and reindexes the published paths. Resolve a conflict with
+   `resolutions: {"path": "local" | "shared"}`; there is no last-write-wins.
+4. `discard` removes staged items without publishing.
+
+`aikido_snapshot` `begin` accepts `owner` to capture the shared ROOT merged with
+that user's overlay (staged puts replace or add files, staged deletions hide
+them). The snapshot `version` then identifies the merged corpus and
+`provenance.overlay` reports the owner and file count. Other users and calls
+without `owner` keep seeing the shared ROOT only. An index failure during `sync`
+is reported as `reindexed: false` and never undoes the publication.
+
 The `aikido_git` tool supports repository information and explicit read-only
 remote synchronization after a target is configured. It does not commit, push,
 merge or create branches. Local Git operations remain with the client.

@@ -24,6 +24,13 @@
       cpuBudget: "CPU budget", cpuUnit: "CPUs", memoryEstimate: "Estimated memory",
       workerUnit: "workers", threadUnit: "threads", batchUnit: "batch",
       hotIndexes: "Warm indexes", hotIndexMemory: "Warm index estimate",
+      embedding: "Embedding mode", mixed: "Mixed · documents + code", download: "Download",
+      policies: { "auto-balanced": "Automatic · balanced", "auto-speed": "Automatic · speed", code: "Code",
+        "multilingual-fast": "Documents · multilingual fast", e5: "Documents · multilingual E5" },
+      profileNames: { multilingual: "Documents profile", code: "Code profile" },
+      profileStates: { pending: "Waiting", running: "Embedding", done: "Done", error: "Error" },
+      downloadStates: { downloading: "Downloading", verifying: "Verifying checksum", done: "Downloaded", error: "Failed" },
+      passages: "chunks", downloadingModel: "Downloading model",
     },
     fr: {
       phases: { "not-indexed": "Pas encore indexé", unknown: "Inconnu", interrupted: "Interrompu", running: "Indexation",
@@ -41,12 +48,27 @@
       cpuBudget: "Budget CPU", cpuUnit: "cœurs CPU", memoryEstimate: "Mémoire estimée",
       workerUnit: "sessions", threadUnit: "threads", batchUnit: "taille de lot",
       hotIndexes: "Index gardés en mémoire", hotIndexMemory: "Mémoire des index (estim.)",
+      embedding: "Mode d'embedding", mixed: "Mixte · documents + code", download: "Téléchargement",
+      policies: { "auto-balanced": "Automatique · équilibré", "auto-speed": "Automatique · rapide", code: "Code",
+        "multilingual-fast": "Documents · multilingue rapide", e5: "Documents · multilingue E5" },
+      profileNames: { multilingual: "Profil documents", code: "Profil code" },
+      profileStates: { pending: "En attente", running: "Vectorisation", done: "Terminé", error: "Erreur" },
+      downloadStates: { downloading: "Téléchargement", verifying: "Vérification de l'empreinte", done: "Téléchargé", error: "Échec" },
+      passages: "passages", downloadingModel: "Téléchargement du modèle",
     },
   };
   const pick = language => labels[String(language || "en").slice(0, 2)] ?? labels.en;
   const count = value => value && Number.isFinite(value.completed) && Number.isFinite(value.total) ? value : undefined;
   const ratio = value => count(value) && value.total > 0 ? Math.min(1, value.completed / value.total) : undefined;
-  const active = status => status?.phase === "running" || status?.phase === "waiting";
+  const transferring = status => Array.isArray(status?.downloads)
+    && status.downloads.some(item => item && (item.state === "downloading" || item.state === "verifying"));
+  // A model download keeps the panel in its fast refresh loop even when the index itself is idle.
+  const active = status => status?.phase === "running" || status?.phase === "waiting" || transferring(status);
+  const downloadRatio = status => {
+    const running = (status?.downloads ?? []).filter(item => item && (item.state === "downloading" || item.state === "verifying")
+      && Number.isFinite(item.bytes) && Number.isFinite(item.totalBytes) && item.totalBytes > 0);
+    return running.length ? Math.min(1, running.reduce((sum, item) => sum + item.bytes, 0) / running.reduce((sum, item) => sum + item.totalBytes, 0)) : undefined;
+  };
 
   function compact(number, language) {
     if (!Number.isFinite(number)) return "—";
@@ -73,6 +95,9 @@
 
   // Overall progress: reading files counts for 10%, embedding chunks for 90%.
   function overall(status) {
+    const indexing = status?.phase === "running" || status?.phase === "waiting";
+    // A download outside indexing (explicit "Download only…") drives the bar on its own.
+    if (!indexing && transferring(status)) return downloadRatio(status);
     if (status?.phase === "ready") return 1;
     const files = ratio(status?.files), embedded = ratio(status?.embedded ?? (status?.stage === "document_embedding" ? status.progress : undefined));
     if (embedded !== undefined) return 0.1 + 0.9 * embedded;
@@ -86,7 +111,14 @@
     const progress = overall(value);
     const parts = [value.phase === "ready" && value.skippedChunks > 0 ? text.partial : text.phases[value.phase] ?? value.phase];
     if (value.phase === "running" && progress !== undefined) parts.push(`${Math.floor(progress * 100)}%`);
-    if (active(value) && text.stages[value.stage]) parts.push(text.stages[value.stage]);
+    if ((value.phase === "running" || value.phase === "waiting") && text.stages[value.stage]) parts.push(text.stages[value.stage]);
+    const download = transferring(value) ? downloadRatio(value) : undefined;
+    if (transferring(value)) parts.push(download === undefined ? text.downloadingModel : `${text.downloadingModel} ${Math.floor(download * 100)}%`);
+    if (value.phase === "running" && value.embedding?.mixed && value.embedding.current) {
+      const profiles = value.embedding.profiles ?? [];
+      const position = profiles.findIndex(item => item.id === value.embedding.current);
+      if (position >= 0) parts.push(`${text.profileNames[value.embedding.current] ?? value.embedding.current} ${position + 1}/${profiles.length}`);
+    }
     if (value.phase === "running" && Number.isFinite(value.etaSeconds) && value.etaSeconds > 0) parts.push(`${text.eta} ${duration(value.etaSeconds)}`);
     return parts.join(" · ");
   }
@@ -113,7 +145,36 @@
         result.push({ label: text.hotIndexMemory, value: bytes(value.hotIndexEstimatedBytes) });
       }
     }
+    const embedding = value.embedding;
+    if (embedding && typeof embedding.policy === "string") {
+      const policy = text.policies[embedding.policy] ?? embedding.policy;
+      result.push({ label: text.embedding, value: embedding.mixed ? `${policy} · ${text.mixed}` : policy });
+      const profiles = Array.isArray(embedding.profiles) ? embedding.profiles : [];
+      if (embedding.mixed || profiles.some(item => item?.state === "running" || item?.state === "error")) {
+        for (const profile of profiles) {
+          if (!profile || !Object.hasOwn(text.profileStates, profile.state)) continue;
+          const parts = [String(profile.model), text.profileStates[profile.state]];
+          const progress = profile.state === "running" ? value.embedded : profile.embedded;
+          if (count(progress)) parts.push(`${compact(progress.completed, language)} / ${compact(progress.total, language)} ${text.passages}`);
+          else if (Number.isFinite(profile.chunks)) parts.push(`${compact(profile.chunks, language)} ${text.passages}`);
+          if (profile.state === "running" && text.stages[value.stage]) parts.push(text.stages[value.stage]);
+          result.push({ label: text.profileNames[profile.id] ?? String(profile.id), value: parts.join(" · ") });
+        }
+      }
+    }
     if (typeof value.model === "string" && value.model) result.push({ label: text.model, value: value.model });
+    for (const item of Array.isArray(value.downloads) ? value.downloads : []) {
+      if (!item || typeof item.model !== "string" || !Object.hasOwn(text.downloadStates, item.state)) continue;
+      const parts = [text.downloadStates[item.state]];
+      if (Number.isFinite(item.bytes) && Number.isFinite(item.totalBytes) && item.totalBytes > 0) {
+        parts.push(`${Math.floor(Math.min(1, item.bytes / item.totalBytes) * 100)}%`, `${bytes(item.bytes)} / ${bytes(item.totalBytes)}`);
+      }
+      if ((item.state === "downloading" || item.state === "verifying") && typeof item.file === "string") {
+        parts.push(`${item.file.slice(0, 80)} (${item.fileIndex}/${item.fileCount})`);
+      }
+      if (item.state === "error" && item.error) parts.push(String(item.error).slice(0, 200));
+      result.push({ label: `${text.download} · ${item.model}`, value: parts.join(" · ") });
+    }
     if (value.runtime) {
       if ([value.runtime.workers, value.runtime.threads, value.runtime.batch].every(Number.isFinite)) {
         result.push({ label: text.sizing, value: `${value.runtime.workers} ${text.workerUnit} · ${value.runtime.threads} ${text.threadUnit} · ${value.runtime.batch} ${text.batchUnit}` });

@@ -1,0 +1,193 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/lcalmejane/kimono-mcp-server/benchmarks/db/record.schema.json",
+  "title": "Kimono benchmark record",
+  "description": "One benchmark campaign (harness run with/without Kimono, or embedding-policy run) contributed to the Kimono benchmark database. One record per file in benchmarks/db/records/<id>.json.",
+  "type": "object",
+  "required": ["schemaVersion", "id", "kind", "createdAt", "contributor", "environment", "kimono", "corpus", "status", "limitations"],
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{2,120}$" },
+    "kind": { "enum": ["harness", "embedding"], "description": "harness: an LLM client run with and without Kimono. embedding: embedding policies compared without an LLM." },
+    "createdAt": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?Z$" },
+    "contributor": {
+      "type": "object",
+      "required": ["name"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "contact": { "type": "string", "maxLength": 200, "description": "Optional public handle or URL. No private data." }
+      }
+    },
+    "llm": {
+      "type": "object",
+      "required": ["harness", "model"],
+      "additionalProperties": false,
+      "description": "Client and model under test (harness records only).",
+      "properties": {
+        "harness": { "type": "string", "minLength": 1, "description": "Client that ran the model, e.g. GitHub Copilot CLI, Claude Code, Codex, Zoo Code." },
+        "harnessVersion": { "type": "string" },
+        "model": { "type": "string", "minLength": 1, "description": "Model id requested, or actually observed when the client reports it." },
+        "provider": { "type": "string" },
+        "notes": { "type": "string" }
+      }
+    },
+    "arms": {
+      "type": "object",
+      "required": ["without", "with"],
+      "additionalProperties": false,
+      "description": "What each variant means. 'with' is the treatment (Kimono), 'without' the baseline.",
+      "properties": {
+        "without": { "type": "string", "minLength": 1 },
+        "with": { "type": "string", "minLength": 1 }
+      }
+    },
+    "environment": {
+      "type": "object",
+      "required": ["os", "arch"],
+      "additionalProperties": false,
+      "properties": { "os": { "type": "string" }, "arch": { "type": "string" }, "node": { "type": "string" } }
+    },
+    "kimono": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "version": { "type": "string" },
+        "commit": { "type": "string", "pattern": "^[0-9a-f]{7,40}$" },
+        "dirty": { "type": "boolean" },
+        "runtimeSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "image": { "type": "string" },
+        "embeddingPolicy": { "type": "string" },
+        "indexMode": { "type": "string" },
+        "searchDetail": { "type": "string" }
+      }
+    },
+    "corpus": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "description": { "type": "string" },
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "fileCount": { "type": "integer", "minimum": 0 },
+        "bytes": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "protocol": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "repetitions": { "type": "integer", "minimum": 1 },
+        "timeoutMs": { "type": "integer", "minimum": 1 },
+        "tasks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id"],
+            "additionalProperties": false,
+            "properties": { "id": { "type": "string" }, "kind": { "type": "string" }, "expectedPaths": { "type": "array", "items": { "type": "string" } } }
+          }
+        },
+        "isolation": { "type": "string" },
+        "notes": { "type": "string" }
+      }
+    },
+    "status": { "enum": ["exploratory", "reviewed"], "description": "reviewed only when every OK cell has a completed human review." },
+    "cells": { "type": "array", "minItems": 1, "items": { "$ref": "#/definitions/cell" } },
+    "pairs": { "type": "array", "items": { "$ref": "#/definitions/pair" } },
+    "queries": { "type": "integer", "minimum": 1, "description": "Number of evaluation queries (embedding records)." },
+    "policies": { "type": "array", "minItems": 1, "items": { "$ref": "#/definitions/policy" } },
+    "limitations": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "kind": { "const": "harness" } }, "required": ["kind"] },
+      "then": { "required": ["llm", "arms", "cells", "pairs"] }
+    },
+    {
+      "if": { "properties": { "kind": { "const": "embedding" } }, "required": ["kind"] },
+      "then": { "required": ["policies", "queries"] }
+    }
+  ],
+  "definitions": {
+    "count": { "type": ["number", "null"], "minimum": 0 },
+    "cell": {
+      "type": "object",
+      "required": ["task", "repetition", "variant", "status", "usage"],
+      "additionalProperties": false,
+      "properties": {
+        "run": { "type": "string", "description": "Optional label when a record gathers several runs." },
+        "task": { "type": "string", "pattern": "^[a-z0-9-]+$" },
+        "kind": { "type": "string" },
+        "repetition": { "type": "integer", "minimum": 1 },
+        "variant": { "enum": ["without", "with"] },
+        "status": { "enum": ["ok", "failed"] },
+        "failure": { "type": ["string", "null"] },
+        "wallMs": { "$ref": "#/definitions/count" },
+        "mcpUsed": { "type": ["boolean", "null"], "description": "Observed from real calls, not from the server being configured." },
+        "isolationPassed": { "type": ["boolean", "null"] },
+        "usage": {
+          "type": "object",
+          "required": ["inputTokens", "outputTokens"],
+          "additionalProperties": false,
+          "description": "Counters exposed by the client; null when not exposed. State in llm.notes whether inputTokens includes cache reads.",
+          "properties": {
+            "models": { "type": "array", "items": { "type": "string" } },
+            "inputTokens": { "$ref": "#/definitions/count" },
+            "outputTokens": { "$ref": "#/definitions/count" },
+            "cacheReadTokens": { "$ref": "#/definitions/count" },
+            "cacheWriteTokens": { "$ref": "#/definitions/count" },
+            "reasoningTokens": { "$ref": "#/definitions/count" },
+            "uncachedInputTokens": { "$ref": "#/definitions/count" },
+            "apiMs": { "$ref": "#/definitions/count" }
+          }
+        },
+        "toolCalls": { "type": "object", "additionalProperties": { "type": "integer", "minimum": 0 } },
+        "quality": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "formatValid": { "type": "boolean" },
+            "evidenceValid": { "type": "boolean" },
+            "expectedPathCoverage": { "type": "number", "minimum": 0, "maximum": 1 },
+            "humanReview": { "enum": ["pending", "passed", "failed"] }
+          }
+        }
+      }
+    },
+    "pair": {
+      "type": "object",
+      "required": ["task", "repetition", "eligibleForClaim", "reasons"],
+      "additionalProperties": false,
+      "description": "Derived from the cells of this record. Negative percentages mean the 'with' arm used less.",
+      "properties": {
+        "run": { "type": "string" },
+        "task": { "type": "string" },
+        "repetition": { "type": "integer", "minimum": 1 },
+        "eligibleForClaim": { "type": "boolean" },
+        "reasons": { "type": "array", "items": { "type": "string" } },
+        "inputChangePercent": { "type": ["number", "null"] },
+        "uncachedInputChangePercent": { "type": ["number", "null"] },
+        "outputChangePercent": { "type": ["number", "null"] },
+        "wallChangePercent": { "type": ["number", "null"] }
+      }
+    },
+    "mode": {
+      "type": "object",
+      "additionalProperties": { "type": ["number", "null"] }
+    },
+    "policy": {
+      "type": "object",
+      "required": ["policy"],
+      "additionalProperties": false,
+      "properties": {
+        "policy": { "type": "string" },
+        "error": { "type": ["string", "null"] },
+        "startupMs": { "$ref": "#/definitions/count" },
+        "lexicalIndexMs": { "$ref": "#/definitions/count" },
+        "semanticIndexMs": { "$ref": "#/definitions/count" },
+        "modes": { "type": "object", "additionalProperties": { "$ref": "#/definitions/mode" } }
+      }
+    }
+  }
+}

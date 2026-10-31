@@ -1,0 +1,115 @@
+{
+  "corpus": "../.bench-corpus/enterprise-rag",
+  "policy": {
+    "mode": "rag",
+    "include": [
+      "github/**",
+      "confluence/**"
+    ],
+    "exclude": []
+  },
+  "model": "gemini-3.8-flash",
+  "repetitions": 1,
+  "timeoutMs": 900000,
+  "harness": {
+    "kind": "copilot",
+    "command": "npm",
+    "args": [
+      "exec",
+      "--yes",
+      "--package=@github/copilot@1.0.103",
+      "--",
+      "copilot"
+    ],
+    "versionArgs": [
+      "--version"
+    ]
+  },
+  "mcp": {
+    "command": "docker",
+    "args": [
+      "run",
+      "--rm",
+      "--user",
+      "root",
+      "-i",
+      "-v",
+      "{root}:/corpus:ro",
+      "-v",
+      "{cache}:/cache",
+      "-v",
+      "{server}/.bench-models:/models:ro",
+      "-e",
+      "AIKIDO_ROOT=/corpus",
+      "-e",
+      "KIMONO_CORPUS_MODE=rag",
+      "-e",
+      "KIMONO_CACHE_DIR=/cache",
+      "-e",
+      "KIMONO_MODELS_DIR=/models",
+      "-e",
+      "KIMONO_EMBEDDING_POLICY=auto-speed",
+      "-e",
+      "KIMONO_SEMANTIC_WORKERS=2",
+      "-e",
+      "MCP_TRANSPORT=stdio",
+      "--entrypoint",
+      "node",
+      "tatami-core-kimono",
+      "/app/dist/index.js"
+    ],
+    "indexMode": "all",
+    "searchDetail": "compact",
+    "tools": [
+      "aikido_snapshot",
+      "aikido_search",
+      "aikido_file"
+    ]
+  },
+  "tasks": [
+    {
+      "id": "find-kms-service-guard",
+      "kind": "research",
+      "prompt": "Find the pull request that adds service-scoped KMS guardrails. Explain how a key is bound to a service, who may still use a bound key, what a request that violates the binding receives, and how historical audit events are handled. Cite the document. Do not change anything.",
+      "expectedPaths": [
+        "github/dsid_000bf89dcd294f369b4a91efe64c2aca__pr-99501-add-service-scoped-kms-guardrails-and-audit-ingestor.txt"
+      ],
+      "rubric": [
+        "Explains the optional service_id binding and that enforcement is opt-in for existing keys.",
+        "Names the allowlist exception for operator flows.",
+        "States the early 403 failure and its structured error code.",
+        "Mentions the backfill migration for historical audit events.",
+        "Separates documented facts from assumptions."
+      ]
+    },
+    {
+      "id": "find-scheduler-self-heal",
+      "kind": "research",
+      "prompt": "Find the playbook about the Scheduler Health Oracle. Explain what signals it ingests, how its decision layers work, which self-heal actions it may run and what keeps them safe and reversible. Cite the document. Do not change anything.",
+      "expectedPaths": [
+        "confluence/dsid_0012a01f0c884593a54844fe983b72d9__scheduler-health-oracle-and-self-heal-procedures-2026.txt"
+      ],
+      "rubric": [
+        "Lists the telemetry sources ingested.",
+        "Distinguishes the rule-based tier from the optional ML tier and the policy engine.",
+        "Describes the approved remediation actions and their guardrails.",
+        "Explains how remediation stays conservative, observable and reversible."
+      ]
+    },
+    {
+      "id": "compare-rbacv2-pull-requests",
+      "kind": "research",
+      "prompt": "Two pull requests concern RBACv2: one about sensitivity tiering with an audit retention gateway, the other about a migration toolchain with region pinning. Find both, explain what each changes, and say how they relate. Cite both documents. Do not change anything.",
+      "expectedPaths": [
+        "github/dsid_c0169229f83542a2be9fba9e3aacfe86__pr-210501-implement-sensitivity-tiering-rbacv2-audit-retention-gateway.txt",
+        "github/dsid_821abb78b2034beca8e1c0a4ddee02c5__pr-917999-rbacv2-migration-toolchain-region-pin-kms-audit-ids.txt"
+      ],
+      "rubric": [
+        "Identifies both pull requests.",
+        "Summarizes the sensitivity tiering and audit retention gateway change.",
+        "Summarizes the migration toolchain and region pinning change.",
+        "States a relation only when the documents support it."
+      ]
+    }
+  ]
+}

@@ -1,0 +1,2336 @@
+{
+  "schemaVersion": 1,
+  "campaign": "embedding-policies-20261031",
+  "generatedAt": "2026-10-31T15:44:00Z",
+  "image": "tatami-core-kimono",
+  "runs": 5,
+  "limit": 10,
+  "queries": 16,
+  "corpus": "Kimono src/, tests/, docs/, README.md, package.json: 79 files, 1,048 KiB on disk (67 code files, 12 documents)",
+  "script": "scripts/bench-embedding.mjs",
+  "policies": [
+    {
+      "policy": "e5",
+      "error": null,
+      "startupMs": 708.2390419999999,
+      "lexicalIndexMs": 172.79108399999996,
+      "semanticIndexMs": 18823.680708,
+      "modes": {
+        "text": {
+          "firstCallMs": 116.51891599999726,
+          "medianMs": 21.38233399999808,
+          "meanMs": 27.16254418750009,
+          "warmMs": 0.6872909999983676,
+          "meanBytes": 581.4375,
+          "meanTokens": 145.359375,
+          "hitAt1": 7,
+          "hitAt3": 9,
+          "hitAt10": 13,
+          "failed": 0,
+          "mrr": 0.5427083333333333,
+          "rows": [
+            {
+              "query": "how are embedding models downloaded and verified",
+              "ok": true,
+              "error": null,
+              "coldMs": 116.51891599999726,
+              "warmMs": 1.1980830000029528,
+              "bytes": 567,
+              "hits": 5,
+              "firstRelevantRank": 1,
+              "top": [
+                "src/embedding-models.ts",
+                "docs/local-rag.md",
+                "tests/embedding-models.test.ts"
+              ]
+            },
+            {
+              "query": "cancel a running semantic indexing",
+              "ok": true,
+              "error": null,
+              "coldMs": 20.358250000001135,
+              "warmMs": 0.8928749999977299,
+              "bytes": 624,
+              "hits": 6,
+              "firstRelevantRank": 1,
+              "top": [
+                "src/semantic.ts",
+                "docs/local-rag.md",
+                "tests/index-control.test.ts"
+              ]
+            },
+            {
+              "query": "which files are eligible for indexing and gitignore rules",
+              "ok": true,
+              "error": null,
+              "coldMs": 19.348541999999725,
+              "warmMs": 0.6747920000016165,
+              "bytes": 584,
+              "hits": 6,
+              "firstRelevantRank": 4,
+              "top": [
+                "src/remote-sync.ts",
+                "docs/local-rag.md",
+                "docs/retrieval.md"
+              ]
+            },
+            {
+              "query": "immutable snapshot of the corpus for consistent reads",
+              "ok": true,
+              "error": null,
+              "coldMs": 21.38233399999808,
+              "warmMs": 0.6221669999977166,
+              "bytes": 638,
+              "hits": 7,
+              "firstRelevantRank": null,
+              "top": [
+                "docs/usage.en.md",
+                "docs/retrieval.md",
+                "src/runtime-tools.ts"
+              ]
+            },
+            {
+              "query": "user overlay conflict resolution without last write wins",
+              "ok": true,
+              "error": null,
+              "coldMs": 21.228790999997727,
+              "warmMs": 0.6664590000000317,
+              "bytes": 466,
+              "hits": 3,
+              "firstRelevantRank": 1,
+              "top": [
+                "src/collaboration.ts",
+                "docs/usage.en.md",
+                "src/overlay.ts"
+              ]
+            },
+            {
+              "query": "synchroniser les modifications d'un utilisateur vers le serveur partag\u00e9",
+              "ok": true,
+              "error": null,
+              "coldMs": 15.663958000001003,
+              "warmMs": 0.8947079999998095,
+              "bytes": 441,
+              "hits": 2,
+              "firstRelevantRank": null,
+              "top": [
+                "docs/usage.fr.md",
+                "docs/local-rag.fr.md"
+              ]
+            },
+            {
+              "query": "persistent worker that keeps the embedding model warm",
+              "ok": true,
+              "error": null,
+              "coldMs": 23.340125000002445,
+              "warmMs": 0.7100409999984549,
+              "bytes": 618,
+              "hits": 6,
+              "firstRelevantRank": 2,
+              "top": [
+                "docs/local-rag.md",
+                "src/semantic-worker.ts",
+                "docs/local-rag.fr.md"
+              ]
+            },
+            {
+              "query": "split a question into search terms and plan the query",
+              "ok": true,
+              "error": null,
+              "coldMs": 26.023083000000042,
+              "warmMs": 0.7175420000021404,
+              "bytes": 565,
+              "hits": 5,
+              "firstRelevantRank": 1,
+              "top": [
+                "src/planned-search.ts",
+                "src/query-plan.ts",
+                "src/retrieval.ts"
+              ]
+            },
+            {
+              "query": "git authentication over http for the shared remote",
+              "ok": true,
+              "error": null,
+              "coldMs": 22.379791999999725,
+              "warmMs": 0.602707999998529,
+              "bytes": 632,
+              "hits": 7,
+              "firstRelevantRank": 5,
+              "top": [
+                "docs/usage.en.md",
+                "README.md",
+                "docs/local-rag.md"
+              ]
+            },
+            {
+              "query": "merge lexical and semantic rankings with reciprocal rank fusion",
+              "ok": true,
+              "error": null,
+              "coldMs": 19.672500000000582,
+              "warmMs": 0.7085000000006403,
+              "bytes": 610,
+              "hits": 6,
+              "firstRelevantRank": 1,
+              "top": [
+                "src/planned-search.ts",
+                "src/semantic.ts",
+                "tests/lexical-search.test.ts"
+              ]
+            },
+            {
+              "query": "extraire le texte des PDF et des documents bureautiques",
+              "ok": true,
+              "error": null,
+              "coldMs": 16.28704099999959,
+              "warmMs": 0.5922500000015134,
+              "bytes": 589,
+              "hits": 6,
+              "firstRelevantRank": 5,
+              "top": [
+                "docs/local-rag.fr.md",
+                "docs/local-rag.md",
+                "README.md"
+              ]
+            },
+            {
+              "query": "arr\u00eat propre du serveur \u00e0 la r\u00e9ception d'un signal",
+              "ok": true,
+              "error": null,
+              "coldMs": 13.192708000002312,
+              "warmMs": 0.720166999999492,
+              "bytes": 493,
+              "hits": 3,
+              "firstRelevantRank": null,
+              "top": [
+                "docs/local-rag.fr.md",
+                "docs/usage.fr.md",
+                "docs/harness-benchmark.md"
+              ]
+            },
+            {
+              "query": "choix du mod\u00e8le d'embedding selon le type de contenu code ou documents",
+              "ok": true,
+              "error": null,
+              "coldMs": 26.36458400000265,
+              "warmMs": 0.5649999999986903,
+              "bytes": 572,
+              "hits": 5,
+              "firstRelevantRank": 1,
+              "top": [
+                "docs/local-rag.fr.md",
+                "docs/harness-benchmark.md",
+                "src/embedding-models.ts"
+              ]
+            },
+            {
+              "query": "which execution provider CPU CUDA CoreML is fastest",
+              "ok": true,
+              "error": null,
+              "coldMs": 13.85150000000067,
+              "warmMs": 0.6872909999983676,
+              "bytes": 514,
+              "hits": 4,
+              "firstRelevantRank": 1,
+              "top": [
+                "docs/local-rag.md",
+                "README.md",
+                "src/semantic.ts"
+              ]
+            },
+            {
+              "query": "same root or replica synchronization mode detection",
+              "ok": true,
+              "error": null,
+              "coldMs": 32.76604099999895,
+              "warmMs": 0.5933339999974123,
+              "bytes": 676,
+              "hits": 8,
+              "firstRelevantRank": 3,
+              "top": [
+                "src/collaboration.ts",
+                "src/runtime-tools.ts",
+                "src/sync-mode.ts"
+              ]
+            },
+            {
+              "query": "cache of search results invalidated after a change",
+              "ok": true,
+              "error": null,
+              "coldMs": 26.22254199999952,
+              "warmMs": 0.5376670000005106,
+              "bytes": 714,
+              "hits": 9,
+              "firstRelevantRank": 5,
+              "top": [
+                "docs/retrieval.md",
+                "docs/local-rag.md",
+                "docs/usage.en.md"
+              ]
+            }
+          ]
+        },
+        "semantic": {
+          "firstCallMs": 17.770667000000685,
+          "medianMs": 10.926791999998386,
+          "meanMs": 11.230672062500162,
+          "warmMs": 0.4723340000018652,
+          "meanBytes": 572.5625,
+          "meanTokens": 143.140625,
+          "hitAt1": 5,
+          "hitAt3": 12,
+          "hitAt10": 14,
+          "failed": 0,
+          "mrr": 0.5260416666666667,
+          "rows": [
+            {
+              "query": "how are embedding models downloaded and verified",
+              "ok": true,
+              "error": null,
+              "coldMs": 17.770667000000685,
+              "warmMs": 0.5129589999996824,
+              "bytes": 496,
+              "hits": 3,
+              "firstRelevantRank": 2,
+              "top": [
+                "tests/embedding-models.test.ts",
+                "src/embedding-models.ts",
+                "src/semantic.ts"
+              ]
+            },
+            {
+              "query": "cancel a running semantic indexing",
+              "ok": true,
+              "error": null,
+              "coldMs": 9.730083999998897,
+              "warmMs": 0.46166700000321725,
+              "bytes": 528,
+              "hits": 4,
+              "firstRelevantRank": 3,
+              "top": [
+                "docs/local-rag.md",
+                "src/runtime-tools.ts",
+                "src/semantic.ts"
+              ]
+            },
+            {
+              "query": "which files are eligible for indexing and gitignore rules",
+              "ok": true,
+              "error": null,
+              "coldMs": 10.606332999999722,
+              "warmMs": 0.5874579999981506,
+              "bytes": 594,
+              "hits": 6,
+              "firstRelevantRank": 4,
+              "top": [
+                "docs/local-rag.md",
+                "README.md",
+                "docs/retrieval.md"
+              ]
+            },
+            {
+              "query": "immutable snapshot of the corpus for consistent reads",
+              "ok": true,
+              "error": null,
+              "coldMs": 11.579625000002125,
+              "warmMs": 0.4101669999981823,
+              "bytes": 676,
+              "hits": 8,
+              "firstRelevantRank": 6,
+              "top": [
+                "src/search.ts",
+                "tests/retrieval.test.ts",
+                "src/knowledge.ts"
+              ]
+            },
+            {
+              "query": "user overlay conflict resolution without last write wins",
+              "ok": true,
+              "error": null,
+              "coldMs": 10.926791999998386,
+              "warmMs": 0.4273749999993015,
+              "bytes": 516,
+              "hits": 4,
+              "firstRelevantRank": 1,
+              "top": [
+                "src/collaboration.ts",
+                "docs/usage.en.md",
+                "src/overlay.ts"
+              ]
+            },
+            {
+              "query": "synchroniser les modifications d'un utilisateur vers le serveur partag\u00e9",
+              "ok": true,
+              "error": null,
+              "coldMs": 11.231916999997338,
+              "warmMs": 0.49170800000138115,
+              "bytes": 517,
+              "hits": 4,
+              "firstRelevantRank": null,
+              "top": [
+                "docs/usage.fr.md",
+                "docs/local-rag.fr.md",
+                "docs/retrieval.fr.md"
+              ]
+            },
+            {
+              "query": "persistent worker that keeps the embedding model warm",
+              "ok": true,
+              "error": null,
+              "coldMs": 11.633374999997613,
+              "warmMs": 0.43033400000058464,
+              "bytes": 534,
+              "hits": 4,
+              "firstRelevantRank": 3,
+              "top": [
+                "docs/local-rag.md",
+                "src/semantic.ts",
+                "tests/semantic-worker.test.ts"
+              ]
+            },
+            {
+              "query": "split a question into search terms and plan the query",
+              "ok": true,
+              "error": null,
+              "coldMs": 10.425209000000905,
+              "warmMs": 0.48104200000307173,
+              "bytes": 644,
+              "hits": 7,
+              "firstRelevantRank": 1,
+              "top": [
+                "src/planned-search.ts",
+                "src/server.ts",
+                "src/query-plan.ts"
+              ]
+            },
+            {
+              "query": "git authentication over http for the shared remote",
+              "ok": true,
+              "error": null,
+              "coldMs": 11.032792000001791,
+              "warmMs": 0.5111670000005688,
+              "bytes": 609,
+              "hits": 6,
+              "firstRelevantRank": 1,
+              "top": [
+                "src/git-profile.ts",
+                "tests/http-git-auth.test.ts",
+                "tests/git-profile.test.ts"
+              ]
+            },
+            {
+              "query": "merge lexical and semantic rankings with reciprocal rank fusion",
+              "ok": true,
+              "error": null,
+              "coldMs": 10.773042000000714,
+              "warmMs": 0.4415420000004815,
+              "bytes": 660,
+              "hits": 7,
+              "firstRelevantRank": 2,
+              "top": [
+                "src/semantic.ts",
+                "src/planned-search.ts",
+                "src/server.ts"
+              ]
+            },
+            {
+              "query": "extraire le texte des PDF et des documents bureautiques",
+              "ok": true,
+              "error": null,
+              "coldMs": 10.77508300000045,
+              "warmMs": 0.4723340000018652,
+              "bytes": 517,
+              "hits": 4,
+              "firstRelevantRank": 3,
+              "top": [
+                "docs/local-rag.fr.md",
+                "docs/local-rag.md",
+                "tests/documents.test.ts"
+              ]
+            },
+            {
+              "query": "arr\u00eat propre du serveur \u00e0 la r\u00e9ception d'un signal",
+              "ok": true,
+              "error": null,
+              "coldMs": 10.293667000001733,
+              "warmMs": 0.5294169999979204,
+              "bytes": 614,
+              "hits": 6,
+              "firstRelevantRank": null,
+              "top": [
+                "docs/local-rag.fr.md",
+                "src/server.ts",
+                "src/semantic-worker.ts"
+              ]
+            },
+            {
+              "query": "choix du mod\u00e8le d'embedding selon le type de contenu code ou documents",
+              "ok": true,
+              "error": null,
+              "coldMs": 11.069167000001471,
+              "warmMs": 0.44662500000049477,
+              "bytes": 616,
+              "hits": 6,
+              "firstRelevantRank": 1,
+              "top": [
+                "docs/local-rag.fr.md",
+                "src/embedding-models.ts",
+                "src/semantic.ts"
+              ]
+            },
+            {
+              "query": "which execution provider CPU CUDA CoreML is fastest",
+              "ok": true,
+              "error": null,
+              "coldMs": 10.978665999999066,
+              "warmMs": 0.4501249999993888,
+              "bytes": 566,
+              "hits": 5,
+              "firstRelevantRank": 1,
+              "top": [
+                "docs/local-rag.md",
+                "README.md",
+                "tests/semantic.test.ts"
+              ]
+            },
+            {
+              "query": "same root or replica synchronization mode detection",
+              "ok": true,
+              "error": null,
+              "coldMs": 9.944792000002053,
+              "warmMs": 0.41116600000168546,
+              "bytes": 475,
+              "hits": 3,
+              "firstRelevantRank": 2,
+              "top": [
+                "src/collaboration.ts",
+                "src/sync-mode.ts",
+                "tests/sync-mode.test.ts"
+              ]
+            },
+            {
+              "query": "cache of search results invalidated after a change",
+              "ok": true,
+              "error": null,
+              "coldMs": 10.919541999999637,
+              "warmMs": 0.5566670000007434,
+              "bytes": 599,
+              "hits": 6,
+              "firstRelevantRank": 2,
+              "top": [
+                "src/server.ts",
+                "tests/search-cache.test.ts",
+                "src/snapshots.ts"
+              ]
+            }
+          ]
+        },
+        "hybrid": {
+          "firstCallMs": 17.916791999999987,
+          "medianMs": 20.955667000001995,
+          "meanMs": 21.199992187500584,
+          "warmMs": 0.6402080000007118,
+          "meanBytes": 561.8125,
+          "meanTokens": 140.453125,
+          "hitAt1": 5,
+          "hitAt3": 10,
+          "hitAt10": 12,
+          "failed": 0,
+          "mrr": 0.496875,
+          "rows": [
+            {
+              "query": "how are embedding models downloaded and verified",
+              "ok": true,
+              "error": null,
+              "coldMs": 17.916791999999987,
+              "warmMs": 0.532708000002458,
+              "bytes": 564,
+              "hits": 5,
+              "firstRelevantRank": 1,
+              "top": [
+                "src/embedding-models.ts",
+                "tests/embedding-models.test.ts",
+                "docs/local-rag.md"
+              ]
+            },
+            {
+              "query": "cancel a running semantic indexing",
+              "ok": true,
+              "error": null,
+              "coldMs": 17.512416000001394,
+              "warmMs": 0.7695000000021537,
+              "bytes": 520,
+              "hits": 4,
+              "firstRelevantRank": 2,
+              "top": [
+                "docs/local-rag.md",
+                "src/semantic.ts",
+                "src/runtime-tools.ts"
+              ]
+            },
+            {
+              "query": "which files are eligible for indexing and gitignore rules",
+              "ok": true,
+              "error": null,
+              "coldMs": 19.07300000000032,
+              "warmMs": 0.653083000001061,
+              "bytes": 521,
+              "hits": 5,
+              "firstRelevantRank": 5,
+              "top": [
+                "docs/local-rag.md",
+                "src/remote-sync.ts",
+                "README.md"
+              ]
+            },
+            {
+              "query": "immutable snapshot of the corpus for consistent reads",
+              "ok": true,
+              "error": null,
+              "coldMs": 23.08745800000179,
+              "warmMs": 0.6769170000006852,
+              "bytes": 630,
+              "hits": 7,
+              "firstRelevantRank": null,
+              "top": [
+                "docs/usage.en.md",
+                "src/search.ts",
+                "docs/retrieval.md"
+              ]
+            },
+            {
+              "query": "user overlay conflict resolution without last write wins",
+              "ok": true,
+              "error": null,
+              "coldMs": 19.95795899999939,
+              "warmMs": 0.45916700000088895,
+              "bytes": 468,
+              "hits": 3,
+              "firstRelevantRank": 1,
+              "top": [
+                "src/collaboration.ts",
+                "docs/usage.en.md",
+                "src/overlay.ts"
+              ]
+            },
+            {
+              "query": "synchroniser les modifications d'un utilisateur vers le serveur partag\u00e9",
+              "ok": true,
+              "error": null,
+              "coldMs": 15.411250000001019,
+              "warmMs": 0.6981249999989814,
+              "bytes": 439,
+              "hits": 2,
+              "firstRelevantRank": null,
+              "top": [
+                "docs/usage.fr.md",
+                "docs/local-rag.fr.md"
+              ]
+            },
+            {
+              "query": "persistent worker that keeps the embedding model warm",
+              "ok": true,
+              "error": null,
+              "coldMs": 22.52033300000039,
+              "warmMs": 0.5750840000000608,
+              "bytes": 672,
+              "hits": 7,
+              "firstRelevantRank": 2,
+              "top": [
+                "docs/local-rag.md",
+                "src/semantic-worker.ts",
+                "src/semantic.ts"
+              ]
+            },
+            {
+              "query": "split a question into search terms and plan the query",
+              "ok": true,
+              "error": null,
+              "coldMs": 23.746291999999812,
+              "warmMs": 0.6402080000007118,
+              "bytes": 584,
+              "hits": 6,
+              "firstRelevantRank": 1,
+              "top": [
+                "src/query-plan.ts",
+                "src/planned-search.ts",
+                "src/server.ts"
+              ]
+            },
+            {
+              "query": "git authentication over http for the shared remote",
+              "ok": true,
+              "error": null,
+              "coldMs": 22.967916999998124,
+              "warmMs": 0.6193749999983993,
+              "bytes": 560,
+              "hits": 5,
+              "firstRelevantRank": 2,
+              "top": [
+                "docs/usage.en.md",
+                "src/git-profile.ts",
+                "README.md"
+              ]
+            },
+            {
+              "query": "merge lexical and semantic rankings with reciprocal rank fusion",
+              "ok": true,
+              "error": null,
+              "coldMs": 20.955667000001995,
+              "warmMs": 0.5205000000023574,
+              "bytes": 560,
+              "hits": 5,
+              "firstRelevantRank": 2,
+              "top": [
+                "tests/lexical-search.test.ts",
+                "src/planned-search.ts",
+                "src/semantic.ts"
+              ]
+            },
+            {
+              "query": "extraire le texte des PDF et des documents bureautiques",
+              "ok": true,
+              "error": null,
+              "coldMs": 15.536958000000595,
+              "warmMs": 0.5345830000005662,
+              "bytes": 511,
+              "hits": 4,
+              "firstRelevantRank": null,
+              "top": [
+                "docs/local-rag.fr.md",
+                "docs/local-rag.md",
+                "README.md"
+              ]
+            },
+            {
+              "query": "arr\u00eat propre du serveur \u00e0 la r\u00e9ception d'un signal",
+              "ok": true,
+              "error": null,
+              "coldMs": 14.797458000000915,
+              "warmMs": 0.5410420000007434,
+              "bytes": 614,
+              "hits": 6,
+              "firstRelevantRank": null,
+              "top": [
+                "docs/local-rag.fr.md",
+                "src/server.ts",
+                "docs/usage.fr.md"
+              ]
+            },
+            {
+              "query": "choix du mod\u00e8le d'embedding selon le type de contenu code ou documents",
+              "ok": true,
+              "error": null,
+              "coldMs": 29.98225000000093,
+              "warmMs": 0.7103749999987485,
+              "bytes": 572,
+              "hits": 5,
+              "firstRelevantRank": 1,
+              "top": [
+                "docs/local-rag.fr.md",
+                "src/embedding-models.ts",
+                "docs/harness-benchmark.md"
+              ]
+            },
+            {
+              "query": "which execution provider CPU CUDA CoreML is fastest",
+              "ok": true,
+              "error": null,
+              "coldMs": 15.794792000000598,
+              "warmMs": 0.48383299999841256,
+              "bytes": 545,
+              "hits": 5,
+              "firstRelevantRank": 1,
+              "top": [
+                "docs/local-rag.md",
+                "README.md",
+                "src/semantic.ts"
+              ]
+            },
+            {
+              "query": "same root or replica synchronization mode detection",
+              "ok": true,
+              "error": null,
+              "coldMs": 34.86016699999891,
+              "warmMs": 1.0175000000017462,
+              "bytes": 557,
+              "hits": 5,
+              "firstRelevantRank": 2,
+              "top": [
+                "src/collaboration.ts",
+                "tests/sync-mode.test.ts",
+                "src/runtime-tools.ts"
+              ]
+            },
+            {
+              "query": "cache of search results invalidated after a change",
+              "ok": true,
+              "error": null,
+              "coldMs": 25.07916600000317,
+              "warmMs": 0.6557080000020505,
+              "bytes": 672,
+              "hits": 8,
+              "firstRelevantRank": 4,
+              "top": [
+                "docs/retrieval.md",
+                "src/server.ts",
+                "docs/local-rag.md"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "policy": "auto-balanced",
+      "error": null,
+      "startupMs": 617.5605409999989,
+      "lexicalIndexMs": 152.00291699999798,
+      "semanticIndexMs": 4532.480499999998,
+      "modes": {
+        "text": {
+          "firstCallMs": 101.87145800000144,
+          "medianMs": 21.22179099999994,
+          "meanMs": 26.06646331250022,
+          "warmMs": 0.6282089999986056,
+          "meanBytes": 581.4375,
+          "meanTokens": 145.359375,
+          "hitAt1": 7,
+          "hitAt3": 9,
+          "hitAt10": 13,
+          "failed": 0,
+          "mrr": 0.5427083333333333,
+          "rows": [
+            {
+              "query": "how are embedding models downloaded and verified",
+              "ok": true,
+              "error": null,
+              "coldMs": 101.87145800000144,
+              "warmMs": 0.7384999999994761,
+              "bytes": 567,
+              "hits": 5,
+              "firstRelevantRank": 1,
+              "top": [
+                "src/embedding-models.ts",
+                "docs/local-rag.md",
+                "tests/embedding-models.test.ts"
+              ]
+            },
+            {
+              "query": "cancel a running semantic indexing",
+              "ok": true,
+              "error": null,
+              "coldMs": 18.099208000003273,
+              "warmMs": 0.6795000000020082,
+              "bytes": 624,
+              "hits": 6,
+              "firstRelevantRank": 1,
+              "top": [
+                "src/semantic.ts",
+                "docs/local-rag.md",
+                "tests/index-control.test.ts"
+              ]
+            },
+            {
+              "query": "which files are eligible for indexing and gitignore rules",
+              "ok": true,
+              "error": null,
+              "coldMs": 20.256540999998833,
+              "warmMs": 0.7394170000006852,
+              "bytes": 584,
+              "hits": 6,
+              "firstRelevantRank": 4,
+              "top": [
+                "src/remote-sync.ts",
+                "docs/local-rag.md",
+                "docs/retrieval.md"
+              ]
+            },
+            {
+              "query": "immutable snapshot of the corpus for consistent reads",
+              "ok": true,
+              "error": null,
+              "coldMs": 19.892040999999153,
+              "warmMs": 0.8245839999981399,
+              "bytes": 638,
+              "hits": 7,
+              "firstRelevantRank": null,
+              "top": [
+                "docs/usage.en.md",
+                "docs/retrieval.md",
+                "src/runtime-tools.ts"
+              ]
+            },
+            {
+              "query": "user overlay conflict resolution without last write wins",
+              "ok": true,
+              "error": null,
+              "coldMs": 21.752457999999024,
+              "warmMs": 0.6698749999995925,
+              "bytes": 466,
+              "hits": 3,
+              "firstRelevantRank": 1,
+              "top": [
+                "src/collaboration.ts",
+                "docs/usage.en.md",
+                "src/overlay.ts"
+              ]
+            },
+            {
+              "query": "synchroniser les modifications d'un utilisateur vers le serveur partag\u00e9",
+              "ok": true,
+              "error": null,
+              "coldMs": 15.927959000000556,
+              "warmMs": 0.7695409999978438,
+              "bytes": 441,
+              "hits": 2,
+              "firstRelevantRank": null,
+              "top": [
+                "docs/usage.fr.md",
+                "docs/local-rag.fr.md"
+              ]
+            },
+            {
+              "query": "persistent worker that keeps the embedding model warm",
+              "ok": true,
+              "error": null,
+              "coldMs": 21.22179099999994,
+              "warmMs": 0.6677920000001905,
+              "bytes": 618,
+              "hits": 6,
+              "firstRelevantRank": 2,
+              "top": [
+                "docs/local-rag.md",
+                "src/semantic-worker.ts",
+                "docs/local-rag.fr.md"
+              ]
+            },
+            {
+              "query": "split a question into search terms and plan the query",
+              "ok": true,
+              "error": null,
+              "coldMs": 24.899583000002167,
+              "warmMs": 0.49741699999867706,
+              "bytes": 565,
+              "hits": 5,
+              "firstRelevantRank": 1,
+              "top": [
+                "src/planned-search.ts",
+                "src/query-plan.ts",
+                "src/retrieval.ts"
+              ]
+            },
+            {
+              "query": "git authentication over http for the shared remote",
+              "ok": true,
+              "error": null,
+              "coldMs": 22.62329099999988,
+              "warmMs": 0.5348330000015267,
+              "bytes": 632,
+              "hits": 7,
+              "firstRelevantRank": 5,
+              "top": [
+                "docs/usage.en.md",
+                "README.md",
+                "docs/local-rag.md"
+              ]
+            },
+            {
+              "query": "merge lexical and semantic rankings with reciprocal rank fusion",
+              "ok": true,
+              "error": null,
+              "coldMs": 18.045458000000508,
+              "warmMs": 0.5471250000009604,
+              "bytes": 610,
+              "hits": 6,
+              "firstRelevantRank": 1,
+              "top": [
+                "src/planned-search.ts",
+                "src/semantic.ts",
+                "tests/lexical-search.test.ts"
+              ]
+            },
+            {
+              "query": "extraire le texte des PDF et des documents bureautiques",
+              "ok": true,
+              "error": null,
+              "coldMs": 16.085541000000376,
+              "warmMs": 0.5628329999999551,
+              "bytes": 589,
+              "hits": 6,
+              "firstRelevantRank": 5,
+              "top": [
+                "docs/local-rag.fr.md",
+                "docs/local-rag.md",
+                "README.md"
+              ]
+            },
+            {
+              "query": "arr\u00eat propre du serveur \u00e0 la r\u00e9ception d'un signal",
+              "ok": true,
+              "error": null,
+              "coldMs": 13.571374999999534,
+              "warmMs": 0.5840840000018943,
+              "bytes": 493,
+              "hits": 3,
+              "firstRelevantRank": null,
+              "top": [
+                "docs/local-rag.fr.md",
+                "docs/usage.fr.md",
+                "docs/harness-benchmark.md"
+              ]
+            },
+            {
+              "query": "choix du mod\u00e8le d'embedding selon le type de contenu code ou documents",
+              "ok": true,
+              "error": null,
+              "coldMs": 25.774457999999868,
+              "warmMs": 0.6020830000015849,
+              "bytes": 572,
+              "hits": 5,
+              "firstRelevantRank": 1,
+              "top": [
+                "docs/local-rag.fr.md",
+                "docs/harness-benchmark.md",
+                "src/embedding-models.ts"
+              ]
+            },
+            {
+              "query": "which execution provider CPU CUDA CoreML is fastest",
+              "ok": true,
+              "error": null,
+              "coldMs": 14.01995899999747,
+              "warmMs": 0.5174579999984417,
+              "bytes": 514,
+              "hits": 4,
+              "firstRelevantRank": 1,
+              "top": [
+                "docs/local-rag.md",
+                "README.md",
+                "src/semantic.ts"
+              ]
+            },
+            {
+              "query": "same root or replica synchronization mode detection",
+              "ok": true,
+              "error": null,
+              "coldMs": 37.04750000000058,
+              "warmMs": 0.6040829999983544,
+              "bytes": 676,
+              "hits": 8,
+              "firstRelevantRank": 3,
+              "top": [
+                "src/collaboration.ts",
+                "src/runtime-tools.ts",
+                "src/sync-mode.ts"
+              ]
+            },
+            {
+              "query": "cache of search results invalidated after a change",
+              "ok": true,
+              "error": null,
+              "coldMs": 25.97479200000089,
+              "warmMs": 0.6282089999986056,
+              "bytes": 714,
+              "hits": 9,
+              "firstRelevantRank": 5,
+              "top": [
+                "docs/retrieval.md",
+                "docs/local-rag.md",
+                "docs/usage.en.md"
+              ]
+            }
+          ]
+        },
+        "semantic": {
+          "firstCallMs": 18.361125000003085,
+          "medianMs": 11.444625000000087,
+          "meanMs": 11.829013125000756,
+          "warmMs": 0.46645899999930407,
+          "meanBytes": 596.25,
+          "meanTokens": 149.0625,
+          "hitAt1": 2,
+          "hitAt3": 11,
+          "hitAt10": 13,
+          "failed": 0,
+          "mrr": 0.4166666666666667,
+          "rows": [
+            {
+              "query": "how are embedding models downloaded and verified",
+              "ok": true,
+              "error": null,
+              "coldMs": 18.361125000003085,
+              "warmMs": 0.49358399999982794,
+              "bytes": 554,
+              "hits": 5,
+              "firstRelevantRank": 2,
+              "top": [
+                "docs/local-rag.md",
+                "src/embedding-models.ts",
+                "docs/native-bundles.md"
+              ]
+            },
+            {
+              "query": "cancel a running semantic indexing",
+              "ok": true,
+              "error": null,
+              "coldMs": 11.18341700000019,
+              "warmMs": 0.47925000000032014,
+              "bytes": 569,
+              "hits": 5,
+              "firstRelevantRank": 2,
+              "top": [
+                "docs/local-rag.md",
+                "tests/index-control.test.ts",
+                "src/semantic.ts"
+              ]
+            },
+            {
+              "query": "which files are eligible for indexing and gitignore rules",
+              "ok": true,
+              "error": null,
+              "coldMs": 11.9877919999999,
+              "warmMs": 0.4881249999998545,
+              "bytes": 645,
+              "hits": 7,
+              "firstRelevantRank": 4,
+              "top": [
+                "docs/local-rag.md",
+                "tests/lexical-search.test.ts",
+                "README.md"
+              ]
+            },
+            {
+              "query": "immutable snapshot of the corpus for consistent reads",
+              "ok": true,
+              "error": null,
+              "coldMs": 11.901166999999987,
+              "warmMs": 0.575250000001688,
+              "bytes": 646,
+              "hits": 7,
+              "firstRelevantRank": 4,
+              "top": [
+                "docs/local-rag.md",
+                "src/knowledge.ts",
+                "docs/retrieval.md"
+              ]
+            },
+            {
+              "query": "user overlay conflict resolution without last write wins",
+              "ok": true,
+              "error": null,
+              "coldMs": 11.18116700000246,
+              "warmMs": 0.4549169999991136,
+              "bytes": 558,
+              "hits": 5,
+              "firstRelevantRank": 2,
+              "top": [
+                "docs/usage.en.md",
+                "src/collaboration.ts",
+                "docs/usage.fr.md"
+              ]
+            },
+            {
+              "query": "synchroniser les modifications d'un utilisateur vers le serveur partag\u00e9",
+              "ok": true,
+              "error": null,
+              "coldMs": 11.489292000002024,
+              "warmMs": 0.4289170000010927,
+              "bytes": 590,
+              "hits": 6,
+              "firstRelevantRank": 3,
+              "top": [
+                "docs/usage.fr.md",
+                "src/sync-mode.ts",
+                "src/collaboration.ts"
+              ]
+            },
+            {
+              "query": "persistent worker that keeps the embedding model warm",
+              "ok": true,
+              "error": null,
+              "coldMs": 11.41204099999959,
+              "warmMs": 0.46299999999973807,
+              "bytes": 511,
+              "hits": 4,
+              "firstRelevantRank": null,
+              "top": [
+                "docs/local-rag.md",
+                "src/semantic.ts",
+                "README.md"
+              ]
+            },
+            {
+              "query": "split a question into search terms and plan the query",
+              "ok": true,
+              "error": null,
+              "coldMs": 11.444625000000087,
+              "warmMs": 0.38500000000203727,
+              "bytes": 601,
+              "hits": 6,
+              "firstRelevantRank": 2,
+              "top": [
+                "docs/usage.en.md",
+                "src/query-plan.ts",
+                "docs/retrieval.md"
+              ]
+            },
+            {
+              "query": "git authentication over http for the shared remote",
+              "ok": true,
+              "error": null,
+              "coldMs": 11.677374999999302,
+              "warmMs": 0.670709000001807,
+              "bytes": 700,
+              "hits": 8,
+              "firstRelevantRank": 2,
+              "top": [
+                "docs/usage.en.md",
+                "src/git-profile.ts",
+                "README.md"
+              ]
+            },
+            {
+              "query": "merge lexical and semantic rankings with reciprocal rank fusion",
+              "ok": true,
+              "error": null,
+              "coldMs": 11.517125000002125,
+              "warmMs": 0.4653330000001006,
+              "bytes": 699,
+              "hits": 8,
+              "firstRelevantRank": null,
+              "top": [
+                "docs/local-rag.md",
+                "tests/lexical-search.test.ts",
+                "docs/retrieval.md"
+              ]
+            },
+            {
+              "query": "extraire le texte des PDF et des documents bureautiques",
+              "ok": true,
+              "error": null,
+              "coldMs": 10.71808400000009,
+              "warmMs": 0.5067909999997937,
+              "bytes": 563,
+              "hits": 5,
+              "firstRelevantRank": 3,
+              "top": [
+                "docs/local-rag.fr.md",
+                "src/query-plan.ts",
+                "tests/documents.test.ts"
+              ]
+            },
+            {
+              "query": "arr\u00eat propre du serveur \u00e0 la r\u00e9ception d'un signal",
+              "ok": true,
+              "error": null,
+              "coldMs": 11.32549999999901,
+              "warmMs": 0.43058300000120653,
+              "bytes": 620,
+              "hits": 6,
+              "firstRelevantRank": null,
+              "top": [
+                "docs/local-rag.fr.md",
+                "src/semantic-worker.ts",
+                "docs/usage.fr.md"
+              ]
+            },
+            {
+              "query": "choix du mod\u00e8le d'embedding selon le type de contenu code ou documents",
+              "ok": true,
+              "error": null,
+              "coldMs": 11.611917000001995,
+              "warmMs": 0.46645899999930407,
+              "bytes": 697,
+              "hits": 8,
+              "firstRelevantRank": 1,
+              "top": [
+                "docs/local-rag.fr.md",
+                "src/query-plan.ts",
+                "docs/retrieval.fr.md"
+              ]
+            },
+            {
+              "query": "which execution provider CPU CUDA CoreML is fastest",
+              "ok": true,
+              "error": null,
+              "coldMs": 11.410291000000143,
+              "warmMs": 0.4505830000016431,
+              "bytes": 518,
+              "hits": 4,
+              "firstRelevantRank": 1,
+              "top": [
+                "docs/local-rag.md",
+                "tests/semantic.test.ts",
+                "src/semantic.ts"
+              ]
+            },
+            {
+              "query": "same root or replica synchronization mode detection",
+              "ok": true,
+              "error": null,
+              "coldMs": 10.925624999999854,
+              "warmMs": 0.5080409999973199,
+              "bytes": 548,
+              "hits": 5,
+              "firstRelevantRank": 2,
+              "top": [
+                "docs/usage.en.md",
+                "src/sync-mode.ts",
+                "src/collaboration.ts"
+              ]
+            },
+            {
+              "query": "cache of search results invalidated after a change",
+              "ok": true,
+              "error": null,
+              "coldMs": 11.117667000002257,
+              "warmMs": 0.46125000000029104,
+              "bytes": 521,
+              "hits": 4,
+              "firstRelevantRank": 2,
+              "top": [
+                "docs/local-rag.md",
+                "tests/search-cache.test.ts",
+                "docs/retrieval.md"
+              ]
+            }
+          ]
+        },
+        "hybrid": {
+          "firstCallMs": 21.228416999998444,
+          "medianMs": 24.01799999999639,
+          "meanMs": 23.82209118749938,
+          "warmMs": 0.5790000000015425,
+          "meanBytes": 565.0625,
+          "meanTokens": 141.265625,
+          "hitAt1": 4,
+          "hitAt3": 11,
+          "hitAt10": 15,
+          "failed": 0,
+          "mrr": 0.5020833333333333,
+          "rows": [
+            {
+              "query": "how are embedding models downloaded and verified",
+              "ok": true,
+              "error": null,
+              "coldMs": 21.228416999998444,
+              "warmMs": 0.6367079999981797,
+              "bytes": 569,
+              "hits": 5,
+              "firstRelevantRank": 2,
+              "top": [
+                "docs/local-rag.md",
+                "src/embedding-models.ts",
+                "tests/embedding-models.test.ts"
+              ]
+            },
+            {
+              "query": "cancel a running semantic indexing",
+              "ok": true,
+              "error": null,
+              "coldMs": 19.778416999997717,
+              "warmMs": 0.5064999999995052,
+              "bytes": 479,
+              "hits": 3,
+              "firstRelevantRank": 2,
+              "top": [
+                "docs/local-rag.md",
+                "src/semantic.ts",
+                "tests/index-control.test.ts"
+              ]
+            },
+            {
+              "query": "which files are eligible for indexing and gitignore rules",
+              "ok": true,
+              "error": null,
+              "coldMs": 29.6617499999993,
+              "warmMs": 0.7912920000017039,
+              "bytes": 600,
+              "hits": 6,
+              "firstRelevantRank": 1,
+              "top": [
+                "src/knowledge.ts",
+                "docs/local-rag.md",
+                "src/remote-sync.ts"
+              ]
+            },
+            {
+              "query": "immutable snapshot of the corpus for consistent reads",
+              "ok": true,
+              "error": null,
+              "coldMs": 36.538541999998415,
+              "warmMs": 0.4965830000001006,
+              "bytes": 589,
+              "hits": 6,
+              "firstRelevantRank": 6,
+              "top": [
+                "docs/usage.en.md",
+                "docs/local-rag.md",
+                "docs/retrieval.md"
+              ]
+            },
+            {
+              "query": "user overlay conflict resolution without last write wins",
+              "ok": true,
+              "error": null,
+              "coldMs": 20.89979200000016,
+              "warmMs": 0.6363750000018626,
+              "bytes": 474,
+              "hits": 3,
+              "firstRelevantRank": 2,
+              "top": [
+                "docs/usage.en.md",
+                "src/collaboration.ts",
+                "docs/usage.fr.md"
+              ]
+            },
+            {
+              "query": "synchroniser les modifications d'un utilisateur vers le serveur partag\u00e9",
+              "ok": true,
+              "error": null,
+              "coldMs": 16.208083000001352,
+              "warmMs": 0.5357919999987644,
+              "bytes": 520,
+              "hits": 4,
+              "firstRelevantRank": 4,
+              "top": [
+                "docs/usage.fr.md",
+                "docs/local-rag.fr.md",
+                "src/sync-mode.ts"
+              ]
+            },
+            {
+              "query": "persistent worker that keeps the embedding model warm",
+              "ok": true,
+              "error": null,
+              "coldMs": 27.987833999999566,
+              "warmMs": 0.5606250000018917,
+              "bytes": 650,
+              "hits": 7,
+              "firstRelevantRank": 2,
+              "top": [
+                "docs/local-rag.md",
+                "src/semantic-worker.ts",
+                "src/semantic.ts"
+              ]
+            },
+            {
+              "query": "split a question into search terms and plan the query",
+              "ok": true,
+              "error": null,
+              "coldMs": 26.789583000001585,
+              "warmMs": 0.4867500000000291,
+              "bytes": 591,
+              "hits": 6,
+              "firstRelevantRank": 1,
+              "top": [
+                "src/query-plan.ts",
+                "docs/local-rag.md",
+                "docs/usage.en.md"
+              ]
+            },
+            {
+              "query": "git authentication over http for the shared remote",
+              "ok": true,
+              "error": null,
+              "coldMs": 25.380832999999257,
+              "warmMs": 0.5817079999978887,
+              "bytes": 554,
+              "hits": 5,
+              "firstRelevantRank": 3,
+              "top": [
+                "docs/usage.en.md",
+                "README.md",
+                "src/git-profile.ts"
+              ]
+            },
+            {
+              "query": "merge lexical and semantic rankings with reciprocal rank fusion",
+              "ok": true,
+              "error": null,
+              "coldMs": 19.76420799999687,
+              "warmMs": 0.6268330000020796,
+              "bytes": 648,
+              "hits": 7,
+              "firstRelevantRank": 2,
+              "top": [
+                "docs/local-rag.md",
+                "src/planned-search.ts",
+                "src/semantic.ts"
+              ]
+            },
+            {
+              "query": "extraire le texte des PDF et des documents bureautiques",
+              "ok": true,
+              "error": null,
+              "coldMs": 18.900166999999783,
+              "warmMs": 0.6152919999985897,
+              "bytes": 546,
+              "hits": 5,
+              "firstRelevantRank": 5,
+              "top": [
+                "docs/local-rag.fr.md",
+                "src/query-plan.ts",
+                "docs/local-rag.md"
+              ]
+            },
+            {
+              "query": "arr\u00eat propre du serveur \u00e0 la r\u00e9ception d'un signal",
+              "ok": true,
+              "error": null,
+              "coldMs": 14.993875000000116,
+              "warmMs": 0.5835000000006403,
+              "bytes": 538,
+              "hits": 4,
+              "firstRelevantRank": null,
+              "top": [
+                "docs/local-rag.fr.md",
+                "src/semantic-worker.ts",
+                "docs/usage.fr.md"
+              ]
+            },
+            {
+              "query": "choix du mod\u00e8le d'embedding selon le type de contenu code ou documents",
+              "ok": true,
+              "error": null,
+              "coldMs": 28.611666000000696,
+              "warmMs": 0.539082999999664,
+              "bytes": 574,
+              "hits": 5,
+              "firstRelevantRank": 1,
+              "top": [
+                "docs/local-rag.fr.md",
+                "src/query-plan.ts",
+                "docs/harness-benchmark.md"
+              ]
+            },
+            {
+              "query": "which execution provider CPU CUDA CoreML is fastest",
+              "ok": true,
+              "error": null,
+              "coldMs": 15.82404200000019,
+              "warmMs": 0.5091670000001614,
+              "bytes": 555,
+              "hits": 5,
+              "firstRelevantRank": 1,
+              "top": [
+                "docs/local-rag.md",
+                "README.md",
+                "tests/semantic.test.ts"
+              ]
+            },
+            {
+              "query": "same root or replica synchronization mode detection",
+              "ok": true,
+              "error": null,
+              "coldMs": 34.56825000000026,
+              "warmMs": 0.5790000000015425,
+              "bytes": 554,
+              "hits": 5,
+              "firstRelevantRank": 4,
+              "top": [
+                "src/collaboration.ts",
+                "docs/usage.en.md",
+                "src/runtime-tools.ts"
+              ]
+            },
+            {
+              "query": "cache of search results invalidated after a change",
+              "ok": true,
+              "error": null,
+              "coldMs": 24.01799999999639,
+              "warmMs": 0.5064579999998386,
+              "bytes": 600,
+              "hits": 6,
+              "firstRelevantRank": 3,
+              "top": [
+                "docs/local-rag.md",
+                "docs/retrieval.md",
+                "tests/search-cache.test.ts"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "policy": "auto-speed",
+      "error": null,
+      "startupMs": 519.915958000005,
+      "lexicalIndexMs": 164.69108399999823,
+      "semanticIndexMs": 2471.326832999999,
+      "modes": {
+        "text": {
+          "firstCallMs": 100.23991699999897,
+          "medianMs": 20.715874999994412,
+          "meanMs": 27.783851499999855,
+          "warmMs": 0.7122910000034608,
+          "meanBytes": 581.4375,
+          "meanTokens": 145.359375,
+          "hitAt1": 7,
+          "hitAt3": 9,
+          "hitAt10": 13,
+          "failed": 0,
+          "mrr": 0.5427083333333333,
+          "rows": [
+            {
+              "query": "how are embedding models downloaded and verified",
+              "ok": true,
+              "error": null,
+              "coldMs": 100.23991699999897,
+              "warmMs": 0.7552910000013071,
+              "bytes": 567,
+              "hits": 5,
+              "firstRelevantRank": 1,
+              "top": [
+                "src/embedding-models.ts",
+                "docs/local-rag.md",
+                "tests/embedding-models.test.ts"
+              ]
+            },
+            {
+              "query": "cancel a running semantic indexing",
+              "ok": true,
+              "error": null,
+              "coldMs": 16.504750000000058,
+              "warmMs": 0.7209580000053393,
+              "bytes": 624,
+              "hits": 6,
+              "firstRelevantRank": 1,
+              "top": [
+                "src/semantic.ts",
+                "docs/local-rag.md",
+                "tests/index-control.test.ts"
+              ]
+            },
+            {
+              "query": "which files are eligible for indexing and gitignore rules",
+              "ok": true,
+              "error": null,
+              "coldMs": 19.932207999998354,
+              "warmMs": 0.6188750000001164,
+              "bytes": 584,
+              "hits": 6,
+              "firstRelevantRank": 4,
+              "top": [
+                "src/remote-sync.ts",
+                "docs/local-rag.md",
+                "docs/retrieval.md"
+              ]
+            },
+            {
+              "query": "immutable snapshot of the corpus for consistent reads",
+              "ok": true,
+              "error": null,
+              "coldMs": 21.706958000002487,
+              "warmMs": 0.877290999997058,
+              "bytes": 638,
+              "hits": 7,
+              "firstRelevantRank": null,
+              "top": [
+                "docs/usage.en.md",
+                "docs/retrieval.md",
+                "src/runtime-tools.ts"
+              ]
+            },
+            {
+              "query": "user overlay conflict resolution without last write wins",
+              "ok": true,
+              "error": null,
+              "coldMs": 20.715874999994412,
+              "warmMs": 0.6511670000036247,
+              "bytes": 466,
+              "hits": 3,
+              "firstRelevantRank": 1,
+              "top": [
+                "src/collaboration.ts",
+                "docs/usage.en.md",
+                "src/overlay.ts"
+              ]
+            },
+            {
+              "query": "synchroniser les modifications d'un utilisateur vers le serveur partag\u00e9",
+              "ok": true,
+              "error": null,
+              "coldMs": 14.397499999999127,
+              "warmMs": 0.7122910000034608,
+              "bytes": 441,
+              "hits": 2,
+              "firstRelevantRank": null,
+              "top": [
+                "docs/usage.fr.md",
+                "docs/local-rag.fr.md"
+              ]
+            },
+            {
+              "query": "persistent worker that keeps the embedding model warm",
+              "ok": true,
+              "error": null,
+              "coldMs": 20.142707999999402,
+              "warmMs": 0.6418339999945601,
+              "bytes": 618,
+              "hits": 6,
+              "firstRelevantRank": 2,
+              "top": [
+                "docs/local-rag.md",
+                "src/semantic-worker.ts",
+                "docs/local-rag.fr.md"
+              ]
+            },
+            {
+              "query": "split a question into search terms and plan the query",
+              "ok": true,
+              "error": null,
+              "coldMs": 23.181958000001032,
+              "warmMs": 0.5218329999988782,
+              "bytes": 565,
+              "hits": 5,
+              "firstRelevantRank": 1,
+              "top": [
+                "src/planned-search.ts",
+                "src/query-plan.ts",
+                "src/retrieval.ts"
+              ]
+            },
+            {
+              "query": "git authentication over http for the shared remote",
+              "ok": true,
+              "error": null,
+              "coldMs": 21.366000000001804,
+              "warmMs": 0.493916999999783,
+              "bytes": 632,
+              "hits": 7,
+              "firstRelevantRank": 5,
+              "top": [
+                "docs/usage.en.md",
+                "README.md",
+                "docs/local-rag.md"
+              ]
+            },
+            {
+              "query": "merge lexical and semantic rankings with reciprocal rank fusion",
+              "ok": true,
+              "error": null,
+              "coldMs": 18.57429200000479,
+              "warmMs": 0.6917499999981374,
+              "bytes": 610,
+              "hits": 6,
+              "firstRelevantRank": 1,
+              "top": [
+                "src/planned-search.ts",
+                "src/semantic.ts",
+                "tests/lexical-search.test.ts"
+              ]
+            },
+            {
+              "query": "extraire le texte des PDF et des documents bureautiques",
+              "ok": true,
+              "error": null,
+              "coldMs": 19.107082999995328,
+              "warmMs": 0.6395840000041062,
+              "bytes": 589,
+              "hits": 6,
+              "firstRelevantRank": 5,
+              "top": [
+                "docs/local-rag.fr.md",
+                "docs/local-rag.md",
+                "README.md"
+              ]
+            },
+            {
+              "query": "arr\u00eat propre du serveur \u00e0 la r\u00e9ception d'un signal",
+              "ok": true,
+              "error": null,
+              "coldMs": 14.577416000000085,
+              "warmMs": 1.1286250000048312,
+              "bytes": 493,
+              "hits": 3,
+              "firstRelevantRank": null,
+              "top": [
+                "docs/local-rag.fr.md",
+                "docs/usage.fr.md",
+                "docs/harness-benchmark.md"
+              ]
+            },
+            {
+              "query": "choix du mod\u00e8le d'embedding selon le type de contenu code ou documents",
+              "ok": true,
+              "error": null,
+              "coldMs": 31.128458999999566,
+              "warmMs": 0.7580000000016298,
+              "bytes": 572,
+              "hits": 5,
+              "firstRelevantRank": 1,
+              "top": [
+                "docs/local-rag.fr.md",
+                "docs/harness-benchmark.md",
+                "src/embedding-models.ts"
+              ]
+            },
+            {
+              "query": "which execution provider CPU CUDA CoreML is fastest",
+              "ok": true,
+              "error": null,
+              "coldMs": 16.44154200000048,
+              "warmMs": 1.2532919999939622,
+              "bytes": 514,
+              "hits": 4,
+              "firstRelevantRank": 1,
+              "top": [
+                "docs/local-rag.md",
+                "README.md",
+                "src/semantic.ts"
+              ]
+            },
+            {
+              "query": "same root or replica synchronization mode detection",
+              "ok": true,
+              "error": null,
+              "coldMs": 54.78454200000124,
+              "warmMs": 0.9729999999981374,
+              "bytes": 676,
+              "hits": 8,
+              "firstRelevantRank": 3,
+              "top": [
+                "src/collaboration.ts",
+                "src/runtime-tools.ts",
+                "src/sync-mode.ts"
+              ]
+            },
+            {
+              "query": "cache of search results invalidated after a change",
+              "ok": true,
+              "error": null,
+              "coldMs": 31.74041600000055,
+              "warmMs": 0.6063340000036987,
+              "bytes": 714,
+              "hits": 9,
+              "firstRelevantRank": 5,
+              "top": [
+                "docs/retrieval.md",
+                "docs/local-rag.md",
+                "docs/usage.en.md"
+              ]
+            }
+          ]
+        },
+        "semantic": {
+          "firstCallMs": 22.215791000002355,
+          "medianMs": 9.275083999993512,
+          "meanMs": 10.098869750000176,
+          "warmMs": 0.5467920000010054,
+          "meanBytes": 611.25,
+          "meanTokens": 152.8125,
+          "hitAt1": 2,
+          "hitAt3": 10,
+          "hitAt10": 13,
+          "failed": 0,
+          "mrr": 0.41145833333333337,
+          "rows": [
+            {
+              "query": "how are embedding models downloaded and verified",
+              "ok": true,
+              "error": null,
+              "coldMs": 22.215791000002355,
+              "warmMs": 0.6271249999990687,
+              "bytes": 566,
+              "hits": 5,
+              "firstRelevantRank": 2,
+              "top": [
+                "docs/local-rag.md",
+                "src/embedding-models.ts",
+                "docs/local-rag.fr.md"
+              ]
+            },
+            {
+              "query": "cancel a running semantic indexing",
+              "ok": true,
+              "error": null,
+              "coldMs": 9.713583000004292,
+              "warmMs": 0.519083999999566,
+              "bytes": 607,
+              "hits": 6,
+              "firstRelevantRank": 2,
+              "top": [
+                "docs/local-rag.md",
+                "tests/index-control.test.ts",
+                "src/semantic.ts"
+              ]
+            },
+            {
+              "query": "which files are eligible for indexing and gitignore rules",
+              "ok": true,
+              "error": null,
+              "coldMs": 8.959332999998878,
+              "warmMs": 0.6125840000022436,
+              "bytes": 684,
+              "hits": 8,
+              "firstRelevantRank": 4,
+              "top": [
+                "docs/retrieval.md",
+                "tests/lexical-search.test.ts",
+                "docs/local-rag.fr.md"
+              ]
+            },
+            {
+              "query": "immutable snapshot of the corpus for consistent reads",
+              "ok": true,
+              "error": null,
+              "coldMs": 9.722709000001487,
+              "warmMs": 0.5482080000001588,
+              "bytes": 606,
+              "hits": 6,
+              "firstRelevantRank": 4,
+              "top": [
+                "docs/usage.en.md",
+                "src/knowledge.ts",
+                "docs/local-rag.md"
+              ]
+            },
+            {
+              "query": "user overlay conflict resolution without last write wins",
+              "ok": true,
+              "error": null,
+              "coldMs": 9.275083999993512,
+              "warmMs": 0.5467920000010054,
+              "bytes": 602,
+              "hits": 6,
+              "firstRelevantRank": 2,
+              "top": [
+                "docs/usage.en.md",
+                "src/collaboration.ts",
+                "docs/usage.fr.md"
+              ]
+            },
+            {
+              "query": "synchroniser les modifications d'un utilisateur vers le serveur partag\u00e9",
+              "ok": true,
+              "error": null,
+              "coldMs": 10.537082999995619,
+              "warmMs": 0.5787080000009155,
+              "bytes": 665,
+              "hits": 8,
+              "firstRelevantRank": 4,
+              "top": [
+                "docs/usage.fr.md",
+                "src/sync-mode.ts",
+                "docs/local-rag.fr.md"
+              ]
+            },
+            {
+              "query": "persistent worker that keeps the embedding model warm",
+              "ok": true,
+              "error": null,
+              "coldMs": 8.176958000003651,
+              "warmMs": 0.6465000000025611,
+              "bytes": 481,
+              "hits": 3,
+              "firstRelevantRank": null,
+              "top": [
+                "docs/local-rag.md",
+                "src/semantic.ts",
+                "src/embedding-models.ts"
+              ]
+            },
+            {
+              "query": "split a question into search terms and plan the query",
+              "ok": true,
+              "error": null,
+              "coldMs": 9.277291999998852,
+              "warmMs": 0.5052500000019791,
+              "bytes": 559,
+              "hits": 5,
+              "firstRelevantRank": 2,
+              "top": [
+                "docs/retrieval.md",
+                "src/query-plan.ts",
+                "src/retrieval.ts"
+              ]
+            },
+            {
+              "query": "git authentication over http for the shared remote",
+              "ok": true,
+              "error": null,
+              "coldMs": 9.269083000006503,
+              "warmMs": 0.5629580000022543,
+              "bytes": 702,
+              "hits": 8,
+              "firstRelevantRank": 2,
+              "top": [
+                "docs/local-rag.md",
+                "src/git-profile.ts",
+                "README.md"
+              ]
+            },
+            {
+              "query": "merge lexical and semantic rankings with reciprocal rank fusion",
+              "ok": true,
+              "error": null,
+              "coldMs": 13.775249999998778,
+              "warmMs": 0.4962920000034501,
+              "bytes": 739,
+              "hits": 9,
+              "firstRelevantRank": null,
+              "top": [
+                "docs/local-rag.md",
+                "tests/lexical-search.test.ts",
+                "src/collaboration.ts"
+              ]
+            },
+            {
+              "query": "extraire le texte des PDF et des documents bureautiques",
+              "ok": true,
+              "error": null,
+              "coldMs": 9.49870799999917,
+              "warmMs": 0.44441599999845494,
+              "bytes": 599,
+              "hits": 6,
+              "firstRelevantRank": 3,
+              "top": [
+                "docs/local-rag.fr.md",
+                "src/query-plan.ts",
+                "tests/documents.test.ts"
+              ]
+            },
+            {
+              "query": "arr\u00eat propre du serveur \u00e0 la r\u00e9ception d'un signal",
+              "ok": true,
+              "error": null,
+              "coldMs": 8.480416999998852,
+              "warmMs": 0.4423330000063288,
+              "bytes": 655,
+              "hits": 7,
+              "firstRelevantRank": null,
+              "top": [
+                "docs/local-rag.fr.md",
+                "src/semantic-worker.ts",
+                "README.md"
+              ]
+            },
+            {
+              "query": "choix du mod\u00e8le d'embedding selon le type de contenu code ou documents",
+              "ok": true,
+              "error": null,
+              "coldMs": 8.075792000003275,
+              "warmMs": 0.5106249999953434,
+              "bytes": 638,
+              "hits": 7,
+              "firstRelevantRank": 1,
+              "top": [
+                "docs/local-rag.fr.md",
+                "src/query-plan.ts",
+                "src/embedding-models.ts"
+              ]
+            },
+            {
+              "query": "which execution provider CPU CUDA CoreML is fastest",
+              "ok": true,
+              "error": null,
+              "coldMs": 7.812625000005937,
+              "warmMs": 0.6319589999984601,
+              "bytes": 531,
+              "hits": 4,
+              "firstRelevantRank": 1,
+              "top": [
+                "docs/local-rag.md",
+                "tests/semantic.test.ts",
+                "src/semantic.ts"
+              ]
+            },
+            {
+              "query": "same root or replica synchronization mode detection",
+              "ok": true,
+              "error": null,
+              "coldMs": 8.33762499999284,
+              "warmMs": 0.44904200000019046,
+              "bytes": 586,
+              "hits": 6,
+              "firstRelevantRank": 2,
+              "top": [
+                "docs/local-rag.md",
+                "src/sync-mode.ts",
+                "docs/usage.en.md"
+              ]
+            },
+            {
+              "query": "cache of search results invalidated after a change",
+              "ok": true,
+              "error": null,
+              "coldMs": 8.45458299999882,
+              "warmMs": 0.39408299999922747,
+              "bytes": 560,
+              "hits": 5,
+              "firstRelevantRank": 2,
+              "top": [
+                "docs/retrieval.md",
+                "tests/search-cache.test.ts",
+                "docs/local-rag.md"
+              ]
+            }
+          ]
+        },
+        "hybrid": {
+          "firstCallMs": 19.08066699999472,
+          "medianMs": 21.458917000003566,
+          "meanMs": 21.533450562499183,
+          "warmMs": 0.6112499999944703,
+          "meanBytes": 577.0625,
+          "meanTokens": 144.265625,
+          "hitAt1": 4,
+          "hitAt3": 10,
+          "hitAt10": 15,
+          "failed": 0,
+          "mrr": 0.4864583333333333,
+          "rows": [
+            {
+              "query": "how are embedding models downloaded and verified",
+              "ok": true,
+              "error": null,
+              "coldMs": 19.08066699999472,
+              "warmMs": 0.6144169999970472,
+              "bytes": 612,
+              "hits": 6,
+              "firstRelevantRank": 3,
+              "top": [
+                "docs/native-bundles.md",
+                "docs/local-rag.md",
+                "src/embedding-models.ts"
+              ]
+            },
+            {
+              "query": "cancel a running semantic indexing",
+              "ok": true,
+              "error": null,
+              "coldMs": 19.601332999998704,
+              "warmMs": 0.5181250000023283,
+              "bytes": 478,
+              "hits": 3,
+              "firstRelevantRank": 2,
+              "top": [
+                "docs/local-rag.md",
+                "src/semantic.ts",
+                "tests/index-control.test.ts"
+              ]
+            },
+            {
+              "query": "which files are eligible for indexing and gitignore rules",
+              "ok": true,
+              "error": null,
+              "coldMs": 19.27483299999585,
+              "warmMs": 0.6454589999993914,
+              "bytes": 643,
+              "hits": 7,
+              "firstRelevantRank": 1,
+              "top": [
+                "src/knowledge.ts",
+                "docs/retrieval.md",
+                "src/remote-sync.ts"
+              ]
+            },
+            {
+              "query": "immutable snapshot of the corpus for consistent reads",
+              "ok": true,
+              "error": null,
+              "coldMs": 25.557832999998936,
+              "warmMs": 0.6848329999993439,
+              "bytes": 587,
+              "hits": 6,
+              "firstRelevantRank": 6,
+              "top": [
+                "docs/usage.en.md",
+                "docs/retrieval.md",
+                "src/knowledge.ts"
+              ]
+            },
+            {
+              "query": "user overlay conflict resolution without last write wins",
+              "ok": true,
+              "error": null,
+              "coldMs": 22.673917000000074,
+              "warmMs": 0.5610000000015134,
+              "bytes": 475,
+              "hits": 3,
+              "firstRelevantRank": 2,
+              "top": [
+                "docs/usage.en.md",
+                "src/collaboration.ts",
+                "docs/usage.fr.md"
+              ]
+            },
+            {
+              "query": "synchroniser les modifications d'un utilisateur vers le serveur partag\u00e9",
+              "ok": true,
+              "error": null,
+              "coldMs": 14.320584000000963,
+              "warmMs": 0.576708000000508,
+              "bytes": 556,
+              "hits": 5,
+              "firstRelevantRank": 4,
+              "top": [
+                "docs/usage.fr.md",
+                "docs/local-rag.fr.md",
+                "src/sync-mode.ts"
+              ]
+            },
+            {
+              "query": "persistent worker that keeps the embedding model warm",
+              "ok": true,
+              "error": null,
+              "coldMs": 21.458917000003566,
+              "warmMs": 0.5058330000028946,
+              "bytes": 620,
+              "hits": 6,
+              "firstRelevantRank": 2,
+              "top": [
+                "docs/local-rag.md",
+                "src/semantic-worker.ts",
+                "src/semantic.ts"
+              ]
+            },
+            {
+              "query": "split a question into search terms and plan the query",
+              "ok": true,
+              "error": null,
+              "coldMs": 26.670875000003434,
+              "warmMs": 0.6187500000014552,
+              "bytes": 547,
+              "hits": 5,
+              "firstRelevantRank": 1,
+              "top": [
+                "src/query-plan.ts",
+                "docs/retrieval.md",
+                "src/planned-search.ts"
+              ]
+            },
+            {
+              "query": "git authentication over http for the shared remote",
+              "ok": true,
+              "error": null,
+              "coldMs": 25.157374999995227,
+              "warmMs": 0.6112499999944703,
+              "bytes": 595,
+              "hits": 6,
+              "firstRelevantRank": 4,
+              "top": [
+                "docs/local-rag.md",
+                "docs/usage.en.md",
+                "README.md"
+              ]
+            },
+            {
+              "query": "merge lexical and semantic rankings with reciprocal rank fusion",
+              "ok": true,
+              "error": null,
+              "coldMs": 19.093166999999085,
+              "warmMs": 0.5707909999982803,
+              "bytes": 609,
+              "hits": 6,
+              "firstRelevantRank": 2,
+              "top": [
+                "docs/local-rag.md",
+                "src/planned-search.ts",
+                "src/semantic.ts"
+              ]
+            },
+            {
+              "query": "extraire le texte des PDF et des documents bureautiques",
+              "ok": true,
+              "error": null,
+              "coldMs": 16.29520799999591,
+              "warmMs": 0.5365410000013071,
+              "bytes": 599,
+              "hits": 6,
+              "firstRelevantRank": 5,
+              "top": [
+                "docs/local-rag.fr.md",
+                "src/query-plan.ts",
+                "docs/local-rag.md"
+              ]
+            },
+            {
+              "query": "arr\u00eat propre du serveur \u00e0 la r\u00e9ception d'un signal",
+              "ok": true,
+              "error": null,
+              "coldMs": 14.590250000001106,
+              "warmMs": 0.6145409999953699,
+              "bytes": 570,
+              "hits": 5,
+              "firstRelevantRank": null,
+              "top": [
+                "docs/local-rag.fr.md",
+                "src/semantic-worker.ts",
+                "docs/usage.fr.md"
+              ]
+            },
+            {
+              "query": "choix du mod\u00e8le d'embedding selon le type de contenu code ou documents",
+              "ok": true,
+              "error": null,
+              "coldMs": 27.333332999995037,
+              "warmMs": 0.5732910000006086,
+              "bytes": 565,
+              "hits": 5,
+              "firstRelevantRank": 1,
+              "top": [
+                "docs/local-rag.fr.md",
+                "src/query-plan.ts",
+                "docs/harness-benchmark.md"
+              ]
+            },
+            {
+              "query": "which execution provider CPU CUDA CoreML is fastest",
+              "ok": true,
+              "error": null,
+              "coldMs": 15.604917000004207,
+              "warmMs": 0.6928339999940363,
+              "bytes": 553,
+              "hits": 5,
+              "firstRelevantRank": 1,
+              "top": [
+                "docs/local-rag.md",
+                "README.md",
+                "tests/semantic.test.ts"
+              ]
+            },
+            {
+              "query": "same root or replica synchronization mode detection",
+              "ok": true,
+              "error": null,
+              "coldMs": 32.78824999999779,
+              "warmMs": 0.6917499999981374,
+              "bytes": 628,
+              "hits": 7,
+              "firstRelevantRank": 4,
+              "top": [
+                "src/collaboration.ts",
+                "docs/local-rag.md",
+                "src/runtime-tools.ts"
+              ]
+            },
+            {
+              "query": "cache of search results invalidated after a change",
+              "ok": true,
+              "error": null,
+              "coldMs": 25.03375000000233,
+              "warmMs": 0.5687499999985448,
+              "bytes": 596,
+              "hits": 6,
+              "firstRelevantRank": 3,
+              "top": [
+                "docs/retrieval.md",
+                "docs/local-rag.md",
+                "tests/search-cache.test.ts"
+              ]
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "limitations": [
+    "16 hand-written queries with expected files chosen by the author; one corpus, mostly code.",
+    "Search timings: first run of each query (embedding + search); repeated runs hit the search cache and are reported separately.",
+    "Tokens estimated as bytes / 4."
+  ]
+}

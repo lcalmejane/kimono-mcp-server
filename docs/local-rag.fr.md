@@ -271,6 +271,17 @@ exige le périmètre sémantique complet, sans `paths`. Consulter
 `operation:"status"` pour la fin ou une erreur explicite. Déployer le MCP mis à
 jour avec les panneaux.
 
+La même carte propose aussi **Arrêter** et **Supprimer l'index**. Arrêter demande
+l'annulation de l'indexation en cours ; l'action n'est pas destructive, sans
+confirmation, et le statut reste suivi jusqu'à l'arrêt réel du worker. Supprimer
+demande confirmation et retire tout l'index sémantique du ROOT connecté ; sources,
+snapshots, index lexical et politique d'embedding sont conservés, et l'index est
+reconstruit à la prochaine mise à jour. Sur un serveur partagé, les deux actions
+concernent tous les utilisateurs de l'index. Équivalents MCP : `aikido_index` avec
+`{"operation":"cancel","mode":"semantic"}` et
+`{"operation":"reset","mode":"semantic"}` ; les deux répondent immédiatement et
+n'acceptent donc pas `background`.
+
 En mode RAG, les contenus `.php`, `.md` et `.txt` rejoignent tous l'index
 sémantique multilingue par défaut ; le modèle code facultatif n'est pas
 nécessaire. Les définitions PHP (méthodes de classe et traits compris) utilisent

@@ -1,19 +1,16 @@
-import { createHash, randomUUID } from 'node:crypto';
-import { mkdir, open, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { mkdir, open, readFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import type { AikidoKnowledgeBase } from './knowledge.js';
-import { isKnowledgeFile, isSensitiveKnowledgePath } from './knowledge.js';
+import { isKnowledgeFile } from './knowledge.js';
 import { synchronizeKnowledgeRoot } from './remote-sync.js';
+import { detectSyncMode, type SyncModeResult } from './sync-mode.js';
+import { UserOverlay, validateOwner, type OverlayChange, type OverlayItem } from './overlay.js';
+import {
+  MAX_FILES, MAX_FILE_BYTES, MAX_TOTAL_BYTES, comparePath, isMissing, isRecord, sha256, validatePath, writeAtomic,
+} from './collab-util.js';
 
-const MAX_FILES = 2_000;
-const MAX_FILE_BYTES = 256 * 1024;
-const MAX_TOTAL_BYTES = 8 * 1024 * 1024;
 const MAX_PAGE_SIZE = 100;
 const MAX_PUBLISH_REQUEST_BYTES = 512 * 1024;
-const EXCLUDED_DIRECTORIES = new Set([
-  '.git', '.ssh', 'node_modules', 'dist', 'build', 'coverage', '.venv', '__pycache__',
-  '.next', '.nuxt', '.cache', '.nyc_output', 'temp', 'credentials', 'secrets',
-]);
 
 type Manifest = Record<string, string>;
 interface Revision {
@@ -71,6 +68,7 @@ export class KnowledgeCollaboration {
           'Never resolve conflicts by last-write-wins. Refresh status and compare after a stale revision response.',
           'If the client edits the exact configured local ROOT (verified embedded stdio only), do not reconcile or publish a replica: call aikido_index update after edits. Never infer same-directory access for HTTP or another remote MCP endpoint.',
           'Collaboration revisions never mutate ROOT or an existing research snapshot. After shared-directory edits, update indexes and begin a new aikido_snapshot to see the changes; an existing snapshot remains pinned.',
+          'Replica workflow without manual manifests: mode detects same-root vs replica; sync stages optional changes in your per-user overlay, drops what the shared ROOT already contains, publishes the rest and reports conflicts (resolve only with explicit local/shared choices). In same-root, stage/sync write nothing and only reindex.',
         ],
         modes: {
           sharedDirectory: 'Embedded stdio with verified access to this exact ROOT: edit files with client tools, then call aikido_index update. No pull/publish or replica conflict workflow.',
@@ -149,7 +147,115 @@ export class KnowledgeCollaboration {
       rejectUnknown(input, ['operation', 'expectedSharedVersion', 'baseVersion', 'localManifest', 'changes', 'resolutions']);
       return this.publish(input);
     }
-    throw new Error('operation must be guidance, status, compare, read or publish');
+    if (operation === 'mode') {
+      rejectUnknown(input, ['operation', 'clientRoot']);
+      return { ...await this.syncMode(input) };
+    }
+    if (operation === 'stage' || operation === 'overlay' || operation === 'discard' || operation === 'sync') {
+      return this.delta(operation, input);
+    }
+    throw new Error('operation must be guidance, mode, status, compare, read, publish, stage, overlay, sync or discard');
+  }
+
+  private async syncMode(input: Record<string, unknown>): Promise<SyncModeResult> {
+    return detectSyncMode({
+      root: this.knowledge.root,
+      transport: process.env.MCP_TRANSPORT ?? 'stdio',
+      clientRoot: input.clientRoot === undefined ? undefined : string(input.clientRoot, 'clientRoot'),
+    });
+  }
+
+  /**
+   * Automated delta synchronization. same-root: nothing is staged or published (files are already in ROOT; the caller
+   * only reindexes). replica: per-user overlay -> shared ROOT, with explicit conflict handling and no last-write-wins.
+   */
+  private async delta(operation: 'stage' | 'overlay' | 'discard' | 'sync', input: Record<string, unknown>): Promise<Record<string, unknown>> {
+    const allowed = {
+      stage: ['operation', 'owner', 'clientRoot', 'changes'],
+      overlay: ['operation', 'owner', 'clientRoot'],
+      discard: ['operation', 'owner', 'clientRoot', 'paths'],
+      sync: ['operation', 'owner', 'clientRoot', 'changes', 'resolutions'],
+    }[operation];
+    rejectUnknown(input, allowed);
+    const detected = await this.syncMode(input);
+    if (detected.mode === 'same-root') {
+      return {
+        ...detected, operation, skipped: true,
+        ...(operation === 'sync' ? { reindexPaths: null } : {}),
+        note: 'The client workspace is this ROOT: files are already synchronized, nothing is staged or published. Reindex with aikido_index update (sync does it).',
+      };
+    }
+    return this.retryBusy(() => this.deltaReplica(operation, input, detected));
+  }
+
+  /** Concurrent users serialize on the collaboration lock: retry the whole (idempotent) operation with a short backoff. */
+  private async retryBusy<T>(action: () => Promise<T>): Promise<T> {
+    for (let attempt = 0; ; attempt++) {
+      try { return await action(); }
+      catch (error) {
+        const message = error instanceof Error ? error.message : '';
+        if (attempt >= 20 || !/Another collaboration publication is active|Shared knowledge changed|AIKIDO_ROOT changed while/.test(message)) throw error;
+        await new Promise(resolve => setTimeout(resolve, 25 * (attempt + 1) + Math.floor(Math.random() * 25)));
+      }
+    }
+  }
+
+  private async deltaReplica(operation: 'stage' | 'overlay' | 'discard' | 'sync', input: Record<string, unknown>,
+    detected: SyncModeResult): Promise<Record<string, unknown>> {
+    const overlay = new UserOverlay(this.knowledge.searchIndex.directory, input.owner === undefined ? 'default' : validateOwner(input.owner));
+    const changes = input.changes === undefined ? [] : this.overlayChanges(input.changes);
+    if (operation === 'stage' && !changes.length) throw new Error('stage requires at least one change');
+
+    if (operation === 'discard') {
+      if (!Array.isArray(input.paths) || !input.paths.length || input.paths.length > MAX_FILES) throw new Error(`paths must contain 1-${MAX_FILES} relative knowledge paths`);
+      const discarded = await overlay.remove(input.paths.map(validatePath));
+      const { shared } = await this.refreshCurrentRevision();
+      return { ...detected, operation, owner: overlay.owner, discarded, sharedVersion: shared.version, items: await overlay.items(shared.manifest) };
+    }
+    if (operation === 'stage' || operation === 'overlay') {
+      const { shared } = await this.refreshCurrentRevision();
+      const result = operation === 'stage' ? await overlay.stage(changes, shared.manifest) : {};
+      return { ...detected, operation, owner: overlay.owner, ...result, sharedVersion: shared.version, items: await overlay.items(shared.manifest) };
+    }
+
+    const resolutions = validateResolutions(input.resolutions);
+    if (changes.length) await overlay.stage(changes, (await this.refreshCurrentRevision()).shared.manifest);
+    {
+      const { shared } = await this.refreshCurrentRevision();
+      const items = await overlay.items(shared.manifest);
+      const integrated = items.filter(item => item.status === 'integrated').map(item => item.path);
+      const discarded = items.filter(item => item.status === 'conflict' && resolutions[item.path] === 'shared').map(item => item.path);
+      const conflicts = items.filter(item => item.status === 'conflict' && !resolutions[item.path]);
+      const unrelated = Object.keys(resolutions).filter(file => !items.some(item => item.path === file && item.status === 'conflict'));
+      if (unrelated.length) throw new Error(`Resolution does not apply to a conflict: ${unrelated[0]}`);
+      const toPublish = items.filter(item => item.status === 'pending' || item.status === 'conflict' && resolutions[item.path] === 'local');
+      const published: string[] = [];
+      if (toPublish.length) {
+        const manifest: Manifest = { ...shared.manifest };
+        const publishChanges: OverlayChange[] = [];
+        for (const item of toPublish) {
+          if (item.op === 'delete') { delete manifest[item.path]; publishChanges.push({ path: item.path, content: null }); }
+          else { manifest[item.path] = item.hash!; publishChanges.push({ path: item.path, content: (await overlay.content(item.path)) as string }); }
+        }
+        const result = await this.publish({ expectedSharedVersion: shared.version, baseVersion: shared.version, localManifest: manifest, changes: publishChanges }, true);
+        if (result.published !== true) throw new Error('Overlay publication was not accepted; refresh and retry');
+        published.push(...toPublish.map(item => item.path));
+      }
+      await overlay.remove([...published, ...integrated, ...discarded]);
+      const current = (await this.refreshCurrentRevision()).shared;
+      return {
+        ...detected, operation, owner: overlay.owner, published, integrated, discarded,
+        conflicts: conflicts.map(item => ({ path: item.path, baseHash: item.baseHash, stagedHash: item.hash, sharedHash: item.sharedHash })),
+        remaining: (await overlay.items(current.manifest)).map(withoutBlobInfo),
+        sharedVersion: current.version,
+        reindexPaths: [...published, ...integrated],
+      };
+    }
+  }
+
+  private overlayChanges(value: unknown): OverlayChange[] {
+    if (!Array.isArray(value) || value.length > MAX_FILES) throw new Error(`changes must be an array of at most ${MAX_FILES} entries`);
+    return value as OverlayChange[];
   }
 
   private async localManifest(): Promise<{ manifest: Manifest; contents: Map<string, string>; totalBytes: number }> {
@@ -267,8 +373,8 @@ export class KnowledgeCollaboration {
     await writeAtomic(path.join(this.directory, 'root-conflicts.json'), Buffer.from(JSON.stringify(conflicts)));
   }
 
-  private async publish(input: Record<string, unknown>): Promise<Record<string, unknown>> {
-    if (Buffer.byteLength(JSON.stringify(input)) > MAX_PUBLISH_REQUEST_BYTES) {
+  private async publish(input: Record<string, unknown>, internal = false): Promise<Record<string, unknown>> {
+    if (!internal && Buffer.byteLength(JSON.stringify(input)) > MAX_PUBLISH_REQUEST_BYTES) {
       throw new Error(`publish request exceeds ${MAX_PUBLISH_REQUEST_BYTES} bytes`);
     }
     const expected = string(input.expectedSharedVersion, 'expectedSharedVersion');
@@ -544,15 +650,9 @@ function validateResolutions(value: unknown): Record<string, 'local' | 'shared'>
   return result;
 }
 
-function validatePath(file: unknown): string {
-  if (typeof file !== 'string' || !file || Buffer.byteLength(file) > 1024 || file.startsWith('/')
-    || /^[a-z]:/i.test(file) || file.includes('\\') || /[\u0000-\u001f\u007f]/.test(file)
-    || file.split('/').some(part => !part || part === '.' || part === '..' || EXCLUDED_DIRECTORIES.has(part.toLowerCase()))
-    || (process.env.AIKIDO_INCLUDE_SPEC !== 'true' && (file === 'spec' || file.startsWith('spec/') || file === 'prompts/spec' || file.startsWith('prompts/spec/')))
-    || path.posix.normalize(file) !== file || !isKnowledgeFile(file) || isSensitiveKnowledgePath(file)) {
-    throw new Error(`Unsafe or ineligible relative knowledge path: ${String(file)}`);
-  }
-  return file;
+function withoutBlobInfo(item: OverlayItem): Omit<OverlayItem, 'hash' | 'baseHash'> & { stagedHash: string | null } {
+  const { hash, baseHash: _baseHash, ...rest } = item;
+  return { ...rest, stagedHash: hash };
 }
 
 function manifestVersion(manifest: Manifest): string {
@@ -561,14 +661,6 @@ function manifestVersion(manifest: Manifest): string {
 
 function sortedManifest(manifest: Manifest): Manifest {
   return Object.fromEntries(Object.entries(manifest).sort(([a], [b]) => comparePath(a, b)));
-}
-
-function comparePath(a: string, b: string): number {
-  return a < b ? -1 : a > b ? 1 : 0;
-}
-
-function sha256(content: string | Buffer): string {
-  return createHash('sha256').update(content).digest('hex');
 }
 
 function string(value: unknown, name: string): string {
@@ -589,21 +681,3 @@ function rejectUnknown(input: Record<string, unknown>, allowed: string[]): void 
   if (unknown) throw new Error(`Unknown aikido_collaboration argument: ${unknown}`);
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value && typeof value === 'object' && !Array.isArray(value));
-}
-
-function isMissing(error: unknown): boolean {
-  return error instanceof Error && 'code' in error && error.code === 'ENOENT';
-}
-
-async function writeAtomic(target: string, content: Buffer): Promise<void> {
-  await mkdir(path.dirname(target), { recursive: true, mode: 0o700 });
-  const pending = `${target}.${randomUUID()}.pending`;
-  try {
-    await writeFile(pending, content, { mode: 0o600, flag: 'wx' });
-    await rename(pending, target);
-  } finally {
-    await rm(pending, { force: true });
-  }
-}

@@ -1,5 +1,61 @@
 # Changelog
 
+## 0.9.2 - 2026-10-31
+
+- Add `benchmarks/enterprise-rag-docs.json`, a with/without-Kimono harness campaign
+  over 13,241 public enterprise documents (GitHub pull requests and Confluence
+  pages from EnterpriseRAG-Bench, used as corpus content only) with three research
+  tasks written for this project. The dry run and the MCP warm-up are validated;
+  no measurement exists yet because the Copilot plan hit its additional usage limit
+  (`402 additional_spend_limit_reached`). See `docs/harness-benchmark.md`.
+- Let `scripts/bench-embedding.mjs` run on large corpora: `--workers N` bounds the
+  semantic workers (the per-core default was killed by the Docker VM memory
+  limit), `--modes` selects text, semantic and/or hybrid, and the search snapshot
+  is renewed before its 15-minute expiry so a long lexical pass no longer breaks
+  the following modes. Failed rows now keep the end of the error message.
+- Add `scripts/enterprise-rag-cases.mjs` and `scripts/enterprise-rag-report.mjs` to
+  run the public EnterpriseRAG-Bench questions against Kimono and report hit rate
+  and MRR per question category (see `docs/harness-benchmark.md`).
+- Add a benchmark database: JSON records validated by
+  `benchmarks/db/record.schema.json`, an `index.json` with per-client/model
+  medians, and `npm run bench:db` to import a `bench-harness` run or a
+  `bench-embedding` result, validate (schema, consistent percentages, no local
+  paths or secrets) and rebuild the index. Add a configuration template and an
+  adapter skeleton so any LLM client can be benchmarked with and without Kimono
+  (see `docs/benchmark-database.md`). Existing Gemini reports are imported as
+  records.
+- Add automatic per-user delta synchronization to `aikido_collaboration`:
+  `mode` detects `same-root` (verified embedded stdio on this exact ROOT) versus
+  `replica`; `stage`, `overlay`, `sync` and `discard` keep a persistent
+  per-user overlay with `pending`, `integrated` and `conflict` statuses,
+  explicit conflict resolution (no last-write-wins) and concurrent-user
+  serialization. `sync` reindexes the published paths and never undoes a
+  publication when indexing fails.
+- Let `aikido_snapshot` `begin` take an `owner` to capture the shared ROOT merged
+  with that user's overlay, leaving other users and plain snapshots unchanged.
+- Keep the exposed tool catalog under its byte budget by condensing schema
+  descriptions.
+- Publish the embedding mode in the semantic index status: the active policy,
+  whether it is Mixed (documents + code) and, per profile, its model, state
+  (`pending`, `running`, `done`, `error`) and own counters. The two profiles of
+  a Mixed rebuild no longer share one progress bar, so the second profile's
+  progress is no longer frozen by the first one's.
+- Publish model downloads (`downloads`: bytes, total, file, state) in
+  `aikido_index status` and `aikido_models status`, and keep finished or failed
+  ones visible for one minute. `aikido_models install` now starts the pinned
+  download and returns after at most 750 ms (`installing: true`) instead of
+  blocking until the end, so a 500 MB model no longer outlives the RPC timeout.
+  The shared panels show the mode, each profile and a download progress bar and
+  keep their fast refresh while a download runs.
+- Add `aikido_index` `cancel` and `reset`. `cancel` stops the running semantic
+  indexing (the status keeps reporting it until the worker has really stopped);
+  `reset` deletes the whole semantic index while keeping sources, snapshots, the
+  lexical index and the embedding policy, so the next update rebuilds it. Both
+  answer immediately and take no `background` flag. The Kimono extension, Tatami
+  Agent and Tatami Core panels expose them as **Stop** and **Delete the index**;
+  deletion asks for confirmation.
+- Use `auto-speed` as the default embedding policy when none is configured.
+
 ## 0.9.0 - 2026-10-29
 
 - Keep the native embedding worker and model session warm across operations,

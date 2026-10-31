@@ -72,6 +72,41 @@ de lecture d'une révision et de publication. Vérifier la version partagée ava
 les modifications, examiner les conflits et ne publier qu'avec la version
 attendue. La collaboration n'effectue aucun commit ni push Git.
 
+### Synchronisation automatique des deltas
+
+`aikido_collaboration` automatise aussi le flux par utilisateur. Appeler `mode`
+avec le `clientRoot` absolu de l'espace de travail du client :
+
+- `same-root` : le client modifie ce ROOT exact (stdio embarqué vérifié
+  uniquement, jamais déduit en HTTP). Les fichiers sont déjà partagés ; `stage`,
+  `overlay` et `discard` sont ignorés et `sync` ne fait que rafraîchir l'index
+  littéral.
+- `replica` : le client dispose d'un espace séparé. Les changements passent par
+  un overlay persistant par utilisateur (`owner`, `default` par défaut).
+
+Flux replica :
+
+1. `stage` avec `changes` (`content: null` supprime) **au moment de l'édition**.
+   Le staging enregistre la révision partagée dont part chaque changement ;
+   synchroniser sans stager d'abord perd cette base et empêche de détecter une
+   édition concurrente.
+2. `overlay` liste chaque élément avec un statut : `pending`, `integrated` (la
+   copie partagée correspond déjà) ou `conflict` (le fichier partagé a bougé
+   depuis le début du changement).
+3. `sync` publie les éléments `pending`, retire les `integrated`, signale
+   explicitement les conflits et réindexe les chemins publiés. Résoudre un
+   conflit avec `resolutions: {"chemin": "local" | "shared"}` ; il n'y a aucun
+   dernier-écrivain-gagne.
+4. `discard` retire des éléments stagés sans les publier.
+
+`aikido_snapshot` `begin` accepte `owner` pour capturer le ROOT partagé fusionné
+avec l'overlay de cet utilisateur (les ajouts et modifications stagés
+remplacent ou ajoutent des fichiers, les suppressions stagées les masquent). La
+`version` du snapshot identifie alors le corpus fusionné et `provenance.overlay`
+indique le propriétaire et le nombre de fichiers. Les autres utilisateurs et les
+appels sans `owner` ne voient que le ROOT partagé. Un échec d'index pendant
+`sync` est signalé par `reindexed: false` et n'annule jamais la publication.
+
 L'outil `aikido_git` fournit les informations du dépôt et une synchronisation
 distante en lecture seule après configuration explicite d'une cible. Il
 n'effectue ni commit, ni push, ni merge, ni création de branche. Les opérations

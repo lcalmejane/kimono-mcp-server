@@ -208,6 +208,26 @@ test("shared panel view and formatter load as modules with both languages", () =
   assert.equal(format.view({ phase: "waiting" }).progress, null);
 });
 
+test("status formatter shows mixed embedding profiles and model downloads", () => {
+  const format = require("../management/status-format.js");
+  const mixed = format.view({ phase: "running", stage: "document_embedding", files: { completed: 10, total: 10 }, embedded: { completed: 40, total: 100 },
+    embedding: { policy: "auto-balanced", mixed: true, current: "code", profiles: [
+      { id: "multilingual", model: "multilingual-fast", scope: "documents", state: "done", chunks: 300, embedded: { completed: 300, total: 300 } },
+      { id: "code", model: "code", scope: "code", state: "running" }] } }, "en");
+  const lines = Object.fromEntries(mixed.lines.map(line => [line.label, line.value]));
+  assert.match(lines["Embedding mode"], /Automatic · balanced · Mixed/);
+  assert.match(lines["Documents profile"], /multilingual-fast · Done · 300 \/ 300/);
+  assert.match(lines["Code profile"], /code · Embedding · 40 \/ 100/);
+  assert.match(mixed.summary, /Code profile 2\/2/);
+  const download = { model: "multilingual-fast", state: "downloading", file: "model.safetensors", fileIndex: 1, fileCount: 4, bytes: 262144000, totalBytes: 524288000 };
+  const idle = format.view({ phase: "ready", chunks: 5, downloads: [download] }, "fr");
+  assert.equal(idle.active, true, "a download keeps the fast refresh loop");
+  assert.equal(idle.progress, 0.5);
+  assert.match(idle.lines.at(-1).value, /Téléchargement · 50% · 250.0 MiB \/ 500.0 MiB · model.safetensors \(1\/4\)/);
+  assert.equal(format.view({ phase: "ready", chunks: 5, downloads: [{ ...download, state: "done" }] }, "fr").active, false);
+  assert.equal(format.view({ phase: "ready", downloads: [{ model: "x", state: "hacked" }, null] }, "en").lines.length, 0, "unknown download states are ignored");
+});
+
 test("management validates settings and keeps indexing to embedded mode", async () => {
   const { state, folder, dispose } = await fixture({ mode: "remote" });
   await state.commands.get("kimono.openPanel")();
@@ -270,6 +290,44 @@ test("full rebuild needs native confirmation and routes only a background semant
     state.settings.mode = "remote";
     await state.receive({ action: "indexRebuild", folder: folder.uri.toString() });
     assert.match(state.messages.at(-1).message, /Switch Mode to Embedded/);
+  } finally { await dispose(); }
+});
+
+test("stop sends an immediate cancel and deleting the index needs native confirmation", async () => {
+  const { state, directory, folder, dispose } = await fixture();
+  try {
+    await state.commands.get("kimono.openPanel")();
+    const requestFile = path.join(directory, "control-requests.jsonl");
+    state.launch = { command: process.execPath, cwd: directory, env: process.env, args: ["-e", `
+      const fs = require("node:fs");
+      require("node:readline").createInterface({ input: process.stdin }).on("line", line => {
+        const request = JSON.parse(line);
+        if (request.id === undefined) return;
+        if (request.method === "tools/call") fs.appendFileSync(${JSON.stringify(requestFile)}, JSON.stringify(request.params) + "\\n");
+        process.stdout.write(JSON.stringify({ jsonrpc:"2.0", id:request.id,
+          result: request.method === "tools/call" ? { content:[{type:"text",text:'{"phase":"unknown"}'}] } : {} }) + "\\n");
+      });
+    `] };
+    const sent = async () => (await fs.readFile(requestFile, "utf8").catch(() => "")).split("\n").filter(Boolean).map(line => JSON.parse(line));
+
+    // Stopping is not destructive: no confirmation, and no background flag since the answer is immediate.
+    await state.receive({ action: "indexStop", folder: folder.uri.toString() });
+    assert.deepEqual((await sent()).filter(call => call.arguments.operation === "cancel"),
+      [{ name: "aikido_index", arguments: { operation: "cancel", mode: "semantic" } }]);
+    assert.match(state.messages.at(-1).message, /stopped/);
+
+    // Deleting asks first; a refusal sends nothing.
+    await state.receive({ action: "indexReset", folder: folder.uri.toString() });
+    assert.match(state.warning[0], /Sources, snapshots, text search and the embedding policy are kept/);
+    assert.deepEqual(state.warning[1], { modal: true });
+    assert.match(state.messages.at(-1).message, /cancelled/);
+    assert.equal((await sent()).some(call => call.arguments.operation === "reset"), false);
+
+    state.confirmation = "Delete";
+    await state.receive({ action: "indexReset", folder: folder.uri.toString() });
+    assert.deepEqual((await sent()).filter(call => call.arguments.operation === "reset"),
+      [{ name: "aikido_index", arguments: { operation: "reset", mode: "semantic" } }]);
+    assert.match(state.messages.at(-1).message, /deleted/);
   } finally { await dispose(); }
 });
 
