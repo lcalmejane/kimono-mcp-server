@@ -156,7 +156,8 @@ try {
   transport = createTransport({
     command: ragDefinition.command,
     args: [path.join(stage, 'stdio.cjs'), 'serve', '--root', knowledge],
-    env: { PATH: process.env.PATH ?? '', KIMONO_CACHE_DIR: path.join(scratch, 'external-cache') },
+    // The generic launcher defaults to auto-speed, which needs a confirmed model download; pin the bundled model.
+    env: { PATH: process.env.PATH ?? '', KIMONO_CACHE_DIR: path.join(scratch, 'external-cache'), KIMONO_EMBEDDING_POLICY: 'e5' },
   });
   const externalClient = new Client({ name: 'generic-mcp-host', version: '1.0.0' });
   await externalClient.connect(transport);
