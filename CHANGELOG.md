@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.9.4 - 2026-11-01
+
+- Speed up literal search on large corpora. An unfiltered query now makes one `fgr` call per index instead of one call per 12,000-byte batch of `--include` globs (275 calls, about 10 s, on 13,241 documents); scope is enforced on the result.
+- When `fgr` truncated its output and discarded out-of-scope files, the query falls back to the exact scoped batches, so results are unchanged. Batches now run four at a time (`KIMONO_FGR_CONCURRENCY`, 1-16) and are folded in order.
+- Build the darwin-arm64 bundle and VSIX on `macos-15` (`macos-14` is retired on 2026-11-02).
+
 ## 0.9.3 - 2026-10-31
 
 - Fix the packaged VSIX smoke test: the generic stdio session now pins the bundled `e5` model, because the new `auto-speed` default needs a confirmed model download and logged a semantic preparation failure. No runtime change; 0.9.2 shipped only the container image.

@@ -10,6 +10,8 @@ import { corpusConfig } from './corpus-config.js';
 
 type Owners = Record<string, string>;
 type Candidates = { matches: SearchMatch[]; truncated: boolean };
+// fgr batches of one index are read-only and independent; a handful at once hides process start-up cost.
+const FGR_CONCURRENCY = Math.max(1, Math.min(16, Number(process.env.KIMONO_FGR_CONCURRENCY) || 4));
 
 export class FastGrepIndex {
   readonly directory: string;
@@ -109,40 +111,43 @@ export class FastGrepIndex {
         matches.splice(0, matches.length, ...ordered.slice(0, limit).map(item => item.hit));
       } else matches.length = limit;
     };
-    for (const shard of [...new Set(Object.values(owners))]) {
-      // Bound command-line size on Windows/POSIX even for very large catalogues.
-      const batches: KnowledgeEntry[][] = [];
-      let size = 0;
-      for (const entry of entries.filter(entry => owners[entry.path] === shard)) {
-        const length = Buffer.byteLength(entry.path) * 2 + 32;
-        if (!batches.length || size + length > 12_000) { batches.push([]); size = 0; }
-        batches[batches.length - 1].push(entry);
-        size += length;
-      }
-      for (const selected of batches) {
-        const directory = shard === 'base' ? (this.knowledge.immutable ? this.knowledge.root : this.documents)
-          : path.join(this.directory, shard, 'documents');
+    const ownedCount = new Map<string, number>();
+    for (const shard of Object.values(owners)) ownedCount.set(shard, (ownedCount.get(shard) ?? 0) + 1);
+    for (const shard of ownedCount.keys()) {
+      const scoped = entries.filter(entry => owners[entry.path] === shard);
+      if (!scoped.length) continue;
+      const directory = shard === 'base' ? (this.knowledge.immutable ? this.knowledge.root : this.documents)
+        : path.join(this.directory, shard, 'documents');
+      const run = async (selected?: KnowledgeEntry[]) => {
         const args = ['--format', 'json', '--ignore-case', '--hidden', '--no-ignore', '--index', this.index(shard), '--max-results', String(limit)];
         // Bound JSON below runProcess's buffer; fgr reports every output limit.
         args.push('--max-output-bytes', '2097152', '--no-auto-update');
         if (perFile !== undefined) args.push('--max-results-per-file', String(perFile));
         if (!regex) args.push('--fixed-strings');
         // A bare basename glob matches every nested README.md too, leaking across query batches/scopes.
-        for (const entry of selected) args.push('--include', `/${entry.path.replace(/([*?[\]{}])/g, '\\$1')}`);
+        for (const entry of selected ?? []) args.push('--include', `/${entry.path.replace(/([*?[\]{}])/g, '\\$1')}`);
         args.push('--', query, directory);
         const result = await runProcess(this.binary, args, directory, [0, 1]);
-        if (result.exitCode === 1) continue;
+        if (result.exitCode === 1) return undefined;
         const data: unknown = JSON.parse(result.stdout);
         if (!isRecord(data) || !Array.isArray(data.files)) throw new Error('Invalid fast-grep JSON response');
+        return data;
+      };
+      // Folds one fgr response into `matches`; returns the number of files it had to drop as out of scope.
+      const collect = (data: Record<string, unknown>, byPath: Map<string, KnowledgeEntry>, strict: boolean): number => {
+        let dropped = 0;
         truncated ||= Boolean(data.truncated);
-        const byPath = new Map(selected.map(entry => [entry.path, entry]));
-        for (const file of data.files) {
+        for (const file of data.files as unknown[]) {
           if (!isRecord(file) || typeof file.path !== 'string' || !Array.isArray(file.matches)) {
             throw new Error('Invalid fast-grep file response');
           }
           const relative = path.isAbsolute(file.path) ? path.relative(directory, file.path) : file.path;
           const entry = byPath.get(relative.split(path.sep).join('/'));
-          if (!entry) throw new Error(`fast-grep returned an out-of-scope file: ${file.path}`);
+          if (!entry) {
+            if (strict) throw new Error(`fast-grep returned an out-of-scope file: ${file.path}`);
+            dropped++;
+            continue;
+          }
           for (const match of file.matches) {
             if (!isRecord(match) || typeof match.line !== 'number' || typeof match.text !== 'string') {
               throw new Error('Invalid fast-grep match response');
@@ -150,7 +155,39 @@ export class FastGrepIndex {
             matches.push({ ...entry, line: match.line, excerpt: match.text.slice(0, 1000) });
           }
         }
-        boundMatches();
+        return dropped;
+      };
+      // One fgr call over the whole index, scope enforced here, replaces hundreds of --include batches. It is only
+      // exact when fgr's "first N by path" cap could not have been spent on out-of-scope files; otherwise batch.
+      if (scoped.length * 2 >= (ownedCount.get(shard) ?? 0)) {
+        const data = await run();
+        if (!data) continue;
+        const mark = matches.length;
+        const wasTruncated: boolean = truncated;
+        const dropped = collect(data, new Map(scoped.map(entry => [entry.path, entry])), false);
+        if (!(Boolean(data.truncated) && dropped > 0)) { boundMatches(); continue; }
+        matches.length = mark;
+        truncated = wasTruncated;
+      }
+      // Bound command-line size on Windows/POSIX even for very large catalogues.
+      const batches: KnowledgeEntry[][] = [];
+      let size = 0;
+      for (const entry of scoped) {
+        const length = Buffer.byteLength(entry.path) * 2 + 32;
+        if (!batches.length || size + length > 12_000) { batches.push([]); size = 0; }
+        batches[batches.length - 1].push(entry);
+        size += length;
+      }
+      // Batches of an index are independent, so run a few at once; fold them in order so results stay deterministic.
+      for (let start = 0; start < batches.length; start += FGR_CONCURRENCY) {
+        const group = batches.slice(start, start + FGR_CONCURRENCY);
+        const responses = await Promise.all(group.map(selected => run(selected)));
+        group.forEach((selected, position) => {
+          const data = responses[position];
+          if (!data) return;
+          collect(data, new Map(selected.map(entry => [entry.path, entry])), true);
+          boundMatches();
+        });
       }
     }
     return { matches, truncated };
