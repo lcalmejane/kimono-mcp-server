@@ -25,7 +25,7 @@ release and a Marketplace publication.
 The [CI workflow](../.github/workflows/ci.yml) tests the server and extension on
 push/PR. On **Actions → CI → Run workflow** or a `v*` tag it additionally:
 
-1. Builds the four existing native targets on matching GitHub runners.
+1. Builds the five native targets on matching GitHub runners.
 2. Packages pinned native/model assets, the bundled MCP server and the runner's
    Node.js 24 executable and version-specific license in platform VSIX files.
 3. Exercises each packaged provider/Node/server with a real stdio MCP handshake,
@@ -61,7 +61,7 @@ Open VSX is not published automatically.
 
 Marketplace publication runs automatically after a successful tagged release using the
 [Publish VS Code Marketplace workflow](../.github/workflows/publish-marketplace.yml).
-It uploads the four platform VSIX files from the published release without
+It uploads the five platform VSIX files from the published release without
 rebuilding them. The CI calls it directly: a release created with `GITHUB_TOKEN`
 does not need to trigger a second workflow event. Before pushing a release tag:
 
@@ -79,8 +79,8 @@ PRs, ordinary branch pushes and manual CI builds do not publish to Marketplace.
 
 The workflow checks the tag against both package versions, requires an existing
 published non-prerelease GitHub release, downloads and verifies its
-`SHA256SUMS.txt`, and confirms all four VSIX targets before invoking `vsce`.
-It uploads all four targets before checking Marketplace visibility, so indexing
+`SHA256SUMS.txt`, and confirms all five VSIX targets before invoking `vsce`.
+It uploads all five targets before checking Marketplace visibility, so indexing
 delays on one platform do not block the others. `--skip-duplicate` makes retries
 continue past targets already accepted. Publication runs are serialized and a
 new run never cancels an active publication. Visibility checks retry up to sixty
@@ -92,7 +92,7 @@ command; `vsce ls-publishers` is intentionally not used because it lists locally
 stored logins, not GitHub Actions credentials.
 For manual recovery, the confirmation checkbox authorizes publication.
 There is no later Marketplace confirmation step.
-The release contains targets `darwin-arm64`, `linux-arm64`,
+The release contains targets `darwin-arm64`, `darwin-x64`, `linux-arm64`,
 `linux-x64` and `win32-x64` under the extension ID `ai-kido.kimono-rag-mcp`.
 Marketplace credentials and listing approval remain separate prerequisites.
 
@@ -129,8 +129,12 @@ knowledge, `.env`, credentials, tests, sources or development `node_modules` are
 included in the VSIX. Internet is needed at build time for dependencies, pinned
 assets and Node's license; installed local search needs no runtime downloads.
 
-The native matrix currently covers macOS ARM64, Linux ARM64/x64 (glibc), Windows
-x64. Supporting other native hosts requires adding their pinned runtime assets
+The native matrix currently covers macOS ARM64/Intel, Linux ARM64/x64 (glibc), Windows
+x64. `darwin-x64` is built on the `macos-15-intel` runner and pins its own ONNX Runtime
+(1.23.2, `onnxRuntime` in the target entry of `semantic/versions.json`) because upstream
+stopped publishing `osx-x86_64` archives after that release; the other targets keep 1.31.0.
+The packaged Intel build must pass the real 384-dimensional embedding smoke test in CI
+on an Intel runner before it is released. Supporting other native hosts requires adding their pinned runtime assets
 and real native build/smoke jobs first. A mock provider test is not proof of a
 VS Code UI/session: manual VSIX installation in a supported desktop/remote host
 remains the final interactive check.

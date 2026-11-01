@@ -7,7 +7,7 @@ these bundles, the MCP server and Node.js. See the
 
 The `ci.yml` GitHub Actions workflow builds the locked `fgr` and
 `kimono-semantic` executables on native runners for `darwin-arm64`,
-`linux-arm64`, `linux-x64`, and `win32-x64`. Each run packages the matching
+`darwin-x64`, `linux-arm64`, `linux-x64`, and `win32-x64`. Each run packages the matching
 ONNX Runtime and the pinned multilingual model; the resulting artifacts are
 self-contained and need no first-run downloads or container runtime.
 `workflow_dispatch` rebuilds all targets on demand; pushing a `v*` version tag
@@ -51,8 +51,8 @@ verified `/opt/kimono` assets and pass `--assets-dir /path/to/kimono-assets`.
 The packager checks the pinned model-file hashes and the versions metadata
 before copying those assets; no dependency rebuild or asset download is needed.
 
-Supported `--target` values are `darwin-arm64`, `linux-arm64`, `linux-x64`,
-and `win32-x64`. The output directory must be empty. The command builds
+Supported `--target` values are `darwin-arm64`, `darwin-x64`, `linux-arm64`,
+`linux-x64`, and `win32-x64`. The output directory must be empty. The command builds
 `fgr` and `kimono-semantic` from their pinned versions using Cargo. To package
 prebuilt executables instead, pass both `--fgr` and `--semantic`. Versions and SHA-256
 checksums for downloaded ONNX Runtime archives and model files are pinned in

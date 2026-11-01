@@ -29,7 +29,7 @@ Le workflow [CI](../.github/workflows/ci.yml) teste le serveur et l'extension
 à chaque push et pull request. Une exécution manuelle depuis **Actions → CI →
 Run workflow** ou la création d'un tag `v*` produit également les paquets :
 
-1. Construction des quatre cibles natives sur les runners adaptés.
+1. Construction des cinq cibles natives sur les runners adaptés.
 2. Assemblage des composants natifs et du modèle épinglés, du serveur MCP, de
    Node.js 24 et de sa licence spécifique dans les VSIX par plateforme.
 3. Tests d'intégration du serveur MCP stdio empaqueté : handshake, liste des
@@ -61,7 +61,7 @@ Open VSX n'est pas publié automatiquement.
 
 La publication Marketplace est automatique après réussite de la release par tag, avec le
 workflow [Publish VS Code Marketplace](../.github/workflows/publish-marketplace.yml).
-Il envoie les quatre VSIX de la release publiée, sans les reconstruire.
+Il envoie les cinq VSIX de la release publiée, sans les reconstruire.
 L'appel direct depuis la CI évite de dépendre d'un nouvel événement de release
 créée par `GITHUB_TOKEN`. Avant de pousser un tag de release :
 
@@ -81,7 +81,7 @@ pas sur le Marketplace.
 
 Le workflow vérifie que le tag correspond aux versions des paquets, que la
 release GitHub publiée n'est pas une préversion, que `SHA256SUMS.txt` est valide
-et que les quatre cibles VSIX sont présentes. Il envoie les quatre paquets avant
+et que les cinq cibles VSIX sont présentes. Il envoie les cinq paquets avant
 de vérifier leur visibilité : le délai d'indexation d'une plateforme ne bloque
 plus les suivantes. Les relances ignorent les versions déjà acceptées.
 Les publications sont sérialisées ; une nouvelle exécution n'annule jamais une

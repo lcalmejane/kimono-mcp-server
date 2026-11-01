@@ -14,6 +14,14 @@
       "library": "libonnxruntime.dylib",
       "libraryPattern": "^libonnxruntime.*\\.dylib$"
     },
+    "darwin-x64": {
+      "onnxRuntime": "1.23.2",
+      "archive": "onnxruntime-osx-x86_64-1.23.2.tgz",
+      "sha256": "d10359e16347b57d9959f7e80a225a5b4a66ed7d7e007274a15cae86836485a6",
+      "format": "tgz",
+      "library": "libonnxruntime.dylib",
+      "libraryPattern": "^libonnxruntime.*\\.dylib$"
+    },
     "linux-arm64": {
       "archive": "onnxruntime-linux-aarch64-1.31.0.tgz",
       "sha256": "c5b8b3cca31f3d643a3b313b8f42e2d0f16a4fcefd02cda343d97bd5306afaab",
