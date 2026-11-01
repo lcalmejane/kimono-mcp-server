@@ -73,6 +73,7 @@ Download the VSIX for the **extension host** platform from
 | Extension host | Package |
 | --- | --- |
 | macOS Apple Silicon | `darwin-arm64` |
+| macOS Intel | `darwin-x64` |
 | Linux ARM64 (glibc) | `linux-arm64` |
 | Linux Intel/AMD 64-bit (glibc) | `linux-x64` |
 | Windows Intel/AMD 64-bit | `win32-x64` |

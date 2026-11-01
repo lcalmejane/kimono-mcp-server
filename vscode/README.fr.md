@@ -96,6 +96,7 @@ puis lancer **Extensions: Install from VSIX…** dans VS Code :
 | Hôte d'extension | Cible VSIX |
 | --- | --- |
 | macOS Apple Silicon | `darwin-arm64` |
+| macOS Intel | `darwin-x64` |
 | Linux ARM64 (glibc) | `linux-arm64` |
 | Linux Intel/AMD 64 bits (glibc) | `linux-x64` |
 | Windows Intel/AMD 64 bits | `win32-x64` |

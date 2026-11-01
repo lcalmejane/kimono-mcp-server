@@ -77,6 +77,7 @@ le VSIX correspondant à la plateforme de **l'hôte d'extension** :
 | Hôte d'extension | Paquet |
 | --- | --- |
 | macOS Apple Silicon | `darwin-arm64` |
+| macOS Intel | `darwin-x64` |
 | Linux ARM64 (glibc) | `linux-arm64` |
 | Linux Intel/AMD 64 bits (glibc) | `linux-x64` |
 | Windows Intel/AMD 64 bits | `win32-x64` |

@@ -85,11 +85,11 @@ jobs:
             --dir "$RUNNER_TEMP/marketplace-assets"
           cd "$RUNNER_TEMP/marketplace-assets"
           mapfile -t checksums < <(
-            grep -E "  kimono-rag-mcp-${version}-(darwin-arm64|linux-arm64|linux-x64|win32-x64)\.vsix$" SHA256SUMS.txt
+            grep -E "  kimono-rag-mcp-${version}-(darwin-arm64|darwin-x64|linux-arm64|linux-x64|win32-x64)\.vsix$" SHA256SUMS.txt
           )
-          test "${#checksums[@]}" -eq 4
+          test "${#checksums[@]}" -eq 5
           printf '%s\n' "${checksums[@]}" | sha256sum -c -
-          for target in darwin-arm64 linux-arm64 linux-x64 win32-x64; do
+          for target in darwin-arm64 darwin-x64 linux-arm64 linux-x64 win32-x64; do
             test -f "kimono-rag-mcp-$version-$target.vsix"
           done
 
@@ -128,7 +128,7 @@ jobs:
           VERSION: ${{ needs.prepare.outputs.version }}
         run: |
           set -euo pipefail
-          for target in darwin-arm64 linux-arm64 linux-x64 win32-x64; do
+          for target in darwin-arm64 darwin-x64 linux-arm64 linux-x64 win32-x64; do
             npx --no-install vsce publish --skip-duplicate \
               --packagePath "$RUNNER_TEMP/marketplace-assets/kimono-rag-mcp-$VERSION-$target.vsix"
           done
@@ -146,7 +146,7 @@ jobs:
               continue
             fi
             missing=()
-            for target in darwin-arm64 linux-arm64 linux-x64 win32-x64; do
+            for target in darwin-arm64 darwin-x64 linux-arm64 linux-x64 win32-x64; do
               if jq -e --arg version "$VERSION" --arg target "$target" \
                 'any(.versions[]?; .version == $version and .targetPlatform == $target)' \
                 <<< "$listing" >/dev/null; then

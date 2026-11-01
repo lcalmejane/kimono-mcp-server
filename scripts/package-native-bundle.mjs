@@ -21,6 +21,8 @@ for (let index = 2; index < process.argv.length; index += 2) {
 
 const target = options.get('target');
 const config = versions.nativeTargets[target];
+// A target may pin its own ONNX Runtime when upstream stopped publishing it (macOS Intel).
+const onnxRuntimeVersion = config?.onnxRuntime ?? versions.onnxRuntime;
 if (!config) throw new Error(`Unsupported native target: ${target ?? '(missing)'}`);
 const output = path.resolve(options.get('out') ?? '');
 if (!options.has('out')) {
@@ -71,6 +73,7 @@ if (options.has('fgr')) {
 } else {
   const nativeHost = {
     'darwin-arm64': process.platform === 'darwin' && process.arch === 'arm64',
+    'darwin-x64': process.platform === 'darwin' && process.arch === 'x64',
     'linux-arm64': process.platform === 'linux' && process.arch === 'arm64',
     'linux-x64': process.platform === 'linux' && process.arch === 'x64',
     'win32-x64': process.platform === 'win32' && process.arch === 'x64',
@@ -138,7 +141,7 @@ const runtimePattern = new RegExp(config.libraryPattern);
 const modelBase = `https://huggingface.co/${versions.model.repository}/resolve/${versions.model.revision}`;
 if (assetsDir) {
   const sourceVersions = JSON.parse(await readFile(path.join(assetsDir, 'versions.json'), 'utf8'));
-  if (sourceVersions.onnxRuntime !== versions.onnxRuntime
+  if (sourceVersions.onnxRuntime !== onnxRuntimeVersion
     || sourceVersions.model?.revision !== versions.model.revision) {
     throw new Error(`Prepared assets do not match pinned versions: ${assetsDir}`);
   }
@@ -167,7 +170,7 @@ if (assetsDir) {
     await copyFile(source, path.join(modelDir, name));
   }
 } else {
-  const runtimeUrl = `https://github.com/microsoft/onnxruntime/releases/download/v${versions.onnxRuntime}/${config.archive}`;
+  const runtimeUrl = `https://github.com/microsoft/onnxruntime/releases/download/v${onnxRuntimeVersion}/${config.archive}`;
   await download(runtimeUrl, archivePath, config.sha256);
   if (config.format === 'tgz') execFileSync('tar', ['-xzf', archivePath, '-C', work]);
   else if (process.platform === 'win32') {
@@ -209,6 +212,7 @@ await rm(work, { recursive: true, force: true });
 
 const nativeHost = {
   'darwin-arm64': process.platform === 'darwin' && process.arch === 'arm64',
+  'darwin-x64': process.platform === 'darwin' && process.arch === 'x64',
   'linux-arm64': process.platform === 'linux' && process.arch === 'arm64',
   'linux-x64': process.platform === 'linux' && process.arch === 'x64',
   'win32-x64': process.platform === 'win32' && process.arch === 'x64',

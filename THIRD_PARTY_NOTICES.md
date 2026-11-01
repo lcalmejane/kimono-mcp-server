@@ -12,6 +12,7 @@ licenses; Kimono's license does not replace them.
 | Poppler utilities (Docker/system PDF extraction) | Distribution package | [GPL-2.0-or-later, Poppler](https://poppler.freedesktop.org/) |
 | ort Rust bindings | 2.0.0-rc.10 | [MIT / Apache-2.0, published crate](https://crates.io/crates/ort/2.0.0-rc.10) |
 | ONNX Runtime | 1.31.0 | [MIT, Microsoft](https://github.com/microsoft/onnxruntime/tree/v1.31.0) |
+| ONNX Runtime (`darwin-x64` only) | 1.23.2 | [MIT, Microsoft](https://github.com/microsoft/onnxruntime/tree/v1.23.2); last release with a macOS Intel archive |
 | multilingual-e5-small | Xenova revision 761b726dd34fb83930e26aab4e9ac3899aa1fa78 | [ONNX conversion](https://huggingface.co/Xenova/multilingual-e5-small/tree/761b726dd34fb83930e26aab4e9ac3899aa1fa78), [original model / MIT license declaration](https://huggingface.co/intfloat/multilingual-e5-small) |
 | potion-code-16M-v2 (optional download) | e9d2a44ca6a05ac6685f3b23709ea57eb7352d5b | [MIT model card](https://huggingface.co/minishlab/potion-code-16M-v2/blob/e9d2a44ca6a05ac6685f3b23709ea57eb7352d5b/README.md) |
 | potion-multilingual-128M (optional download) | 73908c3438cf03b6a01bcb9611d62b23d0726f08 | [MIT model card](https://huggingface.co/minishlab/potion-multilingual-128M/blob/73908c3438cf03b6a01bcb9611d62b23d0726f08/README.md) |
