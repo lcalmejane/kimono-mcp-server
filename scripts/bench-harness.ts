@@ -91,11 +91,16 @@ export function answerFrom(events: Json[]): string {
   return last && object(last.data) ? String(last.data.content) : '';
 }
 
+// Copilot CLI exposes its `grep` tool to some model families (OpenAI) as `rg`; the output is the same
+// `[grep-paths: …]` listing. Treat only this known alias as `grep`, every other name stays checked as-is.
+const TOOL_ALIASES: Record<string, string> = { rg: 'grep' };
+
 export function isolationAudit(events: Json[], variant: string, mcpTools: string[]) {
   const allowed = ['grep', 'glob', 'view', ...variant === 'with' ? mcpTools.map(tool => `kimono-${tool}`) : []];
   const calls = events.filter(event => event.type === 'tool.execution_start')
     .map(event => object(event.data) ? String(event.data.toolName) : '(missing)');
-  const unexpectedTools = [...new Set(calls.filter(name => !allowed.includes(name)))];
+  const aliasedTools = [...new Set(calls.filter(name => name in TOOL_ALIASES))].sort();
+  const unexpectedTools = [...new Set(calls.filter(name => !allowed.includes(TOOL_ALIASES[name] ?? name)))];
   const inventories = events.filter(event => event.type === 'session.mcp_servers_loaded');
   const unexpectedServers: string[] = [];
   for (const event of events) {
@@ -112,7 +117,7 @@ export function isolationAudit(events: Json[], variant: string, mcpTools: string
   }
   return { passed: inventories.length > 0 && !unexpectedTools.length && !unexpectedServers.length,
     inventoryObserved: inventories.length > 0, allowedTools: allowed, observedTools: [...new Set(calls)].sort(),
-    unexpectedTools, unexpectedServers: [...new Set(unexpectedServers)] };
+    aliasedTools, unexpectedTools, unexpectedServers: [...new Set(unexpectedServers)] };
 }
 
 export function qualityCheck(answer: string, task: Task, files: Map<string, string>) {

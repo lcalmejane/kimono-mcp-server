@@ -1,0 +1,716 @@
+{
+  "schemaVersion": 1,
+  "campaign": "copilot-auto-speed-kimono-0.9.4",
+  "generatedAt": "2026-11-01T08:55:00Z",
+  "protocol": {
+    "harness": "GitHub Copilot CLI 1.0.103 (@github/copilot@1.0.103)",
+    "repetitions": 1,
+    "indexMode": "all (lexical + semantic, hybrid search)",
+    "embeddingPolicy": "auto-speed (code: potion-code-16M-v2, documents: potion-multilingual-128M)",
+    "searchDetail": "compact",
+    "timeoutMs": 900000,
+    "kimono": "0.9.4 (image tatami-core-kimono rebuilt locally from tag v0.9.4 over ghcr.io/lcalmejane/kimono-mcp-server:v0.9.4; fgr 0.5.0)",
+    "isolation": "grep/glob/view in both arms, Kimono added in the with arm, no custom instructions, per-cell HOME; isolation audit passed on all 16 cells. Copilot CLI exposes its grep tool to gpt-5.6-luna as `rg` (same [grep-paths] output); the audit treats only this alias as grep and reports it in aliasedTools."
+  },
+  "campaigns": [
+    {
+      "campaign": "gemini-3.8-flash",
+      "requestedModel": "gemini-3.8-flash",
+      "config": "benchmarks/copilot-gemini-auto-speed.json",
+      "startedAt": "2026-11-01T07:50:12.796Z",
+      "commit": "5cd1d89f3c03028b9a713fb6dd3a87c899f50b80",
+      "dirty": false,
+      "corpus": {
+        "sha256": "d46dcab30e280d1ddc4c3115b3c5e923f0f2bd60b48f7c65765ef6084c48d205",
+        "fileCount": 80,
+        "bytes": 875636
+      },
+      "runtimeSha256": "48611537efb07a8c9c3c956c4c649ff4edfc3841efe94861098ad253c7cfd005",
+      "runnerSha256": "cac7fd11c54c686dc2e8fb5dd56c005525b9524bf480741590644978e6fd49f9",
+      "warmupMs": 5602,
+      "cacheWriteReported": false,
+      "cells": [
+        {
+          "task": "find-ignore-policy",
+          "variant": "with",
+          "status": "ok",
+          "wallMs": 106019,
+          "mcpUsed": true,
+          "usage": {
+            "models": [
+              "gemini-3.8-flash"
+            ],
+            "inputTokens": 224644,
+            "outputTokens": 2055,
+            "cacheReadTokens": 152287,
+            "cacheWriteTokens": 0,
+            "reasoningTokens": 4958,
+            "uncachedInputTokens": 72357,
+            "apiMs": 98609
+          },
+          "toolCalls": {
+            "grep": 6,
+            "kimono_search": 1,
+            "kimono_snapshot": 2,
+            "view": 8
+          },
+          "isolationPassed": true,
+          "aliasedTools": [],
+          "corpusUnchanged": true,
+          "quality": {
+            "formatValid": true,
+            "evidenceValid": true,
+            "expectedPathCoverage": 1,
+            "humanReview": "pending"
+          }
+        },
+        {
+          "task": "find-ignore-policy",
+          "variant": "without",
+          "status": "ok",
+          "wallMs": 154204,
+          "mcpUsed": false,
+          "usage": {
+            "models": [
+              "gemini-3.8-flash"
+            ],
+            "inputTokens": 638121,
+            "outputTokens": 2790,
+            "cacheReadTokens": 499540,
+            "cacheWriteTokens": 0,
+            "reasoningTokens": 7057,
+            "uncachedInputTokens": 138581,
+            "apiMs": 146982
+          },
+          "toolCalls": {
+            "glob": 1,
+            "grep": 13,
+            "view": 16
+          },
+          "isolationPassed": true,
+          "aliasedTools": [],
+          "corpusUnchanged": true,
+          "quality": {
+            "formatValid": true,
+            "evidenceValid": false,
+            "expectedPathCoverage": 0.5,
+            "humanReview": "pending"
+          }
+        },
+        {
+          "task": "plan-config-addon",
+          "variant": "with",
+          "status": "ok",
+          "wallMs": 191986,
+          "mcpUsed": true,
+          "usage": {
+            "models": [
+              "gemini-3.8-flash"
+            ],
+            "inputTokens": 662683,
+            "outputTokens": 2912,
+            "cacheReadTokens": 523643,
+            "cacheWriteTokens": 0,
+            "reasoningTokens": 12097,
+            "uncachedInputTokens": 139040,
+            "apiMs": 183656
+          },
+          "toolCalls": {
+            "glob": 4,
+            "grep": 16,
+            "kimono_file": 9,
+            "kimono_search": 1,
+            "kimono_snapshot": 2
+          },
+          "isolationPassed": true,
+          "aliasedTools": [],
+          "corpusUnchanged": true,
+          "quality": {
+            "formatValid": true,
+            "evidenceValid": true,
+            "expectedPathCoverage": 1,
+            "humanReview": "pending"
+          }
+        },
+        {
+          "task": "plan-config-addon",
+          "variant": "without",
+          "status": "ok",
+          "wallMs": 226200,
+          "mcpUsed": false,
+          "usage": {
+            "models": [
+              "gemini-3.8-flash"
+            ],
+            "inputTokens": 559805,
+            "outputTokens": 2616,
+            "cacheReadTokens": 433726,
+            "cacheWriteTokens": 0,
+            "reasoningTokens": 21254,
+            "uncachedInputTokens": 126079,
+            "apiMs": 218319
+          },
+          "toolCalls": {
+            "glob": 1,
+            "grep": 12,
+            "view": 17
+          },
+          "isolationPassed": true,
+          "aliasedTools": [],
+          "corpusUnchanged": true,
+          "quality": {
+            "formatValid": true,
+            "evidenceValid": false,
+            "expectedPathCoverage": 0.25,
+            "humanReview": "pending"
+          }
+        }
+      ],
+      "pairs": [
+        {
+          "task": "find-ignore-policy",
+          "inputChangePercent": -64.8,
+          "wallChangePercent": -31.2,
+          "outputChangePercent": -26.3,
+          "uncachedInputChangePercent": -47.8
+        },
+        {
+          "task": "plan-config-addon",
+          "inputChangePercent": 18.4,
+          "wallChangePercent": -15.1,
+          "outputChangePercent": 11.3,
+          "uncachedInputChangePercent": 10.3
+        }
+      ]
+    },
+    {
+      "campaign": "claude-sonnet-5",
+      "requestedModel": "claude-sonnet-5",
+      "config": "benchmarks/copilot-claude-sonnet5-auto-speed.json",
+      "startedAt": "2026-11-01T08:09:56.245Z",
+      "commit": "5cd1d89f3c03028b9a713fb6dd3a87c899f50b80",
+      "dirty": false,
+      "corpus": {
+        "sha256": "d46dcab30e280d1ddc4c3115b3c5e923f0f2bd60b48f7c65765ef6084c48d205",
+        "fileCount": 80,
+        "bytes": 875636
+      },
+      "runtimeSha256": "48611537efb07a8c9c3c956c4c649ff4edfc3841efe94861098ad253c7cfd005",
+      "runnerSha256": "cac7fd11c54c686dc2e8fb5dd56c005525b9524bf480741590644978e6fd49f9",
+      "warmupMs": 10426,
+      "cacheWriteReported": true,
+      "cells": [
+        {
+          "task": "find-ignore-policy",
+          "variant": "with",
+          "status": "ok",
+          "wallMs": 58876,
+          "mcpUsed": true,
+          "usage": {
+            "models": [
+              "claude-sonnet-5"
+            ],
+            "inputTokens": 300181,
+            "outputTokens": 4571,
+            "cacheReadTokens": 260621,
+            "cacheWriteTokens": 39538,
+            "reasoningTokens": 109,
+            "uncachedInputTokens": 22,
+            "apiMs": 50036
+          },
+          "toolCalls": {
+            "grep": 5,
+            "kimono_file": 4,
+            "kimono_search": 2,
+            "kimono_snapshot": 2
+          },
+          "isolationPassed": true,
+          "aliasedTools": [],
+          "corpusUnchanged": true,
+          "quality": {
+            "formatValid": true,
+            "evidenceValid": true,
+            "expectedPathCoverage": 1,
+            "humanReview": "pending"
+          }
+        },
+        {
+          "task": "find-ignore-policy",
+          "variant": "without",
+          "status": "ok",
+          "wallMs": 64125,
+          "mcpUsed": false,
+          "usage": {
+            "models": [
+              "claude-sonnet-5"
+            ],
+            "inputTokens": 301392,
+            "outputTokens": 4885,
+            "cacheReadTokens": 262851,
+            "cacheWriteTokens": 38513,
+            "reasoningTokens": 664,
+            "uncachedInputTokens": 28,
+            "apiMs": 56337
+          },
+          "toolCalls": {
+            "grep": 5,
+            "view": 9
+          },
+          "isolationPassed": true,
+          "aliasedTools": [],
+          "corpusUnchanged": true,
+          "quality": {
+            "formatValid": true,
+            "evidenceValid": true,
+            "expectedPathCoverage": 1,
+            "humanReview": "pending"
+          }
+        },
+        {
+          "task": "plan-config-addon",
+          "variant": "with",
+          "status": "ok",
+          "wallMs": 115686,
+          "mcpUsed": true,
+          "usage": {
+            "models": [
+              "claude-sonnet-5"
+            ],
+            "inputTokens": 313298,
+            "outputTokens": 9848,
+            "cacheReadTokens": 283249,
+            "cacheWriteTokens": 30021,
+            "reasoningTokens": 2930,
+            "uncachedInputTokens": 28,
+            "apiMs": 106118
+          },
+          "toolCalls": {
+            "grep": 6,
+            "kimono_file": 6,
+            "kimono_search": 1,
+            "kimono_snapshot": 2,
+            "view": 4
+          },
+          "isolationPassed": true,
+          "aliasedTools": [],
+          "corpusUnchanged": true,
+          "quality": {
+            "formatValid": true,
+            "evidenceValid": true,
+            "expectedPathCoverage": 1,
+            "humanReview": "pending"
+          }
+        },
+        {
+          "task": "plan-config-addon",
+          "variant": "without",
+          "status": "ok",
+          "wallMs": 96888,
+          "mcpUsed": false,
+          "usage": {
+            "models": [
+              "claude-sonnet-5"
+            ],
+            "inputTokens": 388101,
+            "outputTokens": 7898,
+            "cacheReadTokens": 362806,
+            "cacheWriteTokens": 25253,
+            "reasoningTokens": 382,
+            "uncachedInputTokens": 42,
+            "apiMs": 90151
+          },
+          "toolCalls": {
+            "glob": 1,
+            "grep": 10,
+            "view": 10
+          },
+          "isolationPassed": true,
+          "aliasedTools": [],
+          "corpusUnchanged": true,
+          "quality": {
+            "formatValid": true,
+            "evidenceValid": true,
+            "expectedPathCoverage": 1,
+            "humanReview": "pending"
+          }
+        }
+      ],
+      "pairs": [
+        {
+          "task": "find-ignore-policy",
+          "inputChangePercent": -0.4,
+          "wallChangePercent": -8.2,
+          "outputChangePercent": -6.4
+        },
+        {
+          "task": "plan-config-addon",
+          "inputChangePercent": -19.3,
+          "wallChangePercent": 19.4,
+          "outputChangePercent": 24.7
+        }
+      ]
+    },
+    {
+      "campaign": "gpt-5.6-luna",
+      "requestedModel": "gpt-5.6-luna",
+      "config": "benchmarks/copilot-gpt56luna-auto-speed.json",
+      "startedAt": "2026-11-01T08:31:05.325Z",
+      "commit": "5cd1d89f3c03028b9a713fb6dd3a87c899f50b80",
+      "dirty": true,
+      "corpus": {
+        "sha256": "6a289a1f227c0c8e8119c3fbf8390016820dd31d497df9d6add02426a3ff95dd",
+        "fileCount": 80,
+        "bytes": 876505
+      },
+      "runtimeSha256": "48611537efb07a8c9c3c956c4c649ff4edfc3841efe94861098ad253c7cfd005",
+      "runnerSha256": "ab5c5d4c95b4cfa595c97b6df6f3407e708cd98ff00cfa7326087c6314f51486",
+      "warmupMs": 6792,
+      "cacheWriteReported": true,
+      "cells": [
+        {
+          "task": "find-ignore-policy",
+          "variant": "with",
+          "status": "ok",
+          "wallMs": 39819,
+          "mcpUsed": true,
+          "usage": {
+            "models": [
+              "gpt-5.6-luna"
+            ],
+            "inputTokens": 126142,
+            "outputTokens": 2610,
+            "cacheReadTokens": 101209,
+            "cacheWriteTokens": 24903,
+            "reasoningTokens": 491,
+            "uncachedInputTokens": 30,
+            "apiMs": 29578
+          },
+          "toolCalls": {
+            "kimono_file": 6,
+            "kimono_search": 5,
+            "kimono_snapshot": 3
+          },
+          "isolationPassed": true,
+          "aliasedTools": [],
+          "corpusUnchanged": true,
+          "quality": {
+            "formatValid": true,
+            "evidenceValid": true,
+            "expectedPathCoverage": 1,
+            "humanReview": "pending"
+          }
+        },
+        {
+          "task": "find-ignore-policy",
+          "variant": "without",
+          "status": "ok",
+          "wallMs": 26648,
+          "mcpUsed": false,
+          "usage": {
+            "models": [
+              "gpt-5.6-luna"
+            ],
+            "inputTokens": 117325,
+            "outputTokens": 1961,
+            "cacheReadTokens": 86114,
+            "cacheWriteTokens": 31193,
+            "reasoningTokens": 428,
+            "uncachedInputTokens": 18,
+            "apiMs": 20844
+          },
+          "toolCalls": {
+            "glob": 1,
+            "grep": 4,
+            "view": 9
+          },
+          "isolationPassed": true,
+          "aliasedTools": [
+            "rg"
+          ],
+          "corpusUnchanged": true,
+          "quality": {
+            "formatValid": true,
+            "evidenceValid": true,
+            "expectedPathCoverage": 1,
+            "humanReview": "pending"
+          }
+        },
+        {
+          "task": "plan-config-addon",
+          "variant": "with",
+          "status": "ok",
+          "wallMs": 43843,
+          "mcpUsed": true,
+          "usage": {
+            "models": [
+              "gpt-5.6-luna"
+            ],
+            "inputTokens": 252589,
+            "outputTokens": 2960,
+            "cacheReadTokens": 223316,
+            "cacheWriteTokens": 29231,
+            "reasoningTokens": 497,
+            "uncachedInputTokens": 42,
+            "apiMs": 36290
+          },
+          "toolCalls": {
+            "kimono_file": 1,
+            "kimono_search": 4,
+            "kimono_snapshot": 3,
+            "view": 15
+          },
+          "isolationPassed": true,
+          "aliasedTools": [],
+          "corpusUnchanged": true,
+          "quality": {
+            "formatValid": true,
+            "evidenceValid": true,
+            "expectedPathCoverage": 1,
+            "humanReview": "pending"
+          }
+        },
+        {
+          "task": "plan-config-addon",
+          "variant": "without",
+          "status": "ok",
+          "wallMs": 40517,
+          "mcpUsed": false,
+          "usage": {
+            "models": [
+              "gpt-5.6-luna"
+            ],
+            "inputTokens": 241921,
+            "outputTokens": 3602,
+            "cacheReadTokens": 193953,
+            "cacheWriteTokens": 47944,
+            "reasoningTokens": 638,
+            "uncachedInputTokens": 24,
+            "apiMs": 34547
+          },
+          "toolCalls": {
+            "glob": 1,
+            "grep": 13,
+            "view": 15
+          },
+          "isolationPassed": true,
+          "aliasedTools": [
+            "rg"
+          ],
+          "corpusUnchanged": true,
+          "quality": {
+            "formatValid": true,
+            "evidenceValid": true,
+            "expectedPathCoverage": 1,
+            "humanReview": "pending"
+          }
+        }
+      ],
+      "pairs": [
+        {
+          "task": "find-ignore-policy",
+          "inputChangePercent": 7.5,
+          "wallChangePercent": 49.4,
+          "outputChangePercent": 33.1
+        },
+        {
+          "task": "plan-config-addon",
+          "inputChangePercent": 4.4,
+          "wallChangePercent": 8.2,
+          "outputChangePercent": -17.8
+        }
+      ]
+    },
+    {
+      "campaign": "grok-4.7",
+      "requestedModel": "grok-4.7",
+      "config": "benchmarks/copilot-grok47-auto-speed.json",
+      "startedAt": "2026-11-01T08:35:12.807Z",
+      "commit": "5cd1d89f3c03028b9a713fb6dd3a87c899f50b80",
+      "dirty": true,
+      "corpus": {
+        "sha256": "6a289a1f227c0c8e8119c3fbf8390016820dd31d497df9d6add02426a3ff95dd",
+        "fileCount": 80,
+        "bytes": 876505
+      },
+      "runtimeSha256": "48611537efb07a8c9c3c956c4c649ff4edfc3841efe94861098ad253c7cfd005",
+      "runnerSha256": "ab5c5d4c95b4cfa595c97b6df6f3407e708cd98ff00cfa7326087c6314f51486",
+      "warmupMs": 3494,
+      "cacheWriteReported": false,
+      "cells": [
+        {
+          "task": "find-ignore-policy",
+          "variant": "with",
+          "status": "ok",
+          "wallMs": 163922,
+          "mcpUsed": true,
+          "usage": {
+            "models": [
+              "grok-4.7"
+            ],
+            "inputTokens": 437833,
+            "outputTokens": 12320,
+            "cacheReadTokens": 283520,
+            "cacheWriteTokens": 0,
+            "reasoningTokens": 8317,
+            "uncachedInputTokens": 154313,
+            "apiMs": 155453
+          },
+          "toolCalls": {
+            "kimono_file": 11,
+            "kimono_search": 16,
+            "kimono_snapshot": 2
+          },
+          "isolationPassed": true,
+          "aliasedTools": [],
+          "corpusUnchanged": true,
+          "quality": {
+            "formatValid": true,
+            "evidenceValid": true,
+            "expectedPathCoverage": 0.5,
+            "humanReview": "pending"
+          }
+        },
+        {
+          "task": "find-ignore-policy",
+          "variant": "without",
+          "status": "ok",
+          "wallMs": 226162,
+          "mcpUsed": false,
+          "usage": {
+            "models": [
+              "grok-4.7"
+            ],
+            "inputTokens": 977441,
+            "outputTokens": 18142,
+            "cacheReadTokens": 828800,
+            "cacheWriteTokens": 0,
+            "reasoningTokens": 12897,
+            "uncachedInputTokens": 148641,
+            "apiMs": 220567
+          },
+          "toolCalls": {
+            "glob": 1,
+            "grep": 62,
+            "view": 33
+          },
+          "isolationPassed": true,
+          "aliasedTools": [],
+          "corpusUnchanged": true,
+          "quality": {
+            "formatValid": true,
+            "evidenceValid": true,
+            "expectedPathCoverage": 0.5,
+            "humanReview": "pending"
+          }
+        },
+        {
+          "task": "plan-config-addon",
+          "variant": "with",
+          "status": "ok",
+          "wallMs": 188531,
+          "mcpUsed": true,
+          "usage": {
+            "models": [
+              "grok-4.7"
+            ],
+            "inputTokens": 509587,
+            "outputTokens": 12084,
+            "cacheReadTokens": 450688,
+            "cacheWriteTokens": 0,
+            "reasoningTokens": 7933,
+            "uncachedInputTokens": 58899,
+            "apiMs": 180514
+          },
+          "toolCalls": {
+            "glob": 1,
+            "kimono_file": 10,
+            "kimono_search": 17,
+            "kimono_snapshot": 2
+          },
+          "isolationPassed": true,
+          "aliasedTools": [],
+          "corpusUnchanged": true,
+          "quality": {
+            "formatValid": true,
+            "evidenceValid": true,
+            "expectedPathCoverage": 1,
+            "humanReview": "pending"
+          }
+        },
+        {
+          "task": "plan-config-addon",
+          "variant": "without",
+          "status": "ok",
+          "wallMs": 326128,
+          "mcpUsed": false,
+          "usage": {
+            "models": [
+              "grok-4.7"
+            ],
+            "inputTokens": 1181660,
+            "outputTokens": 20188,
+            "cacheReadTokens": 1064704,
+            "cacheWriteTokens": 0,
+            "reasoningTokens": 14091,
+            "uncachedInputTokens": 116956,
+            "apiMs": 320204
+          },
+          "toolCalls": {
+            "glob": 4,
+            "grep": 62,
+            "view": 39
+          },
+          "isolationPassed": true,
+          "aliasedTools": [],
+          "corpusUnchanged": true,
+          "quality": {
+            "formatValid": true,
+            "evidenceValid": true,
+            "expectedPathCoverage": 1,
+            "humanReview": "pending"
+          }
+        }
+      ],
+      "pairs": [
+        {
+          "task": "find-ignore-policy",
+          "inputChangePercent": -55.2,
+          "wallChangePercent": -27.5,
+          "outputChangePercent": -32.1,
+          "uncachedInputChangePercent": 3.8
+        },
+        {
+          "task": "plan-config-addon",
+          "inputChangePercent": -56.9,
+          "wallChangePercent": -42.2,
+          "outputChangePercent": -40.1,
+          "uncachedInputChangePercent": -49.6
+        }
+      ]
+    }
+  ],
+  "limitations": [
+    "One run per cell; no confidence interval.",
+    "Human quality review pending; automatic checks validate format, path bounds and coverage only.",
+    "Provider caches differ: Gemini reports uncached input, Claude reports cache read and cache write separately (uncached input is a few tokens), so uncached figures are not comparable across models.",
+    "Local development image tag, not an immutable release digest.",
+    "Single-agent read-only retrieval; no implementation measurement.",
+    "Corpus differs between series: runs 001-002 use SHA-256 d46dcab3… (80 files); runs 003-004 use 6a289a1f… (80 files). The only difference is tests/bench-harness.test.ts (+12 lines, the isolation alias test added after the first gpt-5.6-luna attempt). No model targeted or cited that file. The 2026-10-31 report used another corpus (5f7d502d…), so it is not comparable.",
+    "A first gpt-5.6-luna attempt was discarded: the audit flagged `rg` as an unlisted tool on the first cell (a grep alias) and the campaign was stopped; no result from it is kept. Runs 003-004 were executed after the alias fix.",
+    "Models chosen at the user request (gpt-5.6-luna, grok-4.7) from the Copilot catalog; the catalog exposes no price, so no cost claim is made."
+  ],
+  "observations": [
+    {
+      "id": "coverage-convergence",
+      "status": "not supported as a general effect; seen on 1 of 4 models",
+      "statement": "Kimono raised expected-file coverage only for gemini-3.8-flash (50% and 25% without, 100% and 100% with). claude-sonnet-5 and gpt-5.6-luna reach 100% in both arms. grok-4.7 stays at 50% on the research task with and without Kimono (tests/corpus.test.ts is not cited in either arm) and at 100% on the plan task in both arms.",
+      "confidenceLimits": "one run per cell; automatic path-coverage check, not correctness; human review pending; four models"
+    },
+    {
+      "id": "cost-depends-on-native-exploration",
+      "status": "hypothesis, not confirmed",
+      "statement": "Input-token and time savings are large for the models that explore heavily with native search (grok-4.7: -55.2% and -56.9% input; gemini research -64.8%) and absent for the models already efficient natively (claude-sonnet-5, gpt-5.6-luna). gemini plan (+18.4%) does not fit this pattern.",
+      "confidenceLimits": "one run per cell; four models; no confidence interval"
+    }
+  ]
+}

@@ -39,6 +39,18 @@ it('rejects AI-KIDO/custom native tools and any active MCP in the native baselin
   expect(isolationAudit([call('grep')], 'without', []).passed).toBe(false);
 });
 
+it('accepts the CLI `rg` alias of grep but still rejects other unlisted tools', () => {
+  const inventory = { type: 'session.mcp_servers_loaded', data: { servers: [{ name: 'github-mcp-server', status: 'disabled' }] } };
+  const call = (toolName: string) => ({ type: 'tool.execution_start', data: { toolName } });
+  expect(isolationAudit([inventory, call('rg'), call('glob'), call('view')], 'without', ['aikido_search']))
+    .toMatchObject({ passed: true, observedTools: ['glob', 'rg', 'view'], aliasedTools: ['rg'], unexpectedTools: [] });
+  expect(isolationAudit([inventory, call('grep')], 'without', ['aikido_search']).aliasedTools).toEqual([]);
+  for (const name of ['ripgrep', 'bash', 'rg2']) {
+    expect(isolationAudit([inventory, call('rg'), call(name)], 'without', ['aikido_search']))
+      .toMatchObject({ passed: false, unexpectedTools: [name] });
+  }
+});
+
 it('checks real citations and gold-path coverage without pretending to grade correctness', () => {
   const task = { id: 'task', kind: 'research', prompt: 'task', expectedPaths: ['a.ts'], rubric: ['correctness'] };
   const answer = { summary: 'summary', evidence: [{ path: 'a.ts', startLine: 1, endLine: 2 }], plan: [], risks: [], tests: [] };

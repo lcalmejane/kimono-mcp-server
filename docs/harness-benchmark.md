@@ -329,12 +329,13 @@ fiches JSON validées par un schéma : voir [benchmark-database.md](benchmark-da
 (modèle de configuration `benchmarks/external-template.json`, adaptateur
 `benchmarks/adapters/adapter-template.mjs`, import `npm run bench:db`).
 
-Trois rapports vivent dans `benchmarks/results/`, chacun avec son JSON :
+Quatre rapports vivent dans `benchmarks/results/`, chacun avec son JSON :
 
 | Rapport | Outil | Appelle un LLM |
 | --- | --- | --- |
 | [`current.md`](../benchmarks/results/current.md) : Copilot/Gemini, recherche lexicale | `npm run bench:harness -- benchmarks/copilot-gemini-compact.json DIR` | oui |
 | [`copilot-gemini-auto-speed.md`](../benchmarks/results/copilot-gemini-auto-speed.md) : même harnais, recherche hybride `auto-speed` | `npm run bench:harness -- benchmarks/copilot-gemini-auto-speed.json DIR` | oui |
+| [`copilot-auto-speed-v094.md`](../benchmarks/results/copilot-auto-speed-v094.md) : Kimono 0.9.4, quatre modèles (Gemini 3.8 Flash, Claude Sonnet 5, GPT-5.6 Luna, Grok 4.7) ; une config par modèle dans `benchmarks/copilot-*-auto-speed.json` | `npm run bench:harness -- benchmarks/copilot-grok47-auto-speed.json DIR` | oui |
 | [`embedding-policies.md`](../benchmarks/results/embedding-policies.md) : `e5` / `auto-balanced` / `auto-speed` | `node scripts/bench-embedding.mjs …` | non |
 
 **Autre LLM.** Le runner mesure un harnais, pas un modèle précis : changer de LLM

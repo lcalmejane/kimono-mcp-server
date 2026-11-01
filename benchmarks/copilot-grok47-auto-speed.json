@@ -1,0 +1,107 @@
+{
+  "corpus": "..",
+  "policy": {
+    "mode": "rag",
+    "include": [
+      "src/**",
+      "tests/**",
+      "docs/**",
+      "README.md",
+      "package.json"
+    ],
+    "exclude": [
+      "docs/local-rag.md",
+      "docs/harness-benchmark.md"
+    ]
+  },
+  "model": "grok-4.7",
+  "repetitions": 1,
+  "timeoutMs": 900000,
+  "harness": {
+    "kind": "copilot",
+    "command": "npm",
+    "args": [
+      "exec",
+      "--yes",
+      "--package=@github/copilot@1.0.103",
+      "--",
+      "copilot"
+    ],
+    "versionArgs": [
+      "--version"
+    ]
+  },
+  "mcp": {
+    "command": "docker",
+    "args": [
+      "run",
+      "--rm",
+      "--user",
+      "root",
+      "-i",
+      "-v",
+      "{root}:/corpus:ro",
+      "-v",
+      "{cache}:/cache",
+      "-v",
+      "{server}/.bench-models:/models:ro",
+      "-e",
+      "AIKIDO_ROOT=/corpus",
+      "-e",
+      "KIMONO_CORPUS_MODE=rag",
+      "-e",
+      "KIMONO_CACHE_DIR=/cache",
+      "-e",
+      "KIMONO_MODELS_DIR=/models",
+      "-e",
+      "KIMONO_EMBEDDING_POLICY=auto-speed",
+      "-e",
+      "MCP_TRANSPORT=stdio",
+      "--entrypoint",
+      "node",
+      "tatami-core-kimono",
+      "/app/dist/index.js"
+    ],
+    "indexMode": "all",
+    "searchDetail": "compact",
+    "tools": [
+      "aikido_snapshot",
+      "aikido_search",
+      "aikido_file"
+    ]
+  },
+  "tasks": [
+    {
+      "id": "find-ignore-policy",
+      "kind": "research",
+      "prompt": "Explain how the project decides which files are eligible for indexing, how root and nested gitignore rules interact, and why dependencies and sensitive files stay excluded even when includes select them. Identify the responsible implementation and regression tests. Do not change anything.",
+      "expectedPaths": [
+        "src/knowledge.ts",
+        "tests/corpus.test.ts"
+      ],
+      "rubric": [
+        "Explains inherited and nested ignore rules and valid negations without claiming full Git tracked-file semantics.",
+        "Identifies non-overridable dependency/sensitive exclusions and configurable allowlists.",
+        "Cites implementation and tests with valid, relevant line ranges.",
+        "Separates supported facts from unverified assumptions."
+      ]
+    },
+    {
+      "id": "plan-config-addon",
+      "kind": "addon-plan",
+      "prompt": "Prepare a concrete implementation plan for adding an optional host-controlled corpus setting named maxDepth to limit directory traversal depth. It does not exist yet. Identify where validation/defaults, scanning, status and tests would change. Preserve root/nested gitignore behavior, targeted refresh and snapshot config propagation. State edge cases, compatibility risks and focused tests. Do not implement the change.",
+      "expectedPaths": [
+        "src/corpus-config.ts",
+        "src/knowledge.ts",
+        "src/snapshots.ts",
+        "tests/corpus.test.ts"
+      ],
+      "rubric": [
+        "Recognizes maxDepth is a proposed setting, not existing behavior.",
+        "Defines depth semantics and boundary examples, default preserving current behavior.",
+        "Covers validated host configuration, traversal, targeted refresh, status and snapshot propagation.",
+        "Proposes focused tests without bypassing gitignore or introducing project writes."
+      ]
+    }
+  ]
+}
