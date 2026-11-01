@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.9.5 - 2026-11-01
 
 - Add the `darwin-x64` (macOS Intel) VSIX and native bundle. No Intel package was published before, so VS Code on an Intel Mac reported the extension as impossible to install. It is built on the `macos-15-intel` runner and published with the other four targets.
 - ONNX Runtime stopped publishing `osx-x86_64` archives after 1.23.2, so this target pins 1.23.2 (SHA-256 `d10359e1…`, requires macOS 13.4 or later) through a per-target `onnxRuntime` field in `semantic/versions.json`. The other targets keep 1.31.0. The CI embedding smoke test (384 dimensions) on an Intel runner is the gate for this pairing with `ort` 2.0.0-rc.10; it has not been run yet.
