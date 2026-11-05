@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Management panel (`vscode/management/kimono-view.css`): outside a VS Code webview the colours now follow the AI-KIDO UI kit tokens (`--aw-*`) before the legacy Tatami variables, so the panel takes the light, dark and gold themes of Tatami Core and Tatami Agent. Card radius uses `--aw-radius-md`; action groups use a 12 px gap. In a webview the `--vscode-*` theme variables still win.
+
 ## 0.9.5 - 2026-11-01
 
 - Add the `darwin-x64` (macOS Intel) VSIX and native bundle. No Intel package was published before, so VS Code on an Intel Mac reported the extension as impossible to install. It is built on the `macos-15-intel` runner and published with the other four targets.
