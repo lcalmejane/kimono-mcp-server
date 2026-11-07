@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.9.6 - 2026-11-07
 
 - New read-only tool `aikido_structure`: compact file tree of the caller's snapshot (staged overlay included), under the Kimono ignore rules, with a type and an `idx` (indexed or not) flag per file. It scopes to a `path`, limits `depth`, filters by `type`/`idx`, and answers `{unchanged:true}` when `since` matches the current `v`. Types come from a built-in table covering everything Kimono indexes plus common non-indexed files, overridable with `KIMONO_TYPES_FILE` (glob rules, optional `head` regex on the first 2 KB to tell apart documents sharing an extension).
 - Index many more languages and project files in RAG mode: .NET (`.cs`, `.fs`, `.vb`, `.csproj`, `.fsproj`, `.sln`, `.props`, `.targets`, `.razor`, `.cshtml`, `.xaml`, `.resx`, `nuget.config`, `global.json`), Go (`.go`, `go.mod`, `go.sum`, `go.work`, templates), JVM (Kotlin, Groovy, Gradle, `pom.xml`), Swift, Dart, Zig, Haskell, OCaml, Elixir, PowerShell, Bicep, Thrift, Bazel and other common build files. Extensionless build files (`Dockerfile`, `Makefile`, `Podfile`, `gradlew`…) are matched by name.
