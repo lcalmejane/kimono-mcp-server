@@ -423,7 +423,7 @@ named `COPILOT_MCP_AUTH_TOKEN`:
       "headers": {
         "Authorization": "Bearer ${COPILOT_MCP_AUTH_TOKEN}"
       },
-      "tools": ["aikido_snapshot", "aikido_search", "aikido_file", "aikido_index"]
+      "tools": ["aikido_snapshot", "aikido_search", "aikido_file", "aikido_structure", "aikido_index"]
     }
   }
 }
