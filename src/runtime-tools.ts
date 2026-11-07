@@ -18,6 +18,8 @@ import { plannedSearch } from './planned-search.js';
 import { SERVER_INFO } from './server-info.js';
 import { searchCacheFor, type SearchResult } from './search-cache.js';
 import { EMBEDDING_POLICIES } from './embedding-models.js';
+import { buildStructure } from './structure.js';
+import { loadTypeResolver } from './structure-types.js';
 
 export interface RuntimeRequestContext {
   gitProfile?: GitReadProfile | null;
@@ -179,6 +181,25 @@ export const RUNTIME_TOOLS: Tool[] = [
     annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
   },
   {
+    name: 'aikido_structure',
+    description: 'Snapshot file tree, indexed or not: "dir/" keys, file=[type,idx,size]. since=v skips unchanged.',
+    inputSchema: {
+      type: 'object', additionalProperties: false, required: ['snapshotId'],
+      properties: {
+        snapshotId: { type: 'string' },
+        path: { type: 'string', description: 'ROOT-relative subtree, no glob.' },
+        depth: { type: 'integer', minimum: 1, maximum: 64 },
+        type: { anyOf: [{ type: 'string' }, { type: 'array', items: { type: 'string' } }] },
+        idx: { type: 'integer', enum: [0, 1] },
+        since: { type: 'string' },
+        format: { type: 'string', enum: ['tree', 'text'] },
+        legend: { type: 'boolean', default: true },
+        limit: { type: 'integer', minimum: 1, maximum: 50000, default: 5000 },
+      },
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+  },
+  {
     name: 'aikido_file',
     description: 'Read snapshot; prefer ranges[] across files (1-based inclusive, merged). Follow remaining if truncated. Other operations: metadata, outline, read lines/section; full last.',
     inputSchema: {
@@ -226,6 +247,13 @@ class RuntimeTools {
 
   async call(name: string, input: Record<string, unknown>, context: RuntimeRequestContext = {}): Promise<string> {
     if (name === 'aikido_snapshot') return this.dispatch(name, input);
+    if (name === 'aikido_structure') {
+      const snapshotId = text(input, 'snapshotId', true)!;
+      return snapshotsFor(this.knowledge).withSnapshot(snapshotId, async snapshot => JSON.stringify(await buildStructure({
+        structure: snapshot.structure, structureVersion: snapshot.structureVersion,
+        corpusRoot: snapshot.knowledge.root, sourceRoot: this.knowledge.root,
+      }, input, await loadTypeResolver())));
+    }
     if (name === 'aikido_search' || name === 'aikido_file') {
       const snapshotId = text(input, 'snapshotId', true)!;
       return snapshotsFor(this.knowledge).withSnapshot(snapshotId, async snapshot => {

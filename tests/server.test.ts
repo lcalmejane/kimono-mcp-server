@@ -53,7 +53,7 @@ describe('AI-KIDO MCP surface', () => {
       const serverInfo = { name: metadata.name, version: metadata.version };
       expect(client.getServerVersion()).toEqual(serverInfo);
       const tools = await client.listTools();
-      expect(tools.tools.map((tool) => tool.name)).toEqual(['aikido', 'aikido_models', 'aikido_snapshot', 'aikido_embed', 'aikido_root', 'aikido_search', 'aikido_index', 'aikido_git', 'aikido_collaboration', 'aikido_file']);
+      expect(tools.tools.map((tool) => tool.name)).toEqual(['aikido', 'aikido_models', 'aikido_snapshot', 'aikido_embed', 'aikido_root', 'aikido_search', 'aikido_index', 'aikido_git', 'aikido_collaboration', 'aikido_structure', 'aikido_file']);
       for (const name of ['aikido', 'aikido_search']) {
         expect(tools.tools.find(tool => tool.name === name)?.inputSchema.properties?.detail)
           .toMatchObject({ enum: ['compact', 'locations', 'excerpts'], default: 'compact' });
@@ -118,7 +118,9 @@ describe('AI-KIDO MCP surface', () => {
     const retrieval = RUNTIME_TOOLS.filter(tool => ['aikido_snapshot', 'aikido_search', 'aikido_file'].includes(tool.name));
     // Baseline measured from the pre-batch v0.6.0 catalog, including descriptions/annotations.
     expect(bytes(retrieval)).toBeLessThanOrEqual(Math.floor((918 + 2717 + 2199 + 4) * 0.8));
-    expect(bytes(RUNTIME_TOOLS)).toBeLessThanOrEqual(Math.floor((12023 + 9) * 0.8));
+    // aikido_structure postdates the v0.6.0 baseline: the historical budget covers the other tools, the new one has its own cap.
+    expect(bytes(RUNTIME_TOOLS.filter(tool => tool.name !== 'aikido_structure'))).toBeLessThanOrEqual(Math.floor((12023 + 9) * 0.8));
+    expect(bytes(RUNTIME_TOOLS.filter(tool => tool.name === 'aikido_structure'))).toBeLessThanOrEqual(850);
   });
 
   it('publishes MCP-only immutable knowledge revisions and detects three-way conflicts', async () => {

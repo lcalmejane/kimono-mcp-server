@@ -24,7 +24,7 @@ it('serves snapshot-pinned knowledge over stdio and rejects legacy mutations', a
     await client.connect(transport);
     expect((await client.listTools()).tools.map(tool => tool.name)).toEqual([
       'aikido', 'aikido_models', 'aikido_snapshot', 'aikido_embed', 'aikido_root', 'aikido_search',
-      'aikido_index', 'aikido_git', 'aikido_collaboration', 'aikido_file',
+      'aikido_index', 'aikido_git', 'aikido_collaboration', 'aikido_structure', 'aikido_file',
     ]);
     const begun = await client.callTool({ name: 'aikido_snapshot', arguments: { operation: 'begin' } });
     expect(begun.isError).not.toBe(true);

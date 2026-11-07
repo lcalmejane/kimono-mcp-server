@@ -49,6 +49,43 @@ ranges into one read call. Each snapshot is immutable; open a new one to see
 file changes. The [retrieval reference](retrieval.md) documents requests,
 budgets and continuation.
 
+## Project structure
+
+`aikido_structure` returns the file tree of a snapshot in a few hundred tokens,
+without reading any file. It lists every file that passes the Kimono ignore rules
+(`.gitignore`, `exclude`, secrets, build output), indexed or not, and reflects the
+caller's own snapshot, including its staged overlay.
+
+```json
+{"v":"…","n":151,"idx":148,"types":{"ts":["TypeScript","code"]},
+ "data":{"Dockerfile":["docker",1,3023],"src/":{"app.ts":["ts",1,812],"logo.png":["image",0,5120]}}}
+```
+
+- A key ending in `/` is a folder (single-child chains fold into `a/b/`); a file is
+  `[type, idx, size]` with `idx` 1 when indexed, 0 otherwise. Paths are never repeated.
+- `path` narrows to a subtree or file, `depth` replaces deeper folders with their file
+  count, `type` and `idx` filter, `format: "text"` gives an indented listing,
+  `legend: false` omits the type table, `limit` caps the file count (`truncated: true`).
+- Pass the returned `v` as `since` on the next call: an unchanged structure answers
+  `{"v":"…","unchanged":true}`. Another user's change appears at your next
+  `aikido_snapshot` begin, and `v` changes with it.
+
+Types come from a built-in table covering everything Kimono can index plus common
+non-indexed files (images, fonts, archives, binaries…), each with a label and a group
+(`code`, `doc`, `config`, `data`, `media`, `binary`…) usable for display. Set
+`KIMONO_TYPES_FILE` to an absolute JSON path to put your own rules first:
+
+```json
+{"rules":[
+  {"pattern":"docs/glossary/**","type":"glossary","label":"Glossary","group":"doc"},
+  {"pattern":"*.md","type":"product","label":"Product sheet","head":"^kind:\\s*product"}
+]}
+```
+
+`pattern` is a glob (without `/` it matches the file name at any depth); the first
+matching rule wins. `head` is a regex tested on the first 2 KB of the file, so one
+extension can map to several natures. The file is re-read when it changes.
+
 ## AI-KIDO knowledge operations
 
 AI-KIDO mode can list and search knowledge, read documents, and explicitly

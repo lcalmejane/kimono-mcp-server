@@ -55,6 +55,46 @@ immuable ; en créer un nouveau pour voir les changements de fichiers. La
 [référence de recherche](retrieval.fr.md) décrit les requêtes, budgets et
 reprises de résultats tronqués.
 
+## Structure du projet
+
+`aikido_structure` renvoie l'arbre des fichiers d'un snapshot en quelques centaines
+de tokens, sans lire aucun fichier. Il liste tous les fichiers qui passent les règles
+d'ignore de Kimono (`.gitignore`, `exclude`, secrets, sorties de build), indexés ou non,
+et reflète le snapshot de l'appelant, overlay en attente compris.
+
+```json
+{"v":"…","n":151,"idx":148,"types":{"ts":["TypeScript","code"]},
+ "data":{"Dockerfile":["docker",1,3023],"src/":{"app.ts":["ts",1,812],"logo.png":["image",0,5120]}}}
+```
+
+- Une clé finissant par `/` est un dossier (les chaînes à enfant unique sont repliées en
+  `a/b/`) ; un fichier est `[type, idx, taille]`, `idx` valant 1 s'il est indexé, 0 sinon.
+  Aucun chemin n'est répété.
+- `path` limite à un sous-arbre ou un fichier, `depth` remplace les dossiers plus profonds
+  par leur nombre de fichiers, `type` et `idx` filtrent, `format: "text"` donne une liste
+  indentée, `legend: false` omet la table des types, `limit` plafonne le nombre de fichiers
+  (`truncated: true`).
+- Repasser le `v` reçu dans `since` : une structure inchangée répond
+  `{"v":"…","unchanged":true}`. Le changement d'un autre utilisateur apparaît au prochain
+  `begin` de `aikido_snapshot`, et `v` change avec lui.
+
+Les types viennent d'une table intégrée couvrant tout ce que Kimono sait indexer, plus les
+fichiers courants non indexés (images, polices, archives, binaires…), chacun avec un libellé
+et un groupe (`code`, `doc`, `config`, `data`, `media`, `binary`…) utilisable pour
+l'affichage. `KIMONO_TYPES_FILE` (chemin JSON absolu) place vos propres règles en premier :
+
+```json
+{"rules":[
+  {"pattern":"docs/glossaire/**","type":"glossaire","label":"Glossaire","group":"doc"},
+  {"pattern":"*.md","type":"produit","label":"Fiche produit","head":"^kind:\\s*produit"}
+]}
+```
+
+`pattern` est un glob (sans `/` il s'applique au nom du fichier à toute profondeur) ; la
+première règle qui correspond l'emporte. `head` est une regex testée sur les 2 premiers Ko
+du fichier : une même extension peut ainsi avoir plusieurs natures. Le fichier est relu
+quand il change.
+
 ## Opérations de connaissances AI-KIDO
 
 Le mode AI-KIDO permet de lister et rechercher les connaissances, lire des
