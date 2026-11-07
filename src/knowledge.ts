@@ -29,6 +29,12 @@ export interface KnowledgeEntry {
   metadata?: FileMetadata;
 }
 
+export interface VisibleFile {
+  path: string;
+  indexed: boolean;
+  size: number | null;
+}
+
 export interface SearchMatch extends KnowledgeEntry {
   excerpt: string;
   line: number;
@@ -39,7 +45,13 @@ const reportedSkips = new Set<string>();
 const reportedSkipReasons = new Set<string>();
 
 const EXCLUDED_DIRECTORIES = new Set(['.git', '.ssh', 'node_modules', 'dist', 'build', 'coverage', '.venv', '__pycache__', '.next', '.nuxt', '.cache', '.nyc_output', 'temp', 'credentials', 'secrets']);
-const RAG_EXCLUDED_DIRECTORIES = new Set(['target', 'vendor', '.gradle', '.terraform', '.idea', '.tox', '.mypy_cache', '.pytest_cache', '.turbo']);
+const RAG_EXCLUDED_DIRECTORIES = new Set(['target', 'vendor', '.gradle', '.terraform', '.idea', '.tox', '.mypy_cache', '.pytest_cache', '.turbo',
+  // Generated or cached output of other ecosystems (.NET IDE state/NuGet cache/test results, Swift, Dart, Python, Haskell, Zig, JS frameworks).
+  '.vs', '.nuget', 'TestResults', 'Pods', 'DerivedData', '.dart_tool', '.ruff_cache', '.eggs', '__pypackages__', '.stack-work',
+  '.zig-cache', 'zig-cache', '_build', '.angular', '.svelte-kit', '.parcel-cache', '.pnpm-store']);
+// `bin`/`obj` are build output next to a .NET project file but ordinary source folders elsewhere.
+const DOTNET_PROJECT = /\.(?:cs|fs|vb)proj$/i;
+const DOTNET_OUTPUT_DIRECTORIES = new Set(['bin', 'obj']);
 const KNOWLEDGE_EXTENSIONS = new Set(AIKIDO_EXTENSIONS);
 
 export class AikidoKnowledgeBase {
@@ -249,27 +261,15 @@ export class AikidoKnowledgeBase {
       }
     }
     const result: KnowledgeEntry[] = [];
+    const dotnetProject = this.config.mode === 'rag' && children.some(child => child.isFile() && DOTNET_PROJECT.test(child.name));
     for (const child of children.sort((a, b) => a.name.localeCompare(b.name))) {
       const relativePath = path.posix.join(relativeDirectory.split(path.sep).join('/'), child.name);
       // Visit only selected subtrees and their ancestors (for inherited ignore rules).
       if (scopes && !within(relativePath, scopes)
         && !scopes.some(scope => scope.startsWith(`${relativePath}/`))) continue;
-      if (child.name.startsWith('.env') || /(?:\.log|\.tmp|\.sw[po]|~)$/.test(child.name)) continue;
-      if (isSensitiveKnowledgePath(relativePath)) continue;
-      let ignored = false;
-      for (const layer of rules) {
-        const local = relativePath.slice(layer.base ? layer.base.length + 1 : 0) + (child.isDirectory() ? '/' : '');
-        const decision = layer.rules.test(local);
-        if (decision.ignored) ignored = true;
-        else if (decision.unignored) ignored = false;
-      }
-      if (ignored) continue;
-      if (this.config.exclude.some(pattern => path.posix.matchesGlob(relativePath, pattern) ||
-        child.isDirectory() && path.posix.matchesGlob(`${relativePath}/`, pattern))) continue;
+      if (this.hidden(child, relativePath, rules)) continue;
       if (child.isDirectory()) {
-        if (EXCLUDED_DIRECTORIES.has(child.name)) continue;
-        if (this.config.mode === 'rag' && RAG_EXCLUDED_DIRECTORIES.has(child.name)) continue;
-        if (this.config.mode === 'aikido' && process.env.AIKIDO_INCLUDE_SPEC !== 'true' && (relativePath === 'prompts/spec' || relativePath === 'spec')) continue;
+        if (this.skippedDirectory(child, relativePath, dotnetProject)) continue;
         for (const entry of await this.scanDirectory(realRoot, relativePath, rules, scopes)) result.push(entry);
       } else if (child.isFile() && (this.acceptsFile(relativePath) || this.config.mode === 'rag')) {
         if (!within(relativePath, scopes)) continue;
@@ -292,6 +292,78 @@ export class AikidoKnowledgeBase {
 
     }
     return result;
+  }
+
+  /** Name, sensitivity, nested .gitignore and config.exclude rules shared by indexing and the structure view. */
+  private hidden(child: Dirent, relativePath: string, rules: Array<{ base: string; rules: Ignore }>): boolean {
+    if (child.name.startsWith('.env') || /(?:\.log|\.tmp|\.sw[po]|~)$/.test(child.name)) return true;
+    if (isSensitiveKnowledgePath(relativePath)) return true;
+    let ignored = false;
+    for (const layer of rules) {
+      const local = relativePath.slice(layer.base ? layer.base.length + 1 : 0) + (child.isDirectory() ? '/' : '');
+      const decision = layer.rules.test(local);
+      if (decision.ignored) ignored = true;
+      else if (decision.unignored) ignored = false;
+    }
+    if (ignored) return true;
+    return this.config.exclude.some(pattern => path.posix.matchesGlob(relativePath, pattern) ||
+      child.isDirectory() && path.posix.matchesGlob(`${relativePath}/`, pattern));
+  }
+
+  /** Directories never traversed (build output, caches, spec in aikido mode). */
+  private skippedDirectory(child: Dirent, relativePath: string, dotnetProject: boolean): boolean {
+    if (EXCLUDED_DIRECTORIES.has(child.name)) return true;
+    if (this.config.mode === 'rag' && RAG_EXCLUDED_DIRECTORIES.has(child.name)) return true;
+    if (dotnetProject && DOTNET_OUTPUT_DIRECTORIES.has(child.name.toLowerCase())) return true;
+    return this.config.mode === 'aikido' && process.env.AIKIDO_INCLUDE_SPEC !== 'true' && (relativePath === 'prompts/spec' || relativePath === 'spec');
+  }
+
+  /**
+   * Every file visible under the Kimono ignore rules, indexed or not, with
+   * `indexed=false` for metadata-only or unsupported files. Used by the
+   * structure view; the walk never reads file contents.
+   */
+  async visibleFiles(scopes?: string[]): Promise<VisibleFile[]> {
+    this.requireInitialized();
+    const entries = new Map(this.entries.map(entry => [entry.path, entry]));
+    const result: VisibleFile[] = [];
+    await this.walkVisible(await realpath(this.root), '', [], scopes, entries, result);
+    return result;
+  }
+
+  private async walkVisible(realRoot: string, relativeDirectory: string, inherited: Array<{ base: string; rules: Ignore }>,
+    scopes: string[] | undefined, entries: Map<string, KnowledgeEntry>, result: VisibleFile[]): Promise<void> {
+    const directoryPath = path.join(realRoot, relativeDirectory);
+    let children: Dirent[];
+    try { children = await readdir(directoryPath, { withFileTypes: true }); }
+    catch { return; }
+    const rules = [...inherited];
+    if (children.some(child => child.name === '.gitignore' && child.isFile())) {
+      try { rules.push({ base: relativeDirectory, rules: ignore().add(decodeText(await readFile(path.join(directoryPath, '.gitignore')))) }); }
+      catch { return; }
+    }
+    const dotnetProject = this.config.mode === 'rag' && children.some(child => child.isFile() && DOTNET_PROJECT.test(child.name));
+    for (const child of children.sort((a, b) => a.name.localeCompare(b.name))) {
+      const relativePath = path.posix.join(relativeDirectory.split(path.sep).join('/'), child.name);
+      if (scopes && !within(relativePath, scopes)
+        && !scopes.some(scope => scope.startsWith(`${relativePath}/`))) continue;
+      if (this.hidden(child, relativePath, rules)) continue;
+      if (child.isDirectory()) {
+        if (this.skippedDirectory(child, relativePath, dotnetProject)) continue;
+        await this.walkVisible(realRoot, relativePath, rules, scopes, entries, result);
+      } else if (child.isFile()) {
+        if (!within(relativePath, scopes)) continue;
+        if (this.config.include.length && !this.config.include.some(pattern => path.posix.matchesGlob(relativePath, pattern))) continue;
+        const entry = entries.get(relativePath);
+        if (entry) {
+          result.push({ path: relativePath, indexed: !entry.metadata,
+            size: entry.metadata?.sizeBytes ?? this.sizes.get(relativePath) ?? null });
+        } else {
+          const info = await stat(path.join(realRoot, relativePath)).catch(() => undefined);
+          result.push({ path: relativePath, indexed: false, size: info?.size ?? null });
+        }
+      }
+    }
   }
 
   /** Accounts for readable content or its explicit metadata-only replacement. */
@@ -405,8 +477,10 @@ export function isSensitiveKnowledgePath(filePath: string): boolean {
   const basename = segments.at(-1) ?? '';
   return segments.some(segment => ['.git', '.ssh', 'credentials', 'secrets'].includes(segment.toLowerCase()))
     || segments.some(segment => segment.startsWith('.env'))
-    || /\.(?:pem|key|p12|pfx)$/i.test(basename)
-    || /^(?:id_(?:rsa|ed25519)(?:\.pub)?|credentials(?:\.[^.]+)?|\.netrc|\.npmrc|\.pypirc)$/i.test(basename);
+    || /\.(?:pem|key|p12|pfx|snk|jks|keystore|p8|publishsettings|tfstate)$/i.test(basename)
+    || /\.(?:csproj|fsproj|vbproj)\.user$/i.test(basename) || /\.pubxml\.user$/i.test(basename)
+    || /^(?:id_(?:rsa|ed25519)(?:\.pub)?|credentials(?:\.[^.]+)?|\.netrc|\.npmrc|\.pypirc|\.pgpass|\.dockercfg|secrets\.json|\.git-credentials)$/i.test(basename)
+    || /^terraform\.tfstate\.backup$/i.test(basename);
 }
 
 export function classify(filePath: string): KnowledgeKind {

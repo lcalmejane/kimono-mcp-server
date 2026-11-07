@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Index many more languages and project files in RAG mode: .NET (`.cs`, `.fs`, `.vb`, `.csproj`, `.fsproj`, `.sln`, `.props`, `.targets`, `.razor`, `.cshtml`, `.xaml`, `.resx`, `nuget.config`, `global.json`), Go (`.go`, `go.mod`, `go.sum`, `go.work`, templates), JVM (Kotlin, Groovy, Gradle, `pom.xml`), Swift, Dart, Zig, Haskell, OCaml, Elixir, PowerShell, Bicep, Thrift, Bazel and other common build files. Extensionless build files (`Dockerfile`, `Makefile`, `Podfile`, `gradlew`…) are matched by name.
+- Skip generated output of those ecosystems: `.vs`, `.nuget`, `TestResults`, `Pods`, `DerivedData`, `.dart_tool`, `.stack-work`, `_build`, `.angular`, `.svelte-kit` and similar. `bin` and `obj` are excluded only beside a `.csproj`/`.fsproj`/`.vbproj`, so ordinary `bin/` source folders (for example Go `cmd` helpers) stay indexed.
+- Treat more files as secrets and never index them: `*.snk`, `*.jks`, `*.keystore`, `*.p8`, `*.publishsettings`, `*.tfstate`, `*.csproj.user`, `*.pubxml.user`, `secrets.json`, `.pgpass`, `.dockercfg`, `.git-credentials`. `.npmrc` stays excluded from the file list because it can hold tokens.
+- Docker images now include [RTK](https://github.com/rtk-ai/rtk) v1.1.0 (Apache-2.0), built from source (`--no-default-features`, no telemetry endpoint) so shells opened in the container produce condensed output. `RTK_TELEMETRY_DISABLED=1` is set as a precaution.
 - Management panel (`vscode/management/kimono-view.css`): outside a VS Code webview the colours now follow the AI-KIDO UI kit tokens (`--aw-*`) before the legacy Tatami variables, so the panel takes the light, dark and gold themes of Tatami Core and Tatami Agent. Card radius uses `--aw-radius-md`; action groups use a 12 px gap. In a webview the `--vscode-*` theme variables still win.
 
 ## 0.9.5 - 2026-11-01

@@ -77,6 +77,42 @@ it('indexes common source languages and extensionless files, with custom replace
   expect(configured.searchIndex.directory).not.toBe(knowledge.searchIndex.directory);
 });
 
+it('indexes .NET, Go and other ecosystem sources and project files as readable content', async () => {
+  const { knowledge, write } = await fixture();
+  const files = [
+    'src/App/Program.cs', 'src/App/Module.fs', 'src/App/Legacy.vb', 'src/App/App.csproj', 'src/App/App.fsproj',
+    'src/App/Views/Index.cshtml', 'src/App/Pages/Counter.razor', 'src/App/MainWindow.xaml', 'src/App/Strings.resx',
+    'Solution.sln', 'Directory.Build.props', 'Directory.Packages.props', 'global.json', 'nuget.config',
+    'cmd/server/main.go', 'go.mod', 'go.sum', 'go.work', 'internal/tmpl/page.tmpl',
+    'app/Main.kt', 'build.gradle.kts', 'lib/Thing.groovy', 'pom.xml', 'gradlew',
+    'src/main.zig', 'lib/core.hs', 'lib/core.ml', 'src/main.dart', 'Package.swift', 'Podfile', 'mix.exs',
+    'scripts/deploy.ps1', 'infra/main.bicep', 'schema.thrift', 'BUILD.bazel',
+  ];
+  for (const file of files) await write(file, `content of ${file}`);
+  await knowledge.initialize();
+  const readable = knowledge.list().filter(entry => !entry.metadata).map(entry => entry.path).sort();
+  expect(readable).toEqual([...files].sort());
+  expect(knowledge.corpusStatus.metadataOnly).toBe(0);
+});
+
+it('excludes .NET build output beside a project file but keeps ordinary bin and obj source folders', async () => {
+  const { knowledge, write } = await fixture();
+  await write('src/App/App.csproj', '<Project />');
+  await write('src/App/Program.cs', 'class Program {}');
+  await write('src/App/bin/Debug/App.deps.json', '{}');
+  await write('src/App/obj/project.assets.json', '{}');
+  await write('src/App/.vs/state.json', '{}');
+  await write('src/App/App.csproj.user', '<Project />');
+  await write('src/App/Properties/PublishProfiles/Prod.pubxml.user', '<Project />');
+  await write('tools/bin/helper.go', 'package main');
+  await write('tools/obj/model.go', 'package main');
+  await write('TestResults/result.trx', '<TestRun />');
+  await write('Strong.snk', 'private key');
+  await knowledge.initialize();
+  expect(knowledge.list().map(entry => entry.path).sort())
+    .toEqual(['src/App/App.csproj', 'src/App/Program.cs', 'tools/bin/helper.go', 'tools/obj/model.go']);
+});
+
 it('reads PHP, Markdown and plain text content together without metadata-only substitution', async () => {
   const { knowledge, write } = await fixture();
   const files = {

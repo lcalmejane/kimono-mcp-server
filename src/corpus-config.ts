@@ -21,15 +21,57 @@ const MIB = 1024 * 1024;
 export const AIKIDO_EXTENSIONS = [
   '.md', '.mdx', '.mdc', '.txt', '.json', '.yaml', '.yml', '.toml', '.js', '.mjs', '.cjs', '.sh', '.py', '.ts', '.xml',
 ];
-const RAG_EXTENSIONS = [...AIKIDO_EXTENSIONS,
+// Extensions are grouped by ecosystem so a missing language is easy to spot; the list is the
+// default RAG allowlist and can still be replaced wholesale through the `extensions` option.
+export const RAG_EXTENSIONS = [...new Set([...AIKIDO_EXTENSIONS,
   ...DOCUMENT_EXTENSIONS,
-  '.tsx', '.jsx', '.vue', '.svelte', '.astro', '.css', '.scss', '.sass', '.less', '.html',
-  '.java', '.kt', '.kts', '.go', '.rs', '.php', '.rb', '.rake', '.c', '.h', '.cc', '.cpp', '.hpp',
-  '.cs', '.fs', '.fsx', '.swift', '.m', '.mm', '.scala', '.sql', '.graphql', '.gql', '.proto',
-  '.ex', '.exs', '.erl', '.hrl', '.clj', '.cljs', '.dart', '.lua', '.r', '.jl', '.pl', '.pm',
-  '.ps1', '.bat', '.cmd', '.bash', '.zsh', '.fish', '.dockerfile', '.ini', '.cfg', '.conf',
-  '.properties', '.gradle', '.tf', '.tfvars', '.hcl', '.cmake', '.rst', '.adoc', '.csv',
-];
+  // Web
+  '.tsx', '.jsx', '.mts', '.cts', '.vue', '.svelte', '.astro', '.css', '.scss', '.sass', '.less', '.html', '.htm',
+  '.jsonc', '.json5', '.coffee', '.pug', '.hbs', '.handlebars', '.ejs', '.njk', '.twig', '.liquid', '.mustache',
+  '.jinja', '.jinja2', '.j2', '.erb', '.haml', '.slim', '.xsl', '.xslt', '.xsd', '.wsdl',
+  // JVM
+  '.java', '.jsp', '.jspx', '.kt', '.kts', '.groovy', '.gvy', '.gradle', '.scala', '.sc', '.sbt', '.clj', '.cljs',
+  '.cljc', '.edn', '.properties',
+  // .NET (C#, F#, VB.NET, Razor, WPF/MAUI/Avalonia, MSBuild/NuGet project files)
+  '.cs', '.csx', '.fs', '.fsx', '.fsi', '.vb', '.cshtml', '.razor', '.xaml', '.axaml', '.resx', '.csproj', '.fsproj',
+  '.vbproj', '.sln', '.slnx', '.props', '.targets', '.nuspec', '.config', '.runsettings', '.ruleset', '.bicep',
+  // Go
+  '.go', '.mod', '.sum', '.work', '.tmpl', '.gotmpl',
+  // Systems
+  '.rs', '.c', '.h', '.cc', '.cpp', '.cxx', '.hh', '.hpp', '.hxx', '.inl', '.ipp', '.cu', '.cuh', '.ino', '.zig',
+  '.nim', '.cr', '.odin', '.asm', '.s', '.ld', '.vala',
+  // Apple and mobile
+  '.swift', '.m', '.mm', '.dart', '.gd', '.pbxproj', '.plist', '.entitlements', '.storyboard',
+  // Scripting
+  '.php', '.phtml', '.rb', '.rake', '.gemspec', '.py', '.pyi', '.pyw', '.pl', '.pm', '.t', '.lua', '.r', '.rmd',
+  '.jl', '.tcl', '.awk', '.sed', '.vim', '.ahk',
+  // Functional and others
+  '.ex', '.exs', '.heex', '.eex', '.erl', '.hrl', '.hs', '.lhs', '.cabal', '.ml', '.mli', '.elm', '.purs', '.lisp',
+  '.cl', '.el', '.scm', '.rkt', '.f', '.f90', '.f95', '.for', '.cob', '.cbl', '.pas', '.pp', '.dpr', '.adb', '.ads',
+  '.sol', '.vy', '.sv', '.svh', '.vhd', '.vhdl',
+  // Shell and automation
+  '.ps1', '.psm1', '.psd1', '.bat', '.cmd', '.bash', '.zsh', '.fish', '.ksh', '.nu', '.mk', '.make', '.just',
+  // Data, API and infrastructure
+  '.sql', '.graphql', '.gql', '.proto', '.thrift', '.avsc', '.prisma', '.dockerfile', '.ini', '.cfg', '.conf',
+  '.tf', '.tfvars', '.hcl', '.nomad', '.cue', '.rego', '.nix', '.dhall', '.bzl', '.bazel', '.star',
+  '.cmake', '.tex', '.bib', '.rst', '.adoc', '.csv', '.tsv',
+  // Game and shader languages
+  '.glsl', '.vert', '.frag', '.hlsl', '.wgsl', '.shader', '.cginc',
+])];
+// Build and project files without a distinctive extension.
+export const RAG_FILENAMES = ['Dockerfile', 'Containerfile', 'Makefile', 'GNUmakefile', 'Justfile', 'Jenkinsfile', 'Gemfile', 'Rakefile',
+  'Procfile', 'CMakeLists.txt', 'README', 'LICENSE', 'NOTICE', 'CHANGELOG',
+  // Go
+  'go.mod', 'go.sum', 'go.work', 'go.work.sum',
+  // .NET
+  'global.json', 'nuget.config', 'NuGet.Config', 'Directory.Build.props', 'Directory.Build.targets',
+  'Directory.Packages.props', 'packages.config', 'dotnet-tools.json', 'launchSettings.json',
+  // JVM, Python, Ruby, Apple, Elixir, Dart, others
+  'gradlew', 'mvnw', 'pom.xml', 'build.gradle', 'settings.gradle', 'gradle.properties', 'Pipfile', 'Podfile', 'Cartfile',
+  'Vagrantfile', 'Brewfile', 'Guardfile', 'Capfile', 'Fastfile', 'Appfile', 'Tiltfile', 'Earthfile', 'Caddyfile',
+  'Taskfile', 'BUILD', 'WORKSPACE', 'MODULE.bazel', 'mix.exs', 'pubspec.yaml', 'Package.swift', 'Cargo.toml',
+  '.editorconfig', '.gitattributes', '.dockerignore', '.nvmrc', '.prettierrc', '.eslintrc', '.babelrc',
+  '.clang-format', '.clang-tidy', '.rubocop.yml', '.tool-versions', '.node-version', '.python-version', '.ruby-version'];
 
 export function corpusConfig(value: unknown = {}): Readonly<CorpusConfig> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Kimono corpus config must be a JSON object');
@@ -38,7 +80,7 @@ export function corpusConfig(value: unknown = {}): Readonly<CorpusConfig> {
   if (mode !== 'aikido' && mode !== 'rag') throw new Error('Kimono corpus mode must be aikido or rag');
   const defaults: CorpusConfig = {
     mode, extensions: mode === 'rag' ? RAG_EXTENSIONS : AIKIDO_EXTENSIONS,
-    filenames: mode === 'rag' ? ['Dockerfile', 'Containerfile', 'Makefile', 'GNUmakefile', 'Justfile', 'Jenkinsfile', 'Gemfile', 'Rakefile', 'Procfile', 'CMakeLists.txt', 'README', 'LICENSE', 'NOTICE', 'CHANGELOG'] : [],
+    filenames: mode === 'rag' ? RAG_FILENAMES : [],
     include: [], exclude: [], maxFileBytes: mode === 'rag' ? 4 * MIB : 2 * MIB,
     maxFiles: 100_000, maxCorpusBytes: 512 * MIB,
     snapshotMaxBytes: mode === 'rag' ? 256 * MIB : 64 * MIB,

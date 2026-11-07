@@ -11,6 +11,12 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 
+# RTK (https://github.com/rtk-ai/rtk, Apache-2.0) compiled from source: published binaries need glibc >= 2.39.
+# The open-source edition (--no-default-features) has no telemetry endpoint.
+FROM rust:1-bookworm AS rtk
+ARG RTK_VERSION=v1.1.0
+RUN cargo install --git https://github.com/rtk-ai/rtk --tag "${RTK_VERSION}" rtk --no-default-features --locked --root /opt/rtk
+
 FROM rust:1-bookworm AS tooling
 ARG FAST_GREP_VERSION=0.5.0
 RUN apt-get update && apt-get install -y --no-install-recommends git gh jq openssh-client ca-certificates libatomic1 poppler-utils \
@@ -23,7 +29,9 @@ COPY --from=build /usr/local/bin/node /usr/local/bin/node
 COPY --from=build /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/npm
 RUN ln -s /usr/local/lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
     && ln -s /usr/local/lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx
-ENV KIMONO_CACHE_DIR=/home/node/.cache/kimono
+COPY --from=rtk /opt/rtk/bin/rtk /usr/local/bin/rtk
+ENV KIMONO_CACHE_DIR=/home/node/.cache/kimono \
+    RTK_TELEMETRY_DISABLED=1
 WORKDIR /app
 
 FROM tooling AS semantic-build

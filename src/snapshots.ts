@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { lstat, mkdir, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import type { AikidoKnowledgeBase, FileMetadata } from './knowledge.js';
+import type { AikidoKnowledgeBase, FileMetadata, VisibleFile } from './knowledge.js';
 import { AikidoKnowledgeBase as KnowledgeBase, classify } from './knowledge.js';
 import { UserOverlay, validateOwner } from './overlay.js';
 import { sourceSnapshot } from './index-basis.js';
@@ -40,6 +40,10 @@ export interface KnowledgeSnapshot {
     overlay?: { owner: string; files: number };
   };
   readonly knowledge: AikidoKnowledgeBase;
+  /** Files visible under the Kimono ignore rules (indexed or not), overlay-merged, sorted by path. */
+  readonly structure: readonly VisibleFile[];
+  /** Fingerprint of the structure (paths, idx flags, sizes): changes when files appear, vanish or change. */
+  readonly structureVersion: string;
   readonly bytes: number;
   readonly documents: number;
   readonly paths?: string[];
@@ -73,6 +77,7 @@ export class SnapshotManager {
 
     await this.source.refresh();
     const before = await sourceSnapshot(this.source, paths);
+    const visible = new Map((await this.source.visibleFiles(paths)).map(file => [file.path, file]));
     const entries = this.source.list().filter(entry => within(entry.path, paths)).sort((a, b) => a.path.localeCompare(b.path));
     const id = randomUUID();
     const directory = path.join(this.snapshotsRoot, id);
@@ -129,6 +134,14 @@ export class SnapshotManager {
         await store(file, content);
         merged.push({ path: file, kind: classify(file), content });
       }
+      for (const file of stagedPaths) {
+        if (staged[file].op === 'delete') visible.delete(file);
+        else visible.set(file, { path: file, indexed: true, size: Buffer.byteLength((await overlay!.content(file)) as string) });
+      }
+      const structure = [...visible.values()].sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0);
+      const structureHash = createHash('sha256');
+      for (const file of structure) structureHash.update(`${file.path}\0${file.indexed ? 1 : 0}\0${file.size ?? ''}\n`);
+      const structureVersion = structureHash.digest('hex');
 
       const rootVersion = fingerprint.digest('hex');
       let version = rootVersion;
@@ -169,6 +182,8 @@ export class SnapshotManager {
           ...(overlay && stagedPaths.length ? { overlay: { owner: overlay.owner, files: stagedPaths.length } } : {}),
         },
         knowledge,
+        structure,
+        structureVersion,
         bytes,
         documents,
         ...(paths ? { paths } : {}),
@@ -228,6 +243,7 @@ export class SnapshotManager {
       operation: 'begin',
       snapshotId: snapshot.snapshotId,
       version: snapshot.version,
+      structureVersion: snapshot.structureVersion,
       expiresAt: snapshot.expiresAt,
       capturedAt: snapshot.capturedAt,
       documents: snapshot.documents,
