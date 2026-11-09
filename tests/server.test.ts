@@ -9,7 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AikidoKnowledgeBase } from '../src/knowledge.js';
 import { parseGitStatus } from '../src/repository.js';
 import { createAikidoMcpServer } from '../src/server.js';
-import { RUNTIME_TOOLS } from '../src/runtime-tools.js';
+import { RUNTIME_TOOLS, SEARCH_PROPERTIES } from '../src/runtime-tools.js';
 import * as processes from '../src/process.js';
 
 const temporaryDirectories: string[] = [];
@@ -119,7 +119,10 @@ describe('AI-KIDO MCP surface', () => {
     // Baseline measured from the pre-batch v0.6.0 catalog, including descriptions/annotations.
     expect(bytes(retrieval)).toBeLessThanOrEqual(Math.floor((918 + 2717 + 2199 + 4) * 0.8));
     // aikido_structure postdates the v0.6.0 baseline: the historical budget covers the other tools, the new one has its own cap.
-    expect(bytes(RUNTIME_TOOLS.filter(tool => tool.name !== 'aikido_structure'))).toBeLessThanOrEqual(Math.floor((12023 + 9) * 0.8));
+    // The 0.9.7 `repository` search filter also postdates it and has its own 80-byte cap.
+    const repository = JSON.stringify({ repository: SEARCH_PROPERTIES.repository }).length - 2;
+    expect(repository).toBeLessThanOrEqual(80);
+    expect(bytes(RUNTIME_TOOLS.filter(tool => tool.name !== 'aikido_structure')) - repository - 1).toBeLessThanOrEqual(Math.floor((12023 + 9) * 0.8));
     expect(bytes(RUNTIME_TOOLS.filter(tool => tool.name === 'aikido_structure'))).toBeLessThanOrEqual(850);
   });
 

@@ -2,7 +2,7 @@
   "name": "kimono-rag-mcp",
   "displayName": "Kimono RAG MCP",
   "description": "Local RAG for code and documentation with lexical and semantic search over MCP.",
-  "version": "0.9.6",
+  "version": "0.9.7",
   "publisher": "ai-kido",
   "license": "MIT",
   "repository": {
@@ -211,11 +211,29 @@
           "scope": "machine",
           "description": "RAG (default) indexes source code and documentation locally. Select aikido only for a compatible knowledge base with an index entry point. Both modes respect .gitignore and dependency/build exclusions."
         },
+        "kimono.repositories": {
+          "type": "array",
+          "default": [],
+          "scope": "resource",
+          "maxItems": 64,
+          "items": {
+            "type": "object",
+            "required": ["path"],
+            "additionalProperties": false,
+            "properties": {
+              "path": { "type": "string", "description": "Repository directory relative to the Kimono ROOT (\"\" = ROOT)." },
+              "name": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$" },
+              "gitUrl": { "type": "string", "description": "Credential-free HTTPS/SSH URL (informational)." },
+              "branch": { "type": ["string", "null"] }
+            }
+          },
+          "markdownDescription": "Independent Git repositories inside the ROOT (for example a sub-project ignored by the parent `.gitignore`). Each declared repository is indexed under its own ignore rules and can be selected with the `repository` search filter. Paths are relative to the ROOT, without `..`."
+        },
         "kimono.configFile": {
           "type": "string",
           "default": "",
           "scope": "machine",
-          "description": "Absolute path to a host-controlled corpus JSON config (extensions, filenames, include/exclude globs and limits). Never auto-loaded from a project. corpusMode overrides its mode."
+          "description": "Absolute path to a host-controlled corpus JSON config (extensions, filenames, include/exclude globs, limits and nested Git `repositories`). Never auto-loaded from a project. corpusMode overrides its mode; kimono.repositories is added to its repositories."
         },
         "kimono.mode": {
           "type": "string",

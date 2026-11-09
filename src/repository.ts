@@ -4,6 +4,7 @@ import path from 'node:path';
 import { runProcess } from './process.js';
 import { withGitProfile } from './git-profile.js';
 import { createHash } from 'node:crypto';
+import { nestedRepositories, type DeclaredRepository } from './repositories.js';
 
 export const AIKIDO_REPOSITORY = 'https://github.com/lcalmejane/aikido.git';
 
@@ -297,4 +298,22 @@ function required(value: string | undefined, name: string): string {
 function githubFailure(error: unknown) {
   const cause = error instanceof Error ? error.cause : undefined;
   return { status: cause && typeof cause === 'object' && 'code' in cause && cause.code === 'ENOENT' ? 'unavailable' : 'error' };
+}
+
+/** Git state of each declared nested repository; dirty paths are ROOT-relative. Unavailable repositories never throw. */
+export async function nestedRepositoryStates(root: string, repositories: readonly DeclaredRepository[]) {
+  return Promise.all(nestedRepositories(repositories).map(async declared => {
+    const base = { name: declared.name, path: declared.path,
+      ...(declared.gitUrl ? { gitUrl: declared.gitUrl } : {}),
+      ...(declared.branch !== undefined ? { declaredBranch: declared.branch } : {}) };
+    try {
+      const state = await new RepositoryAccess(path.join(root, declared.path)).infos();
+      return { ...base, available: true as const, ...state,
+        dirtyFiles: state.dirtyFiles.map(file => ({ ...file, path: `${declared.path}/${file.path}`,
+          ...(file.oldPath ? { oldPath: `${declared.path}/${file.oldPath}` } : {}) })) };
+    } catch {
+      return { ...base, available: false as const, head: null, branch: null, dirty: null, dirtyFiles: [],
+        upstream: null, ahead: null, behind: null, statusFingerprint: null };
+    }
+  }));
 }

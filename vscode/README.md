@@ -91,6 +91,7 @@ The default mode is `rag`; the open workspace folder is the default project:
 | `kimono.mode` | `embedded` | Select `remote` to connect to an existing HTTP MCP server, or `disabled` to stop Kimono. |
 | `kimono.url` | Empty | Set the HTTPS `/mcp` endpoint when using `remote`. |
 | `kimono.configFile` | Empty | Supply an optional absolute path to a host-managed corpus configuration. |
+| `kimono.repositories` | `[]` | Per folder: nested Git repositories (`path`, optional `name`, `gitUrl`, `branch`) indexed under their own `.gitignore`, even when the parent ignores them. |
 | `kimono.semanticDevice` | `auto` | Benchmark CPU and available CUDA/CoreML providers once per server session, or explicitly select one. |
 | `kimono.logLevel` | `error` | Enable `debug` only for diagnosis; Kimono creates no trace files. The host controls stderr retention. |
 

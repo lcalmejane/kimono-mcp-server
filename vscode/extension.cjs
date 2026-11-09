@@ -51,6 +51,11 @@ function register(vscode, context, native = nativeEnvironment) {
     if (profile && !path.isAbsolute(profile)) throw new Error("Kimono Git profile path must be absolute.");
     const configFile = config().get("configFile", "");
     if (configFile && !path.isAbsolute(configFile)) throw new Error("Kimono config path must be absolute.");
+    const repositories = vscode.workspace.getConfiguration("kimono", selected.uri).get("repositories", []);
+    if (!Array.isArray(repositories) || repositories.length > 64 || !repositories.every(item =>
+      item && typeof item === "object" && !Array.isArray(item) && typeof item.path === "string")) {
+      throw new Error("Kimono repositories must be an array of { path, name?, gitUrl?, branch? }.");
+    }
     const corpusMode = config().get("corpusMode", "rag");
     if (!["aikido", "rag"].includes(corpusMode)) throw new Error("Kimono corpusMode must be aikido or rag.");
     const device = config().get("semanticDevice", "auto");
@@ -86,6 +91,8 @@ function register(vscode, context, native = nativeEnvironment) {
         ...semanticEnvironment,
         KIMONO_LOG_LEVEL: logLevel,
         ...(configFile ? { KIMONO_CONFIG_FILE: configFile } : {}),
+        // Validated again by the server (ROOT-relative, no traversal, credential-free URLs).
+        ...(repositories.length ? { KIMONO_REPOSITORIES: JSON.stringify(repositories) } : {}),
         ...(profile ? { KIMONO_GIT_PROFILE_FILE: profile } : {}),
       },
     };

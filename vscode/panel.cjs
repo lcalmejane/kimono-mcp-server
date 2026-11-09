@@ -95,7 +95,8 @@ function registerManagement(vscode, context, host) {
     return embeddedFolders().map(folder => {
       const status = statuses.get(folder.identity) ?? { phase: "not-indexed" };
       return { id: folder.uri.toString(), name: folder.name, root: folder.root,
-        rootSetting: vscode.workspace.getConfiguration("kimono", folder.uri).get("root", ""), status };
+        rootSetting: vscode.workspace.getConfiguration("kimono", folder.uri).get("root", ""),
+        repositories: vscode.workspace.getConfiguration("kimono", folder.uri).get("repositories", []), status };
     });
   }
 
@@ -118,15 +119,20 @@ function registerManagement(vscode, context, host) {
     configFile: absoluteOrEmpty,
     gitProfileFile: absoluteOrEmpty,
     root: value => typeof value === "string" && value.length <= 4096 && !/[\0\r\n]/.test(value),
+    repositories: value => Array.isArray(value) && value.length <= 64 && value.every(item =>
+      item && typeof item === "object" && !Array.isArray(item) && typeof item.path === "string"
+      && item.path.length <= 512 && !item.path.split("/").some(part => part === "..")
+      && !item.path.startsWith("/") && !/[\\\0\r\n]/.test(item.path)),
   };
 
   async function updateSetting(message) {
     trusted();
     const rule = Object.hasOwn(settingRules, message.key) && settingRules[message.key];
     if (!rule || !rule(message.value)) throw new Error(l("Invalid or unsupported Kimono setting.", "Paramètre Kimono invalide ou non pris en charge."));
-    if (message.key === "root") {
+    if (message.key === "root" || message.key === "repositories") {
       const folder = folderById(message.folder);
-      return vscode.workspace.getConfiguration("kimono", folder.uri).update("root", message.value || undefined,
+      const empty = message.key === "root" ? !message.value : message.value.length === 0;
+      return vscode.workspace.getConfiguration("kimono", folder.uri).update(message.key, empty ? undefined : message.value,
         vscode.ConfigurationTarget.WorkspaceFolder);
     }
     return config().update(message.key, message.value, vscode.ConfigurationTarget.Global);

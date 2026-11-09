@@ -71,6 +71,7 @@ Le mode par défaut est `rag` et le dossier ouvert est le projet indexé :
 | `kimono.mode` | `embedded` | Choisir `remote` pour un serveur MCP HTTP existant, ou `disabled` pour arrêter Kimono. |
 | `kimono.url` | Vide | Définir l'endpoint HTTPS `/mcp` en mode `remote`. |
 | `kimono.configFile` | Vide | Fournir un chemin absolu vers une configuration du corpus gérée par l'hôte. |
+| `kimono.repositories` | `[]` | Par dossier : dépôts Git imbriqués (`path`, `name`, `gitUrl`, `branch` facultatifs) indexés avec leur propre `.gitignore`, même si le parent les ignore. |
 | `kimono.semanticDevice` | `auto` | Comparer le CPU aux fournisseurs CUDA/CoreML disponibles une fois par session, ou imposer un fournisseur. |
 | `kimono.logLevel` | `error` | Activer `debug` uniquement pour un diagnostic ; Kimono ne crée aucun fichier de traces. L'hôte gère la conservation de stderr. |
 

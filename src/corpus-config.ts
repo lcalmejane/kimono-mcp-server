@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { DOCUMENT_EXTENSIONS } from './documents.js';
+import { parseRepositories, type DeclaredRepository } from './repositories.js';
 
 export interface CorpusConfig {
   mode: 'aikido' | 'rag';
@@ -15,6 +16,8 @@ export interface CorpusConfig {
   snapshotsTotalBytes: number;
   maxSnapshots: number;
   snapshotTtlMs: number;
+  /** Declared Git repositories inside ROOT ('' = ROOT); nested ones are indexed under their own ignore rules. */
+  repositories: readonly DeclaredRepository[];
 }
 
 const MIB = 1024 * 1024;
@@ -86,6 +89,7 @@ export function corpusConfig(value: unknown = {}): Readonly<CorpusConfig> {
     snapshotMaxBytes: mode === 'rag' ? 256 * MIB : 64 * MIB,
     snapshotsTotalBytes: mode === 'rag' ? 512 * MIB : 256 * MIB,
     maxSnapshots: 8, snapshotTtlMs: 15 * 60 * 1000,
+    repositories: [],
   };
   for (const key of Object.keys(input)) if (!Object.hasOwn(defaults, key)) throw new Error(`Unknown Kimono corpus option: ${key}`);
   for (const key of ['extensions', 'filenames', 'include', 'exclude'] as const) {
@@ -115,6 +119,7 @@ export function corpusConfig(value: unknown = {}): Readonly<CorpusConfig> {
     if (typeof number !== 'number' || !Number.isSafeInteger(number) || number < min || number > max) throw new Error(`${key} must be an integer between ${min} and ${max}`);
     defaults[key] = number;
   }
+  defaults.repositories = Object.freeze(parseRepositories(input.repositories));
   if (defaults.snapshotMaxBytes > defaults.snapshotsTotalBytes) throw new Error('snapshotMaxBytes must not exceed snapshotsTotalBytes');
   for (const key of ['extensions', 'filenames', 'include', 'exclude'] as const) Object.freeze(defaults[key]);
   return Object.freeze(defaults);
@@ -127,6 +132,21 @@ export function loadCorpusConfig(): Readonly<CorpusConfig> {
     if (!path.isAbsolute(filename)) throw new Error('KIMONO_CONFIG_FILE must be an absolute path');
     try { input = JSON.parse(readFileSync(filename, 'utf8')); }
     catch (error) { throw new Error(`Cannot read Kimono corpus config: ${filename}`, { cause: error }); }
+  }
+  if (process.env.KIMONO_REPOSITORIES !== undefined && process.env.KIMONO_REPOSITORIES.trim() !== '') {
+    // Host-provided declarations (VS Code setting, Docker env): added to the file's, the env wins on a shared path.
+    let declared: unknown;
+    try { declared = JSON.parse(process.env.KIMONO_REPOSITORIES); }
+    catch (error) { throw new Error('KIMONO_REPOSITORIES must be a JSON array', { cause: error }); }
+    if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('Kimono corpus config must be a JSON object');
+    const base = (input as Record<string, unknown>).repositories;
+    const merged = new Map<string, unknown>();
+    for (const item of [...(Array.isArray(base) ? base : []), ...(Array.isArray(declared) ? declared : [declared])]) {
+      const key = item && typeof item === 'object' && !Array.isArray(item)
+        ? String((item as Record<string, unknown>).path ?? '').replace(/\/+$/, '') : JSON.stringify(item);
+      merged.set(key, item);
+    }
+    input = { ...input, repositories: [...merged.values()] };
   }
   if (process.env.KIMONO_CORPUS_MODE !== undefined) {
     if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('Kimono corpus config must be a JSON object');

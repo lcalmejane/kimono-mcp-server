@@ -25,7 +25,8 @@ const text = {
     setToken: "Set remote token…", clearToken: "Clear remote token", tokenSaved: "A token is saved in VS Code SecretStorage.", noToken: "No token saved.",
     advanced: "Advanced", configFile: "Corpus config file", configHint: "(absolute path to a host-controlled JSON; empty = defaults)",
     gitProfile: "Git read-profile file", gitHint: "(absolute path, 0600, outside the ROOT; AI-KIDO remote sync only)",
-    root: "ROOT for {name}", rootHint: "(relative to the folder or absolute; empty = the folder itself)", allSettings: "All Kimono settings",
+    root: "ROOT for {name}", rootHint: "(relative to the folder or absolute; empty = the folder itself)",
+    repositories: "Nested Git repositories of {name}", repositoriesHint: "(paths relative to the ROOT, comma-separated; indexed even when the parent .gitignore ignores them)", allSettings: "All Kimono settings",
     mcp: "MCP server", mcpIntro: "Kimono is declared to VS Code's MCP list for every trusted local folder. Start, stop, restart and read logs from the native list; VS Code confirmations and permissions stay active.",
     servers: "Start · stop · restart · logs…", mcpSettings: "Native MCP settings", standalone: "standalone",
   },
@@ -41,7 +42,8 @@ const text = {
     setToken: "Définir le jeton distant…", clearToken: "Effacer le jeton distant", tokenSaved: "Un jeton est enregistré dans le SecretStorage de VS Code.", noToken: "Aucun jeton enregistré.",
     advanced: "Avancé", configFile: "Fichier de configuration du corpus", configHint: "(chemin absolu d'un JSON contrôlé par l'hôte ; vide = valeurs par défaut)",
     gitProfile: "Fichier de profil Git en lecture", gitHint: "(chemin absolu, 0600, hors du ROOT ; synchronisation distante AI-KIDO uniquement)",
-    root: "ROOT de {name}", rootHint: "(relatif au dossier ou absolu ; vide = le dossier lui-même)", allSettings: "Tous les paramètres Kimono",
+    root: "ROOT de {name}", rootHint: "(relatif au dossier ou absolu ; vide = le dossier lui-même)",
+    repositories: "Dépôts Git imbriqués de {name}", repositoriesHint: "(chemins relatifs au ROOT, séparés par des virgules ; indexés même si le .gitignore parent les ignore)", allSettings: "Tous les paramètres Kimono",
     mcp: "Serveur MCP", mcpIntro: "Kimono est déclaré dans la liste MCP de VS Code pour chaque dossier local approuvé. Démarrez, arrêtez, redémarrez et lisez les journaux depuis la liste native ; les confirmations et permissions de VS Code restent actives.",
     servers: "Démarrer · arrêter · redémarrer · journaux…", mcpSettings: "Paramètres MCP natifs", standalone: "autonome",
   },
@@ -142,6 +144,15 @@ function render(value) {
     const input = textInput(roots, `root-${index}`, text.root.replace("{name}", folder.name), text.rootHint);
     input.value = folder.rootSetting ?? "";
     input.addEventListener("change", () => send({ action: "setting", key: "root", folder: folder.id, value: input.value.trim() }, text.saving));
+    // Paths only here; names, URLs and branches of kept paths are preserved (edit them in settings.json).
+    const declared = Array.isArray(folder.repositories) ? folder.repositories : [];
+    const repositories = textInput(roots, `repositories-${index}`, text.repositories.replace("{name}", folder.name), text.repositoriesHint);
+    if (document.activeElement !== repositories) repositories.value = declared.map(item => item.path).join(", ");
+    repositories.addEventListener("change", () => {
+      const paths = [...new Set(repositories.value.split(",").map(item => item.trim().replace(/\/+$/, "")).filter(Boolean))];
+      const value = paths.map(path => declared.find(item => item.path === path) ?? { path });
+      send({ action: "setting", key: "repositories", folder: folder.id, value }, text.saving);
+    });
   });
   document.querySelectorAll(".kv-slot-settings [data-setting],.kv-slot-settings input,[data-action]").forEach(element => {
     const action = element.dataset.action;

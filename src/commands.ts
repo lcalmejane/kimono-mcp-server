@@ -1,4 +1,7 @@
 #!/usr/bin/env node
+import { loadCorpusConfig } from './corpus-config.js';
+import { readProjectPolicy } from './project-policy.js';
+import { declaredRepositories } from './repositories.js';
 import { AikidoKnowledgeBase } from './knowledge.js';
 import { startHttpServer, startStdioServer } from './server.js';
 import { AIKIDO_REPOSITORY, installAikido } from './repository.js';
@@ -31,7 +34,16 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
 
   const root = options.get('root') ?? process.env.AIKIDO_ROOT;
   if (!root) throw new Error('Set AIKIDO_ROOT or provide --root <path> to a project (RAG by default; --corpus-mode aikido for AI-KIDO).');
-  const knowledge = new AikidoKnowledgeBase(root);
+  // Repositories declared in the project policy (beside its gitUrl) are indexed like those of the corpus config.
+  const baseConfig = loadCorpusConfig();
+  // An invalid policy never blocks startup (aikido_git infos reports it), but its repositories are then ignored: say so.
+  const policy = await readProjectPolicy(root).catch((error: unknown) => {
+    console.error(`Kimono project policy ignored at startup (repositories not applied): ${error instanceof Error ? error.message : String(error)}`);
+    return null;
+  });
+  const repositories = declaredRepositories(baseConfig, policy);
+  const knowledge = new AikidoKnowledgeBase(root, false, repositories.length === baseConfig.repositories.length
+    ? baseConfig : Object.freeze({ ...baseConfig, repositories: Object.freeze(repositories) }));
   if (command === 'infos' || command === 'sync') {
     await knowledge.initialize();
     const boolean = (name: string) => {

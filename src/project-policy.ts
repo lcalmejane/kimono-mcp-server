@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { lstat, mkdir, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { parseRepositories, type DeclaredRepository } from './repositories.js';
 
 export interface ProjectPolicy {
   projectId?: string;
@@ -9,6 +10,8 @@ export interface ProjectPolicy {
   gitPolicy?: unknown;
   gitPushAllowed?: boolean;
   execution?: string;
+  /** Git repositories of the project and their ROOT-relative paths ('' = ROOT). */
+  repositories?: DeclaredRepository[];
 }
 
 export interface RetargetMetadata {
@@ -93,6 +96,7 @@ export async function readProjectPolicy(root: string): Promise<ProjectPolicy | n
     if (typeof raw.gitPushAllowed !== 'boolean') throw new Error('gitPushAllowed must be boolean');
     policy.gitPushAllowed = raw.gitPushAllowed;
   }
+  if (raw.repositories !== undefined) policy.repositories = parseRepositories(raw.repositories);
   if (raw.execution !== undefined) {
     if (typeof raw.execution !== 'string' || raw.execution.length > 64) throw new Error('Invalid execution policy');
     policy.execution = raw.execution;

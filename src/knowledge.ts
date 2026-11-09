@@ -1,3 +1,4 @@
+import { isRepositoryRoot } from './repositories.js';
 import type { Dirent } from 'node:fs';
 import { lstat, open, readdir, readFile, realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
@@ -270,7 +271,8 @@ export class AikidoKnowledgeBase {
       if (this.hidden(child, relativePath, rules)) continue;
       if (child.isDirectory()) {
         if (this.skippedDirectory(child, relativePath, dotnetProject)) continue;
-        for (const entry of await this.scanDirectory(realRoot, relativePath, rules, scopes)) result.push(entry);
+        const childRules = isRepositoryRoot(relativePath, this.config.repositories) ? [] : rules;
+        for (const entry of await this.scanDirectory(realRoot, relativePath, childRules, scopes)) result.push(entry);
       } else if (child.isFile() && (this.acceptsFile(relativePath) || this.config.mode === 'rag')) {
         if (!within(relativePath, scopes)) continue;
         if (this.config.include.length && !this.config.include.some(pattern => path.posix.matchesGlob(relativePath, pattern))) continue;
@@ -298,8 +300,10 @@ export class AikidoKnowledgeBase {
   private hidden(child: Dirent, relativePath: string, rules: Array<{ base: string; rules: Ignore }>): boolean {
     if (child.name.startsWith('.env') || /(?:\.log|\.tmp|\.sw[po]|~)$/.test(child.name)) return true;
     if (isSensitiveKnowledgePath(relativePath)) return true;
+    // A declared nested Git repository is independent: the parent's ignore rules never hide it.
+    const declaredRepository = child.isDirectory() && isRepositoryRoot(relativePath, this.config.repositories);
     let ignored = false;
-    for (const layer of rules) {
+    for (const layer of declaredRepository ? [] : rules) {
       const local = relativePath.slice(layer.base ? layer.base.length + 1 : 0) + (child.isDirectory() ? '/' : '');
       const decision = layer.rules.test(local);
       if (decision.ignored) ignored = true;
@@ -350,7 +354,8 @@ export class AikidoKnowledgeBase {
       if (this.hidden(child, relativePath, rules)) continue;
       if (child.isDirectory()) {
         if (this.skippedDirectory(child, relativePath, dotnetProject)) continue;
-        await this.walkVisible(realRoot, relativePath, rules, scopes, entries, result);
+        await this.walkVisible(realRoot, relativePath,
+          isRepositoryRoot(relativePath, this.config.repositories) ? [] : rules, scopes, entries, result);
       } else if (child.isFile()) {
         if (!within(relativePath, scopes)) continue;
         if (this.config.include.length && !this.config.include.some(pattern => path.posix.matchesGlob(relativePath, pattern))) continue;

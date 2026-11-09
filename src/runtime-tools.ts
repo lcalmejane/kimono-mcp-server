@@ -2,7 +2,8 @@ import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import { lstat, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { AikidoKnowledgeBase } from './knowledge.js';
-import { RepositoryAccess } from './repository.js';
+import { nestedRepositoryStates, RepositoryAccess } from './repository.js';
+import { declaredRepositories } from './repositories.js';
 import { Retrieval, RETRIEVAL_PROPERTIES, READ_PROPERTIES, integer, selection } from './retrieval.js';
 import { synchronizationPaths } from './synchronization.js';
 import { indexInfos, sourceSnapshot } from './index-basis.js';
@@ -362,12 +363,12 @@ class RuntimeTools {
       if (mode !== 'literal' && mode !== 'regex' && mode !== 'text' && mode !== 'semantic' && mode !== 'hybrid') throw new Error('mode must be literal, regex, text, semantic or hybrid');
       if (input.regex === true && mode !== 'regex') throw new Error('regex=true conflicts with the requested search mode');
       if (input.enrich !== undefined && typeof input.enrich !== 'boolean') throw new Error('enrich must be boolean');
-      const filter = selection(input, this.knowledge.isMemoryRoot);
+      const filter = selection(input, this.knowledge.isMemoryRoot, this.knowledge.config.repositories);
       integer(input, 'contextLines', 2, 0, 20);
       integer(input, 'maxBytes', 16384, 2048, 262144);
       const cachedSearch = async (compute: () => Promise<SearchResult>): Promise<string> => {
         const key = JSON.stringify([mode, input.query, input.vector, input.embeddingModel, kind, limit,
-          input.enrich !== false, input.scope, input.pathPrefix, input.type, input.extension,
+          input.enrich !== false, input.scope, input.pathPrefix, input.repository, input.type, input.extension,
           mode === 'semantic' || mode === 'hybrid'
             ? [process.env.KIMONO_MODEL_DIR, process.env.KIMONO_CODE_PROFILE_ENABLED === 'true'
               ? process.env.KIMONO_CODE_MODEL_DIR : undefined] : undefined]);
@@ -410,7 +411,7 @@ class RuntimeTools {
       }
       return cachedSearch(async () => {
         await this.knowledge.refresh();
-        const scoped = ['scope', 'pathPrefix', 'type', 'extension'].some(key => input[key] !== undefined);
+        const scoped = ['scope', 'pathPrefix', 'repository', 'type', 'extension'].some(key => input[key] !== undefined);
         const results = await this.knowledge.searchIndex.search(query, kind, limit + 1, mode === 'regex', scoped ? filter : undefined);
         return { results, metadata: { engine: 'fast-grep' } };
       });
@@ -597,6 +598,7 @@ class RuntimeTools {
         || current.statusFingerprint !== repository.statusFingerprint) throw new Error('Repository changed while reading infos; retry');
     }
     const projectPolicy = await readProjectPolicy(this.knowledge.root);
+    const repositories = await nestedRepositoryStates(this.knowledge.root, declaredRepositories(this.knowledge.config, projectPolicy));
     const retarget = await readRetargetMetadata(this.knowledge.searchIndex.directory);
     const lastSyncedSource = await readRemoteSourceMetadata(this.knowledge.searchIndex.directory);
     const localChanges = repository.available ? null : await remoteSyncChanges(this.knowledge);
@@ -604,7 +606,7 @@ class RuntimeTools {
       ? repository.dirty === false
       : localChanges?.available === true && localChanges.changes.length === 0;
     const indexedSource = hasNoLocalChanges ? basis.indexedSource : null;
-    return { repository, ...basis,
+    return { repository, ...(repositories.length ? { repositories } : {}), ...basis,
       indexedSource,
       lastSyncedSource,
       localChanges,

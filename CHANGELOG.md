@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.9.7 - unreleased
+
+- Projects with several Git repositories: declare them in `repositories` (`path`, optional `name`, `gitUrl`, `branch`) in the corpus config or the project policy, beside `gitUrl`. A declared nested repository is indexed even when the parent `.gitignore` ignores it, under its own ignore rules only (independent sub-repositories such as `tatami-agent/` inside `tatami-core/`). Paths are ROOT-relative, unique, without traversal or globs; URLs are credential-free.
+- `aikido_search` accepts `repository` (declared name or path; `root` is ROOT minus its declared repositories).
+- `aikido_git infos` returns `repositories`: HEAD, branch, upstream and status of each declared repository; a missing one is reported `available:false`.
+- The index basis folds each declared repository's HEAD and status in, so a commit or edit inside it invalidates reuse like a change in ROOT.
+- `KIMONO_REPOSITORIES` (JSON array) adds host-provided declarations to the config file's list.
+- VS Code: new per-folder setting `kimono.repositories`, passed to the embedded server; the management panel edits the paths per folder and its search test gains a repository selector. `kimono.configFile` now mentions `repositories`.
+- Remote `sync` still clones ROOT only.
+
 ## 0.9.6 - 2026-11-07
 
 - New read-only tool `aikido_structure`: compact file tree of the caller's snapshot (staged overlay included), under the Kimono ignore rules, with a type and an `idx` (indexed or not) flag per file. It scopes to a `path`, limits `depth`, filters by `type`/`idx`, and answers `{unchanged:true}` when `since` matches the current `v`. Types come from a built-in table covering everything Kimono indexes plus common non-indexed files, overridable with `KIMONO_TYPES_FILE` (glob rules, optional `head` regex on the first 2 KB to tell apart documents sharing an extension).

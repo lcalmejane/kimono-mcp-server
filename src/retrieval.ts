@@ -1,8 +1,10 @@
 import path from 'node:path';
+import { inRepository, resolveRepository, type DeclaredRepository } from './repositories.js';
 import { AikidoKnowledgeBase, fileId, type KnowledgeEntry, type SearchMatch } from './knowledge.js';
 
 export const RETRIEVAL_PROPERTIES = {
   pathPrefix: { type: 'string', description: 'ROOT-relative file/subtree, no glob.' },
+  repository: { type: 'string', description: 'Declared repo name/path.' },
   scope: { type: 'string', enum: ['all', 'memory', 'code'], default: 'all' },
   type: { type: 'string', enum: ['agent', 'concept', 'technique', 'use_case', 'hard_point', 'markdown', 'script', 'config', 'file'] },
   extension: { type: 'string', description: 'Without dot.' },
@@ -58,7 +60,9 @@ export function structureType(file: string): string {
   return 'file';
 }
 
-export function selection(input: Record<string, unknown>, memoryRoot = false): (entry: KnowledgeEntry) => boolean {
+export function selection(input: Record<string, unknown>, memoryRoot = false,
+  repositories: readonly DeclaredRepository[] = []): (entry: KnowledgeEntry) => boolean {
+  const repository = input.repository === undefined ? undefined : resolveRepository(input.repository, repositories);
   const prefix = optionalText(input, 'pathPrefix')?.replace(/\/$/, '');
   if (prefix !== undefined && (prefix.startsWith('/') || prefix.includes('\\') ||
     prefix.split('/').some(part => !part || part === '.' || part === '..'))) throw new Error('pathPrefix must be a ROOT-relative file or directory');
@@ -71,6 +75,7 @@ export function selection(input: Record<string, unknown>, memoryRoot = false): (
   return entry => {
     const memory = memoryRoot || entry.path.startsWith('prompts/') || entry.path === 'index.md';
     return (!prefix || entry.path === prefix || entry.path.startsWith(`${prefix}/`)) &&
+      (!repository || inRepository(entry.path, repository, repositories)) &&
       (scope === 'all' || (scope === 'memory' ? memory : !memory)) &&
       (!type || structureType(entry.path) === type) &&
       (!extension || path.posix.extname(entry.path).slice(1).toLowerCase() === extension.toLowerCase());
@@ -189,7 +194,7 @@ export class Retrieval {
     const maxBytes = integer(input, 'maxBytes', 16384, 2048, 262144);
     const query = optionalText(input, 'query');
     await this.knowledge.refresh();
-    const filter = selection(input, this.knowledge.isMemoryRoot);
+    const filter = selection(input, this.knowledge.isMemoryRoot, this.knowledge.config.repositories);
     const entries = this.knowledge.list(kind, query).filter(filter);
     const output: { count: number; total: number; offset: number; nextOffset: number | null; truncated: boolean; entries: unknown[] } =
       { count: 0, total: entries.length, offset, nextOffset: null, truncated: false, entries: [] };

@@ -21,7 +21,7 @@
       searchTitle: "Test a search",
       searchIntro: "Query Kimono exactly as an agent would. All modes share one snapshot; latency is measured from {origin}. Nothing in your project is modified.",
       searchNote: "Enriched text splits phrases and uses the repository glossaries; exact text keeps the whole phrase. While the semantic index is being built, text search stays available and semantic search reports its state.",
-      folder: "Folder", modes: "Modes", limit: "Results per mode", kind: "Knowledge type", query: "Query",
+      folder: "Folder", modes: "Modes", limit: "Results per mode", kind: "Knowledge type", repository: "Repository", allRepositories: "All repositories", rootRepository: "ROOT only", query: "Query",
       expected: "Expected documents", expectedHint: "(optional, comma-separated paths; folders end with /)", run: "Run search", searching: "Searching…",
       modeOptions: { "text+semantic": "Text and semantic (compare)", hybrid: "Hybrid", text: "Enriched text", literal: "Exact text",
         regex: "Regular expression", semantic: "Semantic", "literal+text+semantic": "All three" },
@@ -48,7 +48,7 @@
       searchTitle: "Tester une recherche",
       searchIntro: "Interrogez Kimono exactement comme un agent. Tous les modes partagent un même snapshot ; la latence est mesurée depuis {origin}. Aucun fichier du projet n'est modifié.",
       searchNote: "Le texte enrichi décompose les phrases et utilise les glossaires du dépôt ; le texte exact conserve la phrase entière. Pendant la construction de l'index sémantique, le texte reste disponible et la recherche sémantique indique son état.",
-      folder: "Dossier", modes: "Modes", limit: "Résultats par mode", kind: "Type de connaissance", query: "Requête",
+      folder: "Dossier", modes: "Modes", limit: "Résultats par mode", kind: "Type de connaissance", repository: "Dépôt", allRepositories: "Tous les dépôts", rootRepository: "ROOT seul", query: "Requête",
       expected: "Documents attendus", expectedHint: "(facultatif : chemins séparés par des virgules, dossier terminé par /)", run: "Lancer la recherche", searching: "Recherche en cours…",
       modeOptions: { "text+semantic": "Texte et sémantique (comparer)", hybrid: "Hybride", text: "Texte enrichi", literal: "Texte exact",
         regex: "Expression régulière", semantic: "Sémantique", "literal+text+semantic": "Les trois modes" },
@@ -372,6 +372,21 @@
     const kind = labelled(grid, `${prefix}-search-kind`, t("kind"), document.createElement("select"));
     for (const [value, label] of Object.entries(t.table.kinds)) option(value, label, kind);
     const kindLabel = kind.parentElement;
+    // Declared nested Git repositories of the selected folder (kimono.repositories); hidden when none.
+    const repository = labelled(grid, `${prefix}-search-repository`, t("repository"), document.createElement("select"));
+    const repositoryLabel = repository.parentElement;
+    repositoryLabel.hidden = true;
+    let folderChoices = [];
+    function fillRepositories() {
+      const declared = folderChoices.find(choice => choice.id === folderSelect.value)?.repositories ?? folderChoices[0]?.repositories ?? [];
+      const previous = repository.value;
+      repository.replaceChildren(option("", t("allRepositories")), option("root", t("rootRepository")),
+        ...declared.map(item => option(item.name ?? item.path, item.name ? `${item.name} · ${item.path}` : item.path)));
+      if ([...repository.options].some(item => item.value === previous)) repository.value = previous;
+      repositoryLabel.hidden = declared.length === 0;
+      if (!declared.length) repository.value = "";
+    }
+    folderSelect.addEventListener("change", fillRepositories);
     const query = labelled(form, `${prefix}-search-query`, t("query"), document.createElement("input"));
     Object.assign(query, { type: "search", required: true, maxLength: 8192, autocomplete: "off" });
     const expected = labelled(form, `${prefix}-search-expected`, t("expected"), document.createElement("input"), t("expectedHint"));
@@ -384,13 +399,15 @@
     const output = node("div", undefined, searchCard, "kv-output");
     output.setAttribute("role", "status");
     output.setAttribute("aria-live", "polite");
-    const searchControls = [folderSelect, modes, limit, kind, query, expected, run];
+    const searchControls = [folderSelect, modes, limit, kind, repository, query, expected, run];
 
     function configureSearch({ folders: choices = [], kinds = false, available = true, reason } = {}) {
       const previous = folderSelect.value;
       folderSelect.replaceChildren(...choices.map(choice => option(choice.id, choice.name)));
       if (choices.some(choice => choice.id === previous)) folderSelect.value = previous;
       folderLabel.hidden = choices.length < 2;
+      folderChoices = choices;
+      fillRepositories();
       kindLabel.hidden = !kinds;
       if (!kinds) kind.value = "";
       for (const control of searchControls) control.dataset.kvLocked = String(!available);
@@ -405,7 +422,8 @@
       const values = expected.value.split(/[\n,]/).map(value => value.trim()).filter(Boolean);
       output.replaceChildren(node("p", t("searching"), undefined, "kv-muted"));
       handlers.search({ folder: folderSelect.value || undefined, input: { query: query.value, modes: modes.value.split("+"),
-        limit: Number(limit.value), ...(kind.value ? { kind: kind.value } : {}), expected: values } });
+        limit: Number(limit.value), ...(kind.value ? { kind: kind.value } : {}),
+        ...(repository.value ? { repository: repository.value } : {}), expected: values } });
     });
 
     const modeLabel = mode => t.table.modeLabels[mode] ?? mode;

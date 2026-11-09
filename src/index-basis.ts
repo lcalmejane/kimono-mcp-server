@@ -3,7 +3,7 @@ import { mkdir, open, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { hostname } from 'node:os';
 import path from 'node:path';
 import { AikidoKnowledgeBase } from './knowledge.js';
-import { RepositoryAccess } from './repository.js';
+import { nestedRepositoryStates, RepositoryAccess } from './repository.js';
 import { readRemoteSourceMetadata } from './project-policy.js';
 import { within } from './synchronization.js';
 
@@ -54,8 +54,21 @@ export async function sourceSnapshot(
   paths?: string[],
   previous?: Snapshot,
 ): Promise<Snapshot> {
-  const state = await new RepositoryAccess(knowledge.root).infos().catch(() => null);
-  const configFingerprint = createHash('sha256').update(JSON.stringify(knowledge.config)).digest('hex');
+  const rootState = await new RepositoryAccess(knowledge.root).infos().catch(() => null);
+  // Declared nested repositories have their own HEAD and status: fold them into the basis so a
+  // commit or edit inside one invalidates reuse exactly like a change in the ROOT repository.
+  const nested = await nestedRepositoryStates(knowledge.root, knowledge.config.repositories);
+  const state = rootState && {
+    ...rootState,
+    dirty: rootState.dirty || nested.some(repository => repository.dirty !== false),
+    dirtyFiles: [...rootState.dirtyFiles, ...nested.flatMap(repository => repository.dirtyFiles)],
+    statusFingerprint: nested.length ? createHash('sha256')
+      .update(JSON.stringify([rootState.statusFingerprint, ...nested.map(repository => repository.statusFingerprint)])).digest('hex')
+      : rootState.statusFingerprint,
+  };
+  const configFingerprint = createHash('sha256').update(JSON.stringify(knowledge.config))
+    .update(nested.length ? JSON.stringify(nested.map(repository => [repository.path, repository.head, repository.branch])) : '')
+    .digest('hex');
   if (!paths && state && !state.dirty && previous?.dirty === false
     && previous.basisFingerprint && validDocumentFingerprints(previous.documentFingerprints)
     && previous.head === state.head && previous.branch === state.branch

@@ -221,6 +221,22 @@ test("embedded provider can explicitly select AI-KIDO instead of default RAG", a
   }
 });
 
+test("embedded provider passes per-folder nested Git repositories to the server", async () => {
+  const { state, context } = fixture();
+  state.folderSettings = { [process.cwd()]: { repositories: [{ path: "tatami-agent", name: "agent" }] } };
+  const [server] = await state.provider.provideMcpServerDefinitions();
+  try {
+    assert.deepEqual(JSON.parse(server.env.KIMONO_REPOSITORIES), [{ path: "tatami-agent", name: "agent" }]);
+    state.folderSettings = { [process.cwd()]: { repositories: [] } };
+    const [plain] = await state.provider.provideMcpServerDefinitions();
+    assert.equal(plain.env.KIMONO_REPOSITORIES, undefined);
+    state.folderSettings = { [process.cwd()]: { repositories: ["tatami-agent"] } };
+    await assert.rejects(() => state.provider.provideMcpServerDefinitions(), /repositories must be an array/);
+  } finally {
+    await fs.rm(context.globalStorageUri.fsPath, { recursive: true, force: true });
+  }
+});
+
 test("cancelled discovery does not expose an unresolved embedded launch", async () => {
   const { state } = fixture();
   assert.deepEqual(await state.provider.provideMcpServerDefinitions({ isCancellationRequested: true }), []);

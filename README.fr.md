@@ -302,6 +302,31 @@ le corpus est limité à 100 000 fichiers et 512 Mio, avec une taille maximale d
 4 Mio par fichier en mode RAG. Voir le [guide de configuration RAG](docs/local-rag.fr.md)
 pour les paramètres et limites.
 
+### Projets avec plusieurs dépôts Git
+
+Un projet peut contenir des dépôts Git indépendants dans ROOT (par exemple un
+frontend ou un serveur MCP versionnés à part). Si le `.gitignore` de ROOT les
+ignore, Kimono les saute, comme Git. Déclarez-les dans `repositories`, dans la
+configuration du corpus ou dans la politique projet
+(`KIMONO_PROJECT_POLICY_FILE`, à côté de `gitUrl`) :
+
+```json
+{
+  "repositories": [
+    { "path": "", "gitUrl": "https://github.com/acme/platform.git" },
+    { "path": "web-agent", "name": "agent", "gitUrl": "https://github.com/acme/agent.git", "branch": "main" },
+    { "path": "mcp-server" }
+  ]
+}
+```
+
+- `path` est relatif à ROOT (`""` désigne ROOT). `name` vaut par défaut le dernier segment du chemin (`root` pour ROOT).
+- Un dépôt déclaré est indexé même si le parent l'ignore, avec ses seuls fichiers `.gitignore`.
+- `aikido_search` accepte `repository` (nom ou chemin) ; `root` désigne ROOT sans ses dépôts déclarés.
+- `aikido_git infos` donne le HEAD, la branche et l'état de chaque dépôt déclaré. Un commit ou une modification dans l'un d'eux invalide la base d'index comme un changement dans ROOT.
+- L'hôte peut aussi passer la liste en JSON dans `KIMONO_REPOSITORIES` (ajoutée à celle du fichier). Dans VS Code, réglez `kimono.repositories` par dossier, ou saisissez les chemins dans le panneau de gestion.
+- Le `gitUrl` unique de la politique décrit toujours ROOT. Le `sync` distant clone encore ROOT seul.
+
 ## Mode AI-KIDO en option
 
 Kimono peut aussi rechercher dans une base de connaissances AI-KIDO existante

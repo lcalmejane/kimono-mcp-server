@@ -28,7 +28,9 @@ function parseSearchBench(input) {
       !expected.every(value => typeof value === "string" && cleanPath(value) && value.length <= 512)) {
     throw new Error("Invalid expected documents: 20 paths maximum.");
   }
-  return { query, modes, limit, kind: input.kind, expected: [...new Set(expected.map(cleanPath))] };
+  if (input.repository !== undefined && (typeof input.repository !== "string" || !input.repository
+    || input.repository.length > 512 || /[\0\r\n]/.test(input.repository))) throw new Error("Invalid repository.");
+  return { query, modes, limit, kind: input.kind, repository: input.repository, expected: [...new Set(expected.map(cleanPath))] };
 }
 
 function hits(value) {
@@ -101,7 +103,8 @@ async function runSearchBench(call, raw) {
       const started = performance.now();
       try {
         const value = await call("aikido_search", { snapshotId: snapshot.snapshotId, query: input.query, mode,
-          detail: "compact", limit: input.limit, maxBytes: 131072, ...(input.kind ? { kind: input.kind } : {}) });
+          detail: "compact", limit: input.limit, maxBytes: 131072, ...(input.kind ? { kind: input.kind } : {}),
+          ...(input.repository ? { repository: input.repository } : {}) });
         const ms = round(performance.now() - started, 1);
         if (value.status === "not-ready" || value.status === "error") return {
           mode, ok: false, ms, status: value.status, error: String(value.error ?? value.status),
@@ -126,7 +129,7 @@ async function runSearchBench(call, raw) {
       console.error("Kimono search snapshot cleanup failed", error instanceof Error ? error.message : String(error));
     });
   }
-  return { query: input.query, limit: input.limit, kind: input.kind ?? null, expected: input.expected,
+  return { query: input.query, limit: input.limit, kind: input.kind ?? null, repository: input.repository ?? null, expected: input.expected,
     snapshot: { version: snapshot.version ?? null, documents: snapshot.documents ?? null, capturedAt: snapshot.capturedAt ?? null },
     runs, comparison: compareRuns(runs, input.limit, input.expected) };
 }
