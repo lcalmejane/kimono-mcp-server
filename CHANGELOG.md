@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.9.7 - unreleased
+## 0.9.7 - 2026-11-09
 
 - Projects with several Git repositories: declare them in `repositories` (`path`, optional `name`, `gitUrl`, `branch`) in the corpus config or the project policy, beside `gitUrl`. A declared nested repository is indexed even when the parent `.gitignore` ignores it, under its own ignore rules only (independent sub-repositories such as `tatami-agent/` inside `tatami-core/`). Paths are ROOT-relative, unique, without traversal or globs; URLs are credential-free.
 - `aikido_search` accepts `repository` (declared name or path; `root` is ROOT minus its declared repositories).
