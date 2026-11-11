@@ -12,8 +12,7 @@ import { semanticWorkerEnabled, semanticWorkerFor, semanticWorkerStatus, shutdow
 import {
   EMBEDDING_CATALOGUE, assertEmbeddingMemory, configuredEmbeddingPolicy, corpusComposition, downloadProgress, embeddingPolicy,
   installEmbeddingModel, isCodeSource, modelInstalled, readEmbeddingSettings, resolveEmbedding,
-  saveEmbeddingSettings, type EmbeddingPolicy, type EmbeddingSelection, type ModelDownload,
-} from './embedding-models.js';
+  saveEmbeddingSettings, type EmbeddingPolicy, type EmbeddingSelection, type ModelDownload, configuredCustomEmbedding, customEmbedding } from './embedding-models.js';
 
 export interface SemanticRuntime {
   executionProvider: 'cpu' | 'cuda' | 'coreml';
@@ -168,7 +167,7 @@ export class SemanticIndex {
     } catch (error) {
       if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
     }
-    const selection = resolveEmbedding(this.knowledge, policy);
+    const selection = resolveEmbedding(this.knowledge, policy, saved?.custom);
     for (const profile of selection.profiles) {
       if (!await modelInstalled(this.knowledge.root, profile.model)) {
         throw new Error(`Embedding model ${profile.model} requires a confirmed download; no fallback was selected.`);
@@ -182,7 +181,7 @@ export class SemanticIndex {
     const active = this.knowledge.immutable ? this.snapshotSelection : saved?.active;
     if (active && !this.state.embedding) this.knownEmbedding = embeddingOf(active, 'done');
     const requestedPolicy = saved?.requestedPolicy ?? configuredEmbeddingPolicy();
-    const resolved = resolveEmbedding(this.knowledge, requestedPolicy);
+    const resolved = resolveEmbedding(this.knowledge, requestedPolicy, saved?.custom);
     const models = await Promise.all(EMBEDDING_CATALOGUE.map(async ({ files: _files, ...model }) =>
       ({ ...model, installed: await modelInstalled(this.knowledge.root, model.id) })));
     const requiredModels = [...new Set(resolved.profiles.map(profile => profile.model))];
@@ -197,7 +196,7 @@ export class SemanticIndex {
       && (index.phase === 'running' || index.phase === 'waiting');
     const error = saved?.error ?? (index.phase === 'error' ? index.error : undefined);
     return {
-      requestedPolicy, activePolicy: active?.policy ?? (legacy ? 'e5' : null), reason: resolved.reason,
+      requestedPolicy, custom: saved?.custom ?? configuredCustomEmbedding(), activePolicy: active?.policy ?? (legacy ? 'e5' : null), reason: resolved.reason,
       corpus: corpusComposition(this.knowledge), requiredModels, missingModels, reconstructionRequired, models,
       downloads: downloadProgress(),
       profiles: (active ?? resolved).profiles.map(profile => ({
@@ -224,15 +223,23 @@ export class SemanticIndex {
     return { ...await this.models(), installing: !settled };
   }
 
-  async configureModels(policy: unknown, confirmed: unknown): Promise<Record<string, unknown>> {
+  async configureModels(policy: unknown, confirmed: unknown, customChoice?: unknown): Promise<Record<string, unknown>> {
     if (this.knowledge.immutable) throw new Error('Snapshot models are immutable.');
     if (confirmed !== true) throw new Error('Explicit confirmation is required to change models and rebuild the index.');
+    // A new policy supersedes the running index operation (a 50-minute build must not block a mode change):
+    // stop it, wait until it has released the queue, then apply the change.
     if (this.modelTransition || this.state.phase === 'running' || this.state.phase === 'waiting') {
-      throw new Error('Wait for the current index operation before changing the embedding policy.');
+      await this.cancel();
+      await Promise.race([this.pending.catch(() => undefined), new Promise<void>(resolve => { setTimeout(resolve, 60_000).unref(); })]);
+      if (this.modelTransition || this.state.phase === 'running' || this.state.phase === 'waiting') {
+        throw new Error('The current index operation could not be stopped (owned by another process?). Retry in a moment.');
+      }
     }
     const requestedPolicy = embeddingPolicy(policy);
+    if (customChoice !== undefined && requestedPolicy !== 'custom') throw new Error('Code and documents models apply only to the custom policy.');
+    const custom = requestedPolicy === 'custom' ? customChoice === undefined ? configuredCustomEmbedding() : customEmbedding(customChoice) : undefined;
     await this.knowledge.refresh();
-    const candidate = { ...resolveEmbedding(this.knowledge, requestedPolicy), generation: randomUUID() };
+    const candidate = { ...resolveEmbedding(this.knowledge, requestedPolicy, custom), generation: randomUUID() };
     assertEmbeddingMemory(candidate);
     await mkdir(this.knowledge.searchIndex.directory, { recursive: true, mode: 0o700 });
     const lockPath = path.join(this.knowledge.searchIndex.directory, 'embedding-settings.lock');
@@ -244,7 +251,7 @@ export class SemanticIndex {
     let active: EmbeddingSelection | undefined;
     try { active = await this.activeSelection(); }
     catch (error) { await release(); throw error; }
-    const settings = { version: 1 as const, requestedPolicy, ...(active ? { active } : {}) };
+    const settings = { version: 1 as const, requestedPolicy, ...(custom ? { custom } : {}), ...(active ? { active } : {}) };
     try {
       await saveEmbeddingSettings(this.knowledge, settings);
       for (const profile of candidate.profiles) {
@@ -256,7 +263,8 @@ export class SemanticIndex {
     this.update({ ...this.state, phase: 'running', operation: 'rebuild', stage: 'model_transition', startedAt });
     const transition = this.pending.then(async () => {
       try {
-        await this.performManaged('rebuild', candidate);
+        // Cancellable, so that a later policy change or a server shutdown can stop this rebuild.
+        await this.cancellable(() => this.performManaged('rebuild', candidate));
         await saveEmbeddingSettings(this.knowledge, { ...settings, active: candidate });
       } catch (error) {
         await this.removeFailedGeneration(candidate);
@@ -328,7 +336,7 @@ export class SemanticIndex {
     const pending = `${file}.${randomUUID()}.pending`;
     try {
       mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
-      writeFileSync(pending, JSON.stringify({ ...this.state, worker, source: undefined, pid: process.pid, host: hostname() }), { mode: 0o600 });
+      writeFileSync(pending, JSON.stringify({ ...this.state, worker, repositories: this.knowledge.repositoryCounts, source: undefined, pid: process.pid, host: hostname() }), { mode: 0o600 });
       renameSync(pending, file);
     } catch (error) {
       try { rmSync(pending, { force: true }); }
@@ -386,7 +394,7 @@ export class SemanticIndex {
       }
       const settings = await readEmbeddingSettings(this.knowledge);
       // The chosen policy survives; only the built generation is forgotten so the next build starts clean.
-      if (settings?.active || settings?.error) await saveEmbeddingSettings(this.knowledge, { version: 1, requestedPolicy: settings.requestedPolicy });
+      if (settings?.active || settings?.error) await saveEmbeddingSettings(this.knowledge, { version: 1, requestedPolicy: settings.requestedPolicy, ...(settings.custom ? { custom: settings.custom } : {}) });
       rmSync(this.statusFile, { force: true });
       this.knownEmbedding = undefined;
       this.state = { phase: 'unknown', stage: 'reset' };
@@ -423,7 +431,7 @@ export class SemanticIndex {
             }
           }
           const policy = settings?.requestedPolicy ?? configuredEmbeddingPolicy();
-          const desired = resolveEmbedding(this.knowledge, policy);
+          const desired = resolveEmbedding(this.knowledge, policy, settings?.custom);
           for (const profile of desired.profiles) {
             if (!await modelInstalled(this.knowledge.root, profile.model)) {
               throw new Error(`Embedding model ${profile.model} requires an explicitly confirmed download. Open Kimono model settings; lexical search remains available.`);
@@ -442,7 +450,7 @@ export class SemanticIndex {
             if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
           }
           await this.performManaged(operation, desired);
-          await saveEmbeddingSettings(this.knowledge, { version: 1, requestedPolicy: policy, active: desired });
+          await saveEmbeddingSettings(this.knowledge, { version: 1, requestedPolicy: policy, ...(settings?.custom ? { custom: settings.custom } : {}), active: desired });
           return;
         }
         const info = operation === 'update' ? await indexInfos(this.knowledge) : undefined;
@@ -484,15 +492,21 @@ export class SemanticIndex {
     });
   }
 
-  async seedFrom(source: SemanticIndex, fingerprint: string): Promise<boolean> {
+  /**
+   * Seeds a snapshot from the live index when both describe the same corpus. The corpus fingerprint is null after
+   * an incremental update of a dirty tree (only changed documents are reread), so the per-document basis is accepted too.
+   */
+  async seedFrom(source: SemanticIndex, fingerprint: string, basis?: string): Promise<boolean> {
     this.snapshotSelection = await source.activeSelection();
     const status = source.status();
     const retained = status.phase === 'error' && status.operation === 'rebuild' && Boolean(this.snapshotSelection);
     if (status.phase !== 'ready' && !retained) return false;
+    const basisVersion = basis;
     const copy = source.pending.then(async () => {
       const basis: unknown = JSON.parse(await readFile(path.join(source.knowledge.searchIndex.directory, 'semantic-basis.json'), 'utf8'));
       if (!record(basis) || basis.phase !== 'ready' && !retained || !record(basis.lastSuccessful)
-        || basis.lastSuccessful.corpusFingerprint !== fingerprint) return false;
+        || basis.lastSuccessful.corpusFingerprint !== fingerprint
+          && !(basisVersion && basis.lastSuccessful.basisFingerprint === basisVersion)) return false;
       const directories = this.snapshotSelection
         ? this.snapshotSelection.profiles.map(profile => path.join('semantic-models', this.snapshotSelection!.signature,
           this.snapshotSelection!.generation ?? 'initial', profile.id))
@@ -575,7 +589,8 @@ export class SemanticIndex {
         : await this.performProfiles(operation, options);
       if (selection && !this.knowledge.immutable && operation !== 'search' && operation !== 'stats'
         && !options.syncPaths && !await this.activeSelection()) {
-        await saveEmbeddingSettings(this.knowledge, { version: 1, requestedPolicy: selection.policy, active: selection });
+        const custom = (await readEmbeddingSettings(this.knowledge))?.custom;
+        await saveEmbeddingSettings(this.knowledge, { version: 1, requestedPolicy: selection.policy, ...(custom ? { custom } : {}), active: selection });
       }
       return result;
     }));
@@ -594,7 +609,7 @@ export class SemanticIndex {
     try {
       const result = await this.performManaged('rebuild', candidate, options);
       const saved = await readEmbeddingSettings(this.knowledge);
-      await saveEmbeddingSettings(this.knowledge, { version: 1, requestedPolicy: saved?.requestedPolicy ?? selection.policy, active: candidate });
+      await saveEmbeddingSettings(this.knowledge, { version: 1, requestedPolicy: saved?.requestedPolicy ?? selection.policy, ...(saved?.custom ? { custom: saved.custom } : {}), active: candidate });
       return result;
     } catch (error) {
       await this.removeFailedGeneration(candidate);

@@ -5,6 +5,12 @@ import { AikidoKnowledgeBase } from '../src/knowledge.js';
 import { corpusConfig } from '../src/corpus-config.js';
 import { runtimeFor } from '../src/runtime-tools.js';
 import { shutdownSemanticWorkers } from '../src/semantic-worker.js';
+import { embeddedNativeEnvironment } from './native-env.js';
+
+// Real-engine tests: the embedded engine is loaded automatically when installed, otherwise they skip.
+const native = await embeddedNativeEnvironment();
+const nativeIt = it.skipIf(!native);
+function useNative(): void { for (const [key, value] of Object.entries(native ?? {})) vi.stubEnv(key, value); }
 
 const scratch: string[] = [];
 afterEach(async () => {
@@ -12,7 +18,8 @@ afterEach(async () => {
   await Promise.all(scratch.splice(0).map(directory => rm(directory, { recursive: true, force: true })));
 });
 
-it('vectorizes and searches PHP, Markdown and plain text with the persistent native worker', async () => {
+nativeIt('vectorizes and searches PHP, Markdown and plain text with the persistent native worker', async () => {
+  useNative();
   const parent = await mkdtemp(path.join(process.cwd(), '.local-runtime-rag-content-'));
   scratch.push(parent);
   vi.stubEnv('KIMONO_CACHE_DIR', path.join(parent, 'cache'));
@@ -45,7 +52,8 @@ it('vectorizes and searches PHP, Markdown and plain text with the persistent nat
   } finally { await shutdownSemanticWorkers(); }
 }, 60_000);
 
-it('packs small code definitions without dropping source and reuses the resulting native index', async () => {
+nativeIt('packs small code definitions without dropping source and reuses the resulting native index', async () => {
+  useNative();
   const parent = await mkdtemp(path.join(process.cwd(), '.local-runtime-rag-packing-'));
   scratch.push(parent);
   vi.stubEnv('KIMONO_CACHE_DIR', path.join(parent, 'cache'));
@@ -84,7 +92,8 @@ it('packs small code definitions without dropping source and reuses the resultin
   } finally { await shutdownSemanticWorkers(); }
 }, 60_000);
 
-it('searches native lexical and semantic generic code, including scoped snapshots without AI-KIDO entry points', async () => {
+nativeIt('searches native lexical and semantic generic code, including scoped snapshots without AI-KIDO entry points', async () => {
+  useNative();
   const parent = await mkdtemp(path.join(process.cwd(), '.local-runtime-rag-'));
   scratch.push(parent);
   vi.stubEnv('KIMONO_CACHE_DIR', path.join(parent, 'cache'));
@@ -132,7 +141,8 @@ it('searches native lexical and semantic generic code, including scoped snapshot
   } finally { await runtime.call('aikido_snapshot', { operation: 'end', snapshotId }); }
 }, 60_000);
 
-it('bounds native lexical command arguments across large file catalogues without losing later matching files', async () => {
+nativeIt('bounds native lexical command arguments across large file catalogues without losing later matching files', async () => {
+  useNative();
   const parent = await mkdtemp(path.join(process.cwd(), '.local-runtime-rag-batch-'));
   scratch.push(parent);
   vi.stubEnv('KIMONO_CACHE_DIR', path.join(parent, 'cache'));

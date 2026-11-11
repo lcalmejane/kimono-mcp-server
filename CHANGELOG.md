@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.9.9 - 2026-11-11
+
+- Snapshots: one snapshot per prompt by default (`KIMONO_SNAPSHOT_SCOPE=prompt`; VS Code `kimono.snapshotScope`). `begin` reuses the caller's live snapshot for the same user, `owner` and paths only while the corpus (and that owner's overlay) is unchanged (`reused: true`), so a new begin still sees every edit; `fresh: true` always captures. `end` releases (`retained: true`); a released snapshot closes once idle (`KIMONO_SNAPSHOT_IDLE_MS`, 120 s), one never ended after `KIMONO_SNAPSHOT_HELD_IDLE_MS`, all at shutdown; a replaced snapshot stays readable for its holders. Lifetime slides with use up to `KIMONO_SNAPSHOT_MAX_MS` (1 h). At the count or byte limit, released snapshots are evicted first. Behind a trusted proxy the `x-kimono-principal` header names the user (Tatami: one instance per project, per-user snapshots); `owner` keeps its overlay meaning. `session` keeps one per server session; `call` restores one per begin/end. Use cases to preserve: docs/retrieval.md.
+- Corpus accounting: every file Git keeps is indexed (excluded directories, temporary files and env templates as metadata only; files tracked despite .gitignore with content); `.git/info/exclude` is honoured; status reports indexed / Git files per repository with the reason for anything outside. Snapshots reuse the semantic index by per-document basis when the corpus fingerprint is unknown (dirty tree).
+- Embedding: `custom` policy picks one catalogue model for code files and one for documents (`aikido_models configure` with `custom: {code, documents}`; VS Code `kimono.embeddingCodeModel` / `kimono.embeddingDocumentsModel`; panel pickers in VS Code and Tatami). `auto-speed` is the default everywhere.
+- Embedding catalogue: Jina v2 base code, BGE-M3, Nomic Embed Text v1.5, mxbai-embed-large v1, multilingual E5 large and all-MiniLM-L6-v2 (int8 ONNX, pinned revision, size and SHA-256). Opt-in real test: `KIMONO_TEST_MODEL_DOWNLOADS=1`.
+- Engine: downloaded ONNX models get only the inputs their graph declares (XLM-R models have no `token_type_ids`); the bundled E5 keeps its original path.
+- Indexing: a new embedding policy stops the running index operation instead of refusing; server shutdown cancels indexing cleanly (locks released, previous generation kept).
+- Tree-sitter 0.27.2 (from 0.25.10). All 24 official grammars plus 169 compatible third-party grammars (174 more languages, one crate per C symbol, licences checked). Official grammars keep hand-written definition rules; third-party ones use a generic rule. JSON is split on top-level keys, JSDoc `@typedef`/`@callback`/`@interface` blocks are boundaries. GPL/LGPL grammars (`jq`, `toon`, `caddy`, `fsm`) are excluded from the MIT binary. Generated from `scripts/tree-sitter-grammars.json` by `scripts/generate-grammars.mjs`.
+- Status reports indexed files per repository.
+
+## 0.9.8 - 2026-11-11
+
+- VS Code: version-free launcher. Each activation writes `<globalStorage>/bin/kimono-mcp` (`kimono-mcp.cmd` on Windows) pointing at the running extension, so agent hosts (Claude Code `.mcp.json`, etc.) keep working across updates.
+- VS Code: existing Kimono entries of the workspace `.mcp.json` (versioned extension paths or the launcher) are migrated to the launcher on activation, install and update included; other servers are never touched. Setting `kimono.syncMcpJson` (default on).
+- VS Code: nested Git repositories under the ROOT (up to 3 levels, hidden folders and `node_modules` skipped; clones and submodules) are declared automatically, after `kimono.repositories`. Setting `kimono.discoverRepositories` (default on).
+- VS Code: **Autoconfig** command and panel button: saves the discovered repositories into `kimono.repositories` and writes or updates `.mcp.json`.
+
 ## 0.9.7 - 2026-11-09
 
 - Projects with several Git repositories: declare them in `repositories` (`path`, optional `name`, `gitUrl`, `branch`) in the corpus config or the project policy, beside `gitUrl`. A declared nested repository is indexed even when the parent `.gitignore` ignores it, under its own ignore rules only (independent sub-repositories such as `tatami-agent/` inside `tatami-core/`). Paths are ROOT-relative, unique, without traversal or globs; URLs are credential-free.

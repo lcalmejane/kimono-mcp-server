@@ -2,7 +2,7 @@
   "name": "kimono-rag-mcp",
   "displayName": "Kimono RAG MCP",
   "description": "Local RAG for code and documentation with lexical and semantic search over MCP.",
-  "version": "0.9.7",
+  "version": "0.9.9",
   "publisher": "ai-kido",
   "license": "MIT",
   "repository": {
@@ -45,7 +45,8 @@
     "server/**",
     "README.md",
     "LICENSE",
-    "THIRD_PARTY_NOTICES.md"
+    "THIRD_PARTY_NOTICES.md",
+    "host-config.cjs"
   ],
   "extensionKind": [
     "workspace"
@@ -121,6 +122,10 @@
       {
         "command": "kimono.clearToken",
         "title": "Kimono: Clear Remote Bearer Token"
+      },
+      {
+        "command": "kimono.autoconfig",
+        "title": "Kimono: Autoconfig (Repositories and .mcp.json)"
       }
     ],
     "configuration": {
@@ -139,15 +144,58 @@
         "kimono.embeddingPolicy": {
           "type": "string",
           "enum": [
-            "auto-balanced",
             "auto-speed",
+            "auto-balanced",
             "code",
             "multilingual-fast",
-            "e5"
+            "e5",
+            "custom"
           ],
-          "default": "auto-balanced",
+          "enumDescriptions": [
+            "Default. Static models: Potion code for code, Potion multilingual for documents.",
+            "Potion code for code, bundled multilingual E5 for documents.",
+            "Potion code for every file.",
+            "Potion multilingual for every file.",
+            "Bundled multilingual E5 for every file.",
+            "Your choice: kimono.embeddingCodeModel for code, kimono.embeddingDocumentsModel for documents."
+          ],
+          "default": "auto-speed",
           "scope": "machine",
           "description": "Initial embedded-server embedding policy only. The server's saved per-root policy takes precedence. Change active policy with confirmation in the Kimono panel. Remote servers ignore this local setting; downloads always require separate consent."
+        },
+        "kimono.embeddingCodeModel": {
+          "type": "string",
+          "enum": ["code","multilingual-fast","e5","jina-code","bge-m3","nomic-v1.5","mxbai-large","e5-large","minilm"],
+          "enumDescriptions": ["Potion code 16M (static, fastest)","Potion multilingual 128M (static, fast)","Multilingual E5 small (bundled)","Jina v2 base code (161M, 30 programming languages)","BGE-M3 (568M, 100+ languages, best quality)","Nomic Embed Text v1.5 (137M, English)","mxbai-embed-large v1 (335M, English)","Multilingual E5 large (560M, 100 languages)","all-MiniLM-L6-v2 (23M, English, smallest)"],
+          "default": "code",
+          "scope": "machine",
+          "markdownDescription": "Model for code files when `kimono.embeddingPolicy` is `custom` (initial value; the panel choice saved per ROOT takes precedence). Downloads need consent in the Kimono panel."
+        },
+        "kimono.embeddingDocumentsModel": {
+          "type": "string",
+          "enum": ["code","multilingual-fast","e5","jina-code","bge-m3","nomic-v1.5","mxbai-large","e5-large","minilm"],
+          "enumDescriptions": ["Potion code 16M (static, fastest)","Potion multilingual 128M (static, fast)","Multilingual E5 small (bundled)","Jina v2 base code (161M, 30 programming languages)","BGE-M3 (568M, 100+ languages, best quality)","Nomic Embed Text v1.5 (137M, English)","mxbai-embed-large v1 (335M, English)","Multilingual E5 large (560M, 100 languages)","all-MiniLM-L6-v2 (23M, English, smallest)"],
+          "default": "multilingual-fast",
+          "scope": "machine",
+          "markdownDescription": "Model for documents when `kimono.embeddingPolicy` is `custom` (initial value; the panel choice saved per ROOT takes precedence). Downloads need consent in the Kimono panel."
+        },
+        "kimono.snapshotScope": {
+          "type": "string",
+          "enum": ["prompt", "session", "call"],
+          "enumDescriptions": [
+            "Default. One snapshot per prompt: begin reuses your live snapshot while searches keep coming, so swarms and delegated agents share one corpus; it closes by itself once idle.",
+            "One snapshot for the whole server session (until its lifetime ends).",
+            "Legacy: every begin captures a new snapshot and every end closes it."
+          ],
+          "default": "prompt",
+          "markdownDescription": "How long one research snapshot serves you. In `prompt` and `session`, `end` only releases the snapshot; it is always closed once idle."
+        },
+        "kimono.snapshotIdleSeconds": {
+          "type": "integer",
+          "default": 120,
+          "minimum": 1,
+          "maximum": 3600,
+          "markdownDescription": "Prompt scope: idle time after which a released snapshot closes and the next begin captures a fresh one."
         },
         "kimono.semanticDevice": {
           "type": "string",
@@ -263,6 +311,17 @@
           "default": "",
           "scope": "machine",
           "description": "Optional absolute path to the current user's private 0600/0400 Git read-profile JSON outside the knowledge root. Never put secrets in settings."
+        },
+        "kimono.discoverRepositories": {
+          "type": "boolean",
+          "default": true,
+          "scope": "resource",
+          "markdownDescription": "Automatically declare the independent Git repositories found under the ROOT (up to 3 levels; `node_modules` and hidden folders skipped), in addition to `kimono.repositories`."
+        },
+        "kimono.syncMcpJson": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "On activation (install and update included), point the Kimono entries of the workspace `.mcp.json` at the version-free launcher and refresh their repositories. Other servers are never touched."
         }
       }
     }

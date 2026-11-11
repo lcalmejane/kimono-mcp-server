@@ -47,13 +47,14 @@ export const SEARCH_PROPERTIES = {
 export const RUNTIME_TOOLS: Tool[] = [
   {
     name: 'aikido_models',
-    description: 'Models: status, user-confirmed install/configure. ROOT unchanged.',
+    description: 'Models: status, confirmed install/configure (custom: {code,documents}). ROOT unchanged.',
     inputSchema: {
       type: 'object', additionalProperties: false, required: ['operation'],
       properties: {
         operation: { type: 'string', enum: ['status', 'install', 'configure'] },
-        model: { type: 'string', enum: ['code', 'multilingual-fast'] },
+        model: { type: 'string' },
         policy: { type: 'string', enum: [...EMBEDDING_POLICIES] },
+        custom: { type: 'object' },
         confirmed: { type: 'boolean' },
       },
     },
@@ -61,7 +62,7 @@ export const RUNTIME_TOOLS: Tool[] = [
   },
   {
     name: 'aikido_snapshot',
-    description: 'Begin/end an immutable snapshot; reuse snapshotId for search/read. TTL/budgets returned by begin.',
+    description: 'Begin/end snapshot; begin reuses yours unless fresh; give id to delegates.',
     inputSchema: {
       type: 'object', additionalProperties: false, required: ['operation'],
       properties: {
@@ -70,6 +71,7 @@ export const RUNTIME_TOOLS: Tool[] = [
         paths: { anyOf: [{ type: 'string', minLength: 1 }, { type: 'array', minItems: 1, maxItems: 256, items: { type: 'string', minLength: 1 } }],
           description: 'begin: ROOT-relative subtrees, no globs; omit for all.' },
         owner: { type: 'string', description: 'begin: merge this user overlay.' },
+        fresh: { type: 'boolean' },
       },
     },
     annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
@@ -263,7 +265,7 @@ class RuntimeTools {
         let availability: { error: string; index: unknown } | undefined;
         if (semantic && !snapshot.paths && snapshot.knowledge.semanticIndex.status().phase === 'unknown') {
           const source = this.knowledge.semanticIndex;
-          if (!await snapshot.knowledge.semanticIndex.seedFrom(source, snapshot.version)) {
+          if (!await snapshot.knowledge.semanticIndex.seedFrom(source, snapshot.version, snapshot.basisVersion)) {
             const status = source.status();
             if (status.phase !== 'unknown') {
               if (status.phase === 'ready') source.warmup();
@@ -301,11 +303,11 @@ class RuntimeTools {
     if (name === 'aikido_models') {
       const operation = input.operation;
       const allowed = operation === 'status' ? ['operation'] : operation === 'install'
-        ? ['operation', 'model', 'confirmed'] : operation === 'configure' ? ['operation', 'policy', 'confirmed'] : [];
+        ? ['operation', 'model', 'confirmed'] : operation === 'configure' ? ['operation', 'policy', 'confirmed', 'custom'] : [];
       if (!allowed.length || Object.keys(input).some(key => !allowed.includes(key))) throw new Error('Invalid model operation or parameters.');
       if (operation === 'status') return JSON.stringify(await this.knowledge.semanticIndex.models());
       if (operation === 'install') return JSON.stringify(await this.knowledge.semanticIndex.installModel(input.model, input.confirmed));
-      return JSON.stringify(await this.knowledge.semanticIndex.configureModels(input.policy, input.confirmed));
+      return JSON.stringify(await this.knowledge.semanticIndex.configureModels(input.policy, input.confirmed, input.custom));
     }
     if (this.knowledge.config.mode === 'rag' &&
       (name === 'aikido_collaboration' || name === 'aikido_git' && input.operation !== 'infos')) {
@@ -316,7 +318,8 @@ class RuntimeTools {
       const manager = snapshotsFor(this.knowledge);
       if (operation === 'begin') {
         if (input.snapshotId !== undefined) throw new Error('begin does not accept snapshotId');
-        return JSON.stringify(await manager.begin(synchronizationPaths(input.paths), text(input, 'owner', false)));
+        if (input.fresh !== undefined && typeof input.fresh !== 'boolean') throw new Error('fresh must be a boolean');
+        return JSON.stringify(await manager.begin(synchronizationPaths(input.paths), text(input, 'owner', false), input.fresh === true));
       }
       if (operation === 'end') {
         if (input.paths !== undefined) throw new Error('end does not accept paths');

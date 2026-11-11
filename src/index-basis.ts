@@ -33,7 +33,7 @@ export function corpusFingerprint(documents: Array<{ path: string; kind: string;
   return hash.digest('hex');
 }
 
-function basisFingerprint(documents: Record<string, string>): string {
+export function basisFingerprint(documents: Record<string, string>): string {
   const hash = createHash('sha256');
   for (const [file, digest] of Object.entries(documents).sort(([a], [b]) => a.localeCompare(b))) {
     hash.update(JSON.stringify([file, digest]));

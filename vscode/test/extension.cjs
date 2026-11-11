@@ -79,7 +79,7 @@ test("provider uses per-folder roots, bundled Node, and extension-owned registra
   assert.notEqual(servers[0].label, servers[1].label);
   assert.equal(servers[0].env.FGR_BIN, "/native/fgr");
   assert.equal(servers[0].env.KIMONO_CORPUS_MODE, "rag");
-  assert.equal(servers[0].env.KIMONO_EMBEDDING_POLICY, "auto-balanced");
+  assert.equal(servers[0].env.KIMONO_EMBEDDING_POLICY, "auto-speed");
   assert.ok(path.isAbsolute(servers[0].env.KIMONO_MODELS_DIR));
   assert.equal(servers[0].env.KIMONO_MODELS_DIR, servers[1].env.KIMONO_MODELS_DIR);
   assert.equal(servers[0].env.MCP_TRANSPORT, "stdio");

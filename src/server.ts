@@ -24,6 +24,7 @@ import { decorateSnapshotResult, RUNTIME_TOOLS, runtimeFor, SEARCH_PROPERTIES, s
 import { Lifecycle, shutdownSignals } from './lifecycle.js';
 import { Retrieval, RETRIEVAL_PROPERTIES, READ_PROPERTIES } from './retrieval.js';
 import { snapshotsFor, type KnowledgeSnapshot } from './snapshots.js';
+import { parsePrincipalHeader, withPrincipal } from './principal.js';
 import {
   currentGitProfileContext, parseGitProfileHeader, withGitProfileContext,
   type GitCredentialResolver,
@@ -271,6 +272,10 @@ export async function startStdioServer(knowledge: AikidoKnowledgeBase, options: 
   const server = createAikidoMcpServer(knowledge, lifecycle, options);
   await server.connect(new StdioServerTransport());
   const removeSignals = shutdownSignals(() => lifecycle.close(async () => {
+    // A restart (for example after a settings change) stops indexing cleanly: locks released, previous generation kept.
+    await knowledge.semanticIndex.cancel().catch(() => undefined);
+    // Shared snapshots never outlive the server.
+    await snapshotsFor(knowledge).closeAll().catch(() => undefined);
     // Let the SDK emit the response for the last completed tool call.
     await new Promise<void>((resolve) => setImmediate(resolve));
     await server.close();
@@ -311,6 +316,9 @@ export async function startHttpServer(
     httpServer.listen(options.port, options.host, resolve);
   });
   const close = () => lifecycle.close(async () => {
+    await knowledge.semanticIndex.cancel().catch(() => undefined);
+    // Shared snapshots never outlive the server.
+    await snapshotsFor(knowledge).closeAll().catch(() => undefined);
     await Promise.all([...transports.values()].map((transport) => transport.close()));
     const closed = new Promise<void>((resolve, reject) => httpServer.close((error) => error ? reject(error) : resolve()));
     httpServer.closeAllConnections();
@@ -446,7 +454,16 @@ async function handleHttpRequest(
         return;
       }
     }
-    await withGitProfileContext(profile, () => transport!.handleRequest(request, response));
+    // Same trust boundary as the Git profile header: only a trusted proxy may name the user.
+    let principal: string | undefined;
+    if (options.trustedGitProfileHeader) {
+      try { principal = parsePrincipalHeader(request.headers['x-kimono-principal']); }
+      catch {
+        response.writeHead(400, { 'cache-control': 'no-store' }).end('Invalid trusted principal');
+        return;
+      }
+    }
+    await withPrincipal(principal, () => withGitProfileContext(profile, () => transport!.handleRequest(request, response)));
   } catch (error) {
     console.error('MCP HTTP request failed:', error instanceof Error ? error.message : String(error));
     if (!response.headersSent) response.writeHead(500).end('MCP request failed');

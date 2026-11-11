@@ -27,7 +27,7 @@ await Promise.all([
   cp(path.join(root, 'vscode/extension.cjs'), path.join(stage, 'extension.cjs')),
   cp(path.join(root, 'vscode/native.cjs'), path.join(stage, 'native.cjs')),
   cp(path.join(root, 'vscode/stdio.cjs'), path.join(stage, 'stdio.cjs')),
-  ...['panel.cjs', 'mcp-client.cjs', 'search.cjs', 'status.cjs'].map(file => cp(path.join(root, 'vscode', file), path.join(stage, file))),
+  ...['panel.cjs', 'mcp-client.cjs', 'search.cjs', 'status.cjs', 'host-config.cjs'].map(file => cp(path.join(root, 'vscode', file), path.join(stage, file))),
   cp(path.join(root, 'vscode/management'), path.join(stage, 'management'), { recursive: true }),
   cp(path.join(root, 'vscode/media'), path.join(stage, 'media'), { recursive: true }),
   cp(path.join(root, 'LICENSE'), path.join(stage, 'LICENSE')),

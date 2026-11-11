@@ -5,6 +5,7 @@ const fs = require("node:fs/promises");
 const { createHash } = require("node:crypto");
 const { nativeEnvironment } = require("./native.cjs");
 const { registerManagement } = require("./panel.cjs");
+const { discoverRepositories, mergeRepositories, installLauncher, syncMcpJson } = require("./host-config.cjs");
 
 const providerId = "kimono.mcp";
 const tokenKey = "kimono.remoteBearer";
@@ -38,6 +39,58 @@ function register(vscode, context, native = nativeEnvironment) {
     return { mode: "embedded", name: folder.name, uri: folder.uri, root, identity,
       statusFile: path.join(storageFor(identity), "semantic-status.json") };
   });
+  // Declared repositories plus, unless disabled, the nested Git repositories found under ROOT.
+  async function repositoriesFor(selected, root) {
+    const folder = vscode.workspace.getConfiguration("kimono", selected.uri);
+    const declared = folder.get("repositories", []);
+    if (!Array.isArray(declared) || declared.length > 64 || !declared.every(item =>
+      item && typeof item === "object" && !Array.isArray(item) && typeof item.path === "string")) {
+      throw new Error("Kimono repositories must be an array of { path, name?, gitUrl?, branch? }.");
+    }
+    if (!folder.get("discoverRepositories", true)) return declared;
+    return mergeRepositories(declared, await discoverRepositories(root));
+  }
+  // Repositories the server will index, each tagged "declared" (settings) or "discovered" (found under ROOT).
+  async function indexedRepositories(selected) {
+    const root = await fs.realpath(selected.root).catch(() => undefined);
+    if (!root) return [];
+    const declared = vscode.workspace.getConfiguration("kimono", selected.uri).get("repositories", []);
+    const paths = new Set((Array.isArray(declared) ? declared : []).map(item => item.path));
+    return (await repositoriesFor(selected, root).catch(() => []))
+      .map(item => ({ path: item.path, source: paths.has(item.path) ? "declared" : "discovered" }));
+  }
+  // Points agent-host .mcp.json files at the version-free launcher (on activation, install and update).
+  async function syncHosts(create = false) {
+    if (!vscode.workspace.isTrusted || config().get("mode", "embedded") !== "embedded") return [];
+    const launcher = await installLauncher(context.extensionPath, context.globalStorageUri.fsPath);
+    if (!create && !config().get("syncMcpJson", true)) return [];
+    const results = [];
+    for (const selected of embeddedFolders()) {
+      const root = await fs.realpath(selected.root).catch(() => undefined);
+      if (!root) continue;
+      results.push(await syncMcpJson(root, launcher, await repositoriesFor(selected, root), { create }));
+    }
+    return results;
+  }
+  // Autoconfig: persist the discovered repositories in each folder setting, then write .mcp.json.
+  async function autoconfig() {
+    if (!vscode.workspace.isTrusted) throw new Error("Kimono autoconfig requires a trusted workspace.");
+    if (config().get("mode", "embedded") !== "embedded") throw new Error("Kimono autoconfig applies to embedded mode only.");
+    let repositories = 0;
+    for (const selected of embeddedFolders()) {
+      const root = await fs.realpath(selected.root).catch(() => undefined);
+      if (!root) continue;
+      const folder = vscode.workspace.getConfiguration("kimono", selected.uri);
+      const declared = folder.get("repositories", []);
+      const merged = mergeRepositories(Array.isArray(declared) ? declared : [], await discoverRepositories(root));
+      if (merged.length !== declared.length) await folder.update("repositories", merged, vscode.ConfigurationTarget.WorkspaceFolder);
+      repositories += merged.length;
+    }
+    const results = await syncHosts(true);
+    const failed = results.find(result => result.error);
+    if (failed) throw new Error(failed.error);
+    return { repositories, files: results.map(result => result.file) };
+  }
   // Full, null-free launch spec shared by MCP definitions and the management panel's own client.
   async function embeddedLaunch(selected) {
     // Validate assets once per activation, before any bundled code is launched.
@@ -51,16 +104,19 @@ function register(vscode, context, native = nativeEnvironment) {
     if (profile && !path.isAbsolute(profile)) throw new Error("Kimono Git profile path must be absolute.");
     const configFile = config().get("configFile", "");
     if (configFile && !path.isAbsolute(configFile)) throw new Error("Kimono config path must be absolute.");
-    const repositories = vscode.workspace.getConfiguration("kimono", selected.uri).get("repositories", []);
-    if (!Array.isArray(repositories) || repositories.length > 64 || !repositories.every(item =>
-      item && typeof item === "object" && !Array.isArray(item) && typeof item.path === "string")) {
-      throw new Error("Kimono repositories must be an array of { path, name?, gitUrl?, branch? }.");
-    }
+    const repositories = await repositoriesFor(selected, root);
     const corpusMode = config().get("corpusMode", "rag");
     if (!["aikido", "rag"].includes(corpusMode)) throw new Error("Kimono corpusMode must be aikido or rag.");
     const device = config().get("semanticDevice", "auto");
-    const embeddingPolicy = config().get("embeddingPolicy", "auto-balanced");
-    if (!["auto-balanced", "auto-speed", "code", "multilingual-fast", "e5"].includes(embeddingPolicy)) throw new Error("Invalid Kimono embedding policy.");
+    const embeddingPolicy = config().get("embeddingPolicy", "auto-speed");
+    const snapshotScope = config().get("snapshotScope", "prompt");
+    if (!["prompt", "session", "call"].includes(snapshotScope)) throw new Error("Kimono snapshotScope must be prompt, session or call.");
+    const snapshotIdleSeconds = config().get("snapshotIdleSeconds", 120);
+    if (!Number.isInteger(snapshotIdleSeconds) || snapshotIdleSeconds < 1 || snapshotIdleSeconds > 3600) throw new Error("Invalid Kimono snapshotIdleSeconds setting.");
+    if (!["auto-balanced", "auto-speed", "code", "multilingual-fast", "e5", "custom"].includes(embeddingPolicy)) throw new Error("Invalid Kimono embedding policy.");
+    const models = ["code","multilingual-fast","e5","jina-code","bge-m3","nomic-v1.5","mxbai-large","e5-large","minilm"];
+    const codeModel = config().get("embeddingCodeModel", "code"), documentsModel = config().get("embeddingDocumentsModel", "multilingual-fast");
+    if (!models.includes(codeModel) || !models.includes(documentsModel)) throw new Error("Invalid Kimono custom embedding model.");
     if (!["auto", "cpu", "cuda", "coreml"].includes(device)) throw new Error("Kimono semanticDevice must be auto, cpu, cuda or coreml.");
     const semanticEnvironment = {};
     for (const [key, variable, fallback, minimum, maximum] of [
@@ -84,6 +140,10 @@ function register(vscode, context, native = nativeEnvironment) {
         KIMONO_CACHE_DIR: path.join(storage, "cache"),
         // Startup default only: the server's saved per-root policy takes precedence.
         KIMONO_EMBEDDING_POLICY: embeddingPolicy,
+        KIMONO_SNAPSHOT_SCOPE: snapshotScope,
+        KIMONO_SNAPSHOT_IDLE_MS: String(snapshotIdleSeconds * 1000),
+        KIMONO_EMBEDDING_CODE_MODEL: codeModel,
+        KIMONO_EMBEDDING_DOCUMENTS_MODEL: documentsModel,
         KIMONO_MODELS_DIR: path.join(context.globalStorageUri.fsPath, "models"),
         KIMONO_STATUS_FILE: selected.statusFile,
         KIMONO_CORPUS_MODE: corpusMode,
@@ -145,6 +205,9 @@ function register(vscode, context, native = nativeEnvironment) {
     },
   };
   const refresh = () => { definitions = new Map(); changed.fire(); };
+  const syncSilently = () => syncHosts().then(results => results.filter(result => result.error)
+    .forEach(result => vscode.window.showWarningMessage?.(`Kimono MCP: ${result.error}`)), () => {});
+  syncSilently();
   const report = error => vscode.window.showErrorMessage(`Kimono MCP: ${error instanceof Error ? error.message : String(error)}`);
   const guarded = action => async (...args) => {
     try { return await action(...args); }
@@ -157,9 +220,15 @@ function register(vscode, context, native = nativeEnvironment) {
   };
   return [
     changed, vscode.lm.registerMcpServerDefinitionProvider(providerId, publicProvider),
-    vscode.workspace.onDidChangeConfiguration(event => { if (event.affectsConfiguration("kimono")) refresh(); }),
-    vscode.workspace.onDidChangeWorkspaceFolders(refresh),
-    vscode.workspace.onDidGrantWorkspaceTrust(refresh),
+    vscode.workspace.onDidChangeConfiguration(event => { if (event.affectsConfiguration("kimono")) { refresh(); syncSilently(); } }),
+    vscode.workspace.onDidChangeWorkspaceFolders(() => { refresh(); syncSilently(); }),
+    vscode.workspace.onDidGrantWorkspaceTrust(() => { refresh(); syncSilently(); }),
+    vscode.commands.registerCommand("kimono.autoconfig", guarded(async (options = {}) => {
+      const result = await autoconfig();
+      if (!options.quiet) vscode.window.showInformationMessage?.(
+        `Kimono MCP: ${result.repositories} repositories declared; ${result.files.join(", ") || "no .mcp.json"} up to date.`);
+      return result;
+    })),
     context.secrets.onDidChange(event => { if (event.key === tokenKey) refresh(); }),
     vscode.commands.registerCommand("kimono.configure", () => vscode.commands.executeCommand("workbench.action.openSettings", `@ext:${context.extension.id}`)),
     vscode.commands.registerCommand("kimono.setToken", guarded(async () => {
@@ -172,7 +241,7 @@ function register(vscode, context, native = nativeEnvironment) {
     })),
     vscode.commands.registerCommand("kimono.clearToken", guarded(() => context.secrets.delete(tokenKey))),
     ...(vscode.window?.createTreeView
-      ? registerManagement(vscode, context, { config, embeddedFolders, embeddedLaunch, remoteUrl, tokenKey, version })
+      ? registerManagement(vscode, context, { config, embeddedFolders, embeddedLaunch, indexedRepositories, remoteUrl, tokenKey, version })
       : []),
   ];
 }

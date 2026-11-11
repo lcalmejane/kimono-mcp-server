@@ -1,6 +1,8 @@
-import { isRepositoryRoot } from './repositories.js';
+import { isRepositoryRoot, repositoryOf } from './repositories.js';
 import type { Dirent } from 'node:fs';
 import { lstat, open, readdir, readFile, realpath, stat } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import ignore, { type Ignore } from 'ignore';
@@ -45,6 +47,14 @@ export interface SearchMatch extends KnowledgeEntry {
 const reportedSkips = new Set<string>();
 const reportedSkipReasons = new Set<string>();
 
+/** Indexed files of one repository, and how they relate to the files Git keeps there. */
+export interface RepositoryAccounting {
+  path: string; name: string; files: number; bytes: number; metadataOnly: number;
+  gitFiles: number | null; indexedGitFiles: number | null;
+  outside: Record<string, number>; outsideSamples: Record<string, string[]>; extra: number | null;
+}
+
+const ENV_TEMPLATE = /^\.env(?:\.[\w-]+)*\.(?:example|sample|template|dist|defaults)$/i;
 const EXCLUDED_DIRECTORIES = new Set(['.git', '.ssh', 'node_modules', 'dist', 'build', 'coverage', '.venv', '__pycache__', '.next', '.nuxt', '.cache', '.nyc_output', 'temp', 'credentials', 'secrets']);
 const RAG_EXCLUDED_DIRECTORIES = new Set(['target', 'vendor', '.gradle', '.terraform', '.idea', '.tox', '.mypy_cache', '.pytest_cache', '.turbo',
   // Generated or cached output of other ecosystems (.NET IDE state/NuGet cache/test results, Swift, Dart, Python, Haskell, Zig, JS frameworks).
@@ -67,6 +77,8 @@ export class AikidoKnowledgeBase {
   private sizes = new Map<string, number>();
   private skipped = new Map<string, string>();
   private scanStats = { files: 0, bytes: 0, oversized: 0, binary: 0, metadataOnly: 0 };
+  private repositoryAccounting: RepositoryAccounting[] = [];
+  private gitViews = new Map<string, { files: string[]; trackedIgnored: Set<string> } | null>();
 
   constructor(root: string, readonly immutable = false, readonly config: Readonly<CorpusConfig> = loadCorpusConfig(),
     private readonly snapshotMemoryRoot?: boolean, readonly materializedText = false,
@@ -79,9 +91,25 @@ export class AikidoKnowledgeBase {
 
   get isInitialized(): boolean { return this.initialized; }
   get isMemoryRoot(): boolean { return this.memoryRoot; }
+  /** Indexed files per declared repository ('' = ROOT outside nested repositories), declaration order. */
+  get repositoryCounts(): Array<{ path: string; name: string; files: number; bytes: number } & Partial<RepositoryAccounting>> {
+    // Git-based accounting (indexed + outside = Git files) once computed; plain counts before.
+    if (this.repositoryAccounting.length) return this.repositoryAccounting;
+    const declared = this.config.repositories ?? [];
+    const counts = new Map<string, { files: number; bytes: number }>([['', { files: 0, bytes: 0 }],
+      ...declared.filter(item => item.path).map(item => [item.path, { files: 0, bytes: 0 }] as const)]);
+    for (const entry of this.entries) {
+      const count = counts.get(repositoryOf(entry.path, declared))!;
+      count.files++;
+      count.bytes += this.sizes.get(entry.path) ?? 0;
+    }
+    return [...counts].map(([path, count]) => ({ path,
+      name: declared.find(item => item.path === path)?.name ?? (path || 'root'), ...count }));
+  }
+  get accounting(): RepositoryAccounting[] { return this.repositoryAccounting; }
   get corpusStatus() {
     return {
-      mode: this.config.mode, ...this.scanStats,
+      mode: this.config.mode, ...this.scanStats, repositories: this.repositoryCounts,
       skipped: this.skipped.size,
       skippedFiles: [...this.skipped].slice(0, 50).map(([file, reason]) => ({ file, reason })),
       config: this.config,
@@ -158,7 +186,9 @@ export class AikidoKnowledgeBase {
     this.scanStats = { files: 0, bytes: 0, oversized: 0, binary: 0, metadataOnly: 0 };
     this.sizes.clear();
     this.skipped.clear();
+    this.gitViews.clear();
     this.entries = await this.scanDirectory(realRoot, '');
+    this.entries = [...this.entries, ...await this.gitKeptEntries(realRoot, this.entries)].sort((a, b) => a.path.localeCompare(b.path));
     this.byId = new Map();
     for (const entry of this.entries) {
       const hash = fileId(entry.path);
@@ -167,6 +197,7 @@ export class AikidoKnowledgeBase {
       this.byId.set(entry.path, entry);
     }
     this.initialized = true;
+    this.repositoryAccounting = await this.computeAccounting();
   }
 
   async refresh(paths?: string[]): Promise<number> {
@@ -177,7 +208,11 @@ export class AikidoKnowledgeBase {
       this.scanStats = { files: 0, bytes: 0, oversized: 0, binary: 0, metadataOnly: 0 };
       for (const file of this.sizes.keys()) if (within(file, paths)) this.sizes.delete(file);
       for (const file of this.skipped.keys()) if (within(file, paths)) this.skipped.delete(file);
-      const selected = await this.scanDirectory(await realpath(this.root), '', [], paths);
+      this.gitViews.clear();
+      const scannedRoot = await realpath(this.root);
+      const scanned = await this.scanDirectory(scannedRoot, '', [], paths);
+      const kept = this.entries.filter(entry => !within(entry.path, paths));
+      const selected = [...scanned, ...await this.gitKeptEntries(scannedRoot, [...kept, ...scanned], paths)];
       this.entries = [...this.entries.filter(entry => !within(entry.path, paths)), ...selected]
         .sort((a, b) => a.path.localeCompare(b.path));
       this.byId = new Map(this.entries.flatMap(entry => [[entry.path, entry], [fileId(entry.path), entry]]));
@@ -185,6 +220,7 @@ export class AikidoKnowledgeBase {
       this.enforceLimits(this.entries.length, bytes);
       this.scanStats.files = this.entries.length;
       this.scanStats.bytes = bytes;
+      this.repositoryAccounting = await this.computeAccounting();
       this.scanStats.metadataOnly = this.entries.filter(entry => entry.metadata).length;
     }
     return this.entries.length;
@@ -261,6 +297,10 @@ export class AikidoKnowledgeBase {
         return [];
       }
     }
+    if (!this.materializedText) {
+      const exclude = await this.repositoryExclude(directoryPath, relativeDirectory, children);
+      if (exclude) rules.push(exclude);
+    }
     const result: KnowledgeEntry[] = [];
     const dotnetProject = this.config.mode === 'rag' && children.some(child => child.isFile() && DOTNET_PROJECT.test(child.name));
     for (const child of children.sort((a, b) => a.name.localeCompare(b.name))) {
@@ -294,6 +334,141 @@ export class AikidoKnowledgeBase {
 
     }
     return result;
+  }
+
+  /**
+   * `.git/info/exclude` of the ROOT or of a declared nested repository: local ignore rules Git applies
+   * like a .gitignore at the repository root (drafts such as `.local-plans/` or `.plan/`).
+   */
+  private async repositoryExclude(directoryPath: string, relativeDirectory: string, children: Dirent[]) {
+    if (relativeDirectory && !isRepositoryRoot(relativeDirectory.split(path.sep).join('/'), this.config.repositories)) return undefined;
+    if (!children.some(child => child.name === '.git' && child.isDirectory())) return undefined;
+    try {
+      return { base: relativeDirectory, rules: ignore().add(decodeText(await readFile(path.join(directoryPath, '.git', 'info', 'exclude')))) };
+    } catch { return undefined; }
+  }
+
+  /** Files Git keeps in one repository (tracked + untracked not ignored) and those tracked despite a .gitignore rule. */
+  private async gitView(repositoryPath: string): Promise<{ files: string[]; trackedIgnored: Set<string> } | null> {
+    // One Git listing per repository and scan, shared by indexing and accounting; none outside a Git repository.
+    const cached = this.gitViews.get(repositoryPath);
+    if (cached !== undefined) return cached;
+    const view = await this.listGit(repositoryPath);
+    this.gitViews.set(repositoryPath, view);
+    return view;
+  }
+  private async listGit(repositoryPath: string): Promise<{ files: string[]; trackedIgnored: Set<string> } | null> {
+    if (!await lstat(path.join(this.root, repositoryPath, '.git')).then(() => true, () => false)) return null;
+    const declared = this.config.repositories ?? [];
+    const list = async (...flags: string[]) => (await promisify(execFile)('git', ['-C', path.join(this.root, repositoryPath),
+      'ls-files', '-z', ...flags, '--exclude-standard'], { maxBuffer: 64 * 1024 * 1024, timeout: 15_000 })).stdout
+      .split('\0').filter(Boolean).map(file => repositoryPath ? `${repositoryPath}/${file}` : file)
+      .filter(file => repositoryOf(file, declared) === repositoryPath);
+    try { return { files: await list('--cached', '--others'), trackedIgnored: new Set(await list('--cached', '--ignored')) }; }
+    catch { return null; }
+  }
+
+  /**
+   * Every file Git keeps belongs to the index: files tracked despite a .gitignore rule are indexed normally,
+   * files inside excluded directories (vendor/, node_modules/…) as metadata only. Sensitive files never are.
+   */
+  private async gitKeptEntries(realRoot: string, scanned: KnowledgeEntry[], scopes?: string[]): Promise<KnowledgeEntry[]> {
+    if (this.materializedText || this.immutable) return [];
+    const known = new Set(scanned.map(entry => entry.path));
+    const added: KnowledgeEntry[] = [];
+    for (const repository of ['', ...(this.config.repositories ?? []).filter(item => item.path).map(item => item.path)]) {
+      const view = await this.gitView(repository);
+      for (const file of view?.files ?? []) {
+        if (known.has(file) || !within(file, scopes) || this.sensitive(file)) continue;
+        if (this.config.exclude.some(pattern => path.posix.matchesGlob(file, pattern))) continue;
+        const excluded = this.excludedDirectory(file);
+        const temporary = /(?:\.log|\.tmp|\.sw[po]|~)$/.test(file);
+        const template = ENV_TEMPLATE.test(file.slice(file.lastIndexOf('/') + 1));
+        // Metadata only for excluded directories and temporary files; full content for tracked-but-ignored files.
+        const directory = excluded ? `${excluded}/` : temporary ? 'temporary file'
+          : template ? 'environment template (content not indexed)' : undefined;
+        if (!directory && !view!.trackedIgnored.has(file)) continue;
+        const full = path.join(realRoot, file);
+        const info = await lstat(full).catch(() => undefined);
+        if (!info?.isFile()) continue;
+        const probed = directory
+          ? { size: 0, metadata: { contentStatus: 'metadata-only' as const, reason: excluded ? `excluded directory ${directory}` : directory, sizeBytes: info.size,
+            modified: info.mtime.toISOString(), extension: path.posix.extname(file).toLowerCase() } }
+          : await this.probe(full, file);
+        const size = directory ? Buffer.byteLength(fileMetadataText(file, probed.metadata!)) : probed.size;
+        this.scanStats.files++;
+        this.scanStats.bytes += size;
+        this.sizes.set(file, size);
+        if (probed.metadata) this.scanStats.metadataOnly++;
+        added.push({ id: file, path: file, kind: this.config.mode === 'rag' ? 'knowledge' : classify(file), title: titleFromPath(file),
+          ...(probed.metadata ? { metadata: probed.metadata } : {}) });
+      }
+    }
+    this.enforceLimits(this.scanStats.files, this.scanStats.bytes);
+    return added;
+  }
+
+  /** Real secrets files. Committed templates (.env.example, .env.sample…) are not: they get metadata only. */
+  private sensitive(file: string): boolean {
+    const name = file.slice(file.lastIndexOf('/') + 1);
+    // A template is listed (metadata only, reads stay blocked) unless its folder itself is sensitive.
+    if (ENV_TEMPLATE.test(name)) return isSensitiveKnowledgePath(`${file.slice(0, file.lastIndexOf('/') + 1)}template`);
+    return isSensitiveKnowledgePath(file);
+  }
+
+  private excludedDirectory(file: string): string | undefined {
+    return file.split('/').slice(0, -1).find(part => EXCLUDED_DIRECTORIES.has(part)
+      || this.config.mode === 'rag' && RAG_EXCLUDED_DIRECTORIES.has(part));
+  }
+
+  /**
+   * Git view of each repository (ROOT and declared nested ones): every file Git does not ignore is either
+   * indexed or outside the index with a reason, so that indexed + outside = Git files. Files indexed although
+   * Git ignores them are reported as extra. `gitFiles` is null when the folder is not a Git repository.
+   */
+  private async computeAccounting(): Promise<RepositoryAccounting[]> {
+    const declared = this.config.repositories ?? [];
+    const nested = declared.filter(item => item.path);
+    const indexed = new Map(this.entries.map(entry => [entry.path, entry]));
+    const result: RepositoryAccounting[] = [];
+    for (const repository of [{ path: '', name: 'root' }, ...nested]) {
+      const view = await this.gitView(repository.path);
+      const files = view?.files ?? null;
+      const trackedIgnored = view?.trackedIgnored ?? new Set<string>();
+      const own = this.entries.filter(entry => repositoryOf(entry.path, declared) === repository.path);
+      const outside: Record<string, number> = {};
+      const samples: Record<string, string[]> = {};
+      let inside = 0;
+      for (const file of files ?? []) {
+        if (indexed.has(file)) { inside++; continue; }
+        const reason = trackedIgnored.has(file) ? 'tracked-but-gitignored' : this.outsideReason(file);
+        outside[reason] = (outside[reason] ?? 0) + 1;
+        (samples[reason] ??= []).length < 5 && samples[reason].push(file);
+      }
+      const gitSet = files ? new Set(files) : undefined;
+      result.push({ path: repository.path, name: repository.name ?? (repository.path || 'root'),
+        files: own.length, bytes: own.reduce((sum, entry) => sum + (this.sizes.get(entry.path) ?? 0), 0),
+        metadataOnly: own.filter(entry => entry.metadata).length,
+        gitFiles: files ? files.length : null, indexedGitFiles: files ? inside : null, outside, outsideSamples: samples,
+        extra: gitSet ? own.filter(entry => !gitSet.has(entry.path)).length : null });
+    }
+    return result;
+  }
+
+  /** Why a file Git keeps is not in the index (same predicates as the scan, applied to the path). */
+  private outsideReason(file: string): string {
+    const parts = file.split('/');
+    const directory = parts.slice(0, -1).find(part => EXCLUDED_DIRECTORIES.has(part)
+      || this.config.mode === 'rag' && RAG_EXCLUDED_DIRECTORIES.has(part));
+    if (directory) return `excluded-directory:${directory}`;
+    const name = parts[parts.length - 1];
+    if (this.sensitive(file)) return 'sensitive';
+    if (/(?:\.log|\.tmp|\.sw[po]|~)$/.test(name)) return 'temporary';
+    if (this.config.exclude.some(pattern => path.posix.matchesGlob(file, pattern))) return 'config-exclude';
+    if (this.config.include.length && !this.config.include.some(pattern => path.posix.matchesGlob(file, pattern))) return 'config-include';
+    const skipped = this.skipped.get(file);
+    if (skipped) return skipped.includes('unsupported') ? 'unsupported-format' : skipped.includes('large') ? 'too-large' : 'unreadable';
+    return this.acceptsFile(file) ? 'other' : 'unsupported-format';
   }
 
   /** Name, sensitivity, nested .gitignore and config.exclude rules shared by indexing and the structure view. */
@@ -342,6 +517,8 @@ export class AikidoKnowledgeBase {
     try { children = await readdir(directoryPath, { withFileTypes: true }); }
     catch { return; }
     const rules = [...inherited];
+    const exclude = await this.repositoryExclude(directoryPath, relativeDirectory, children);
+    if (exclude) rules.push(exclude);
     if (children.some(child => child.name === '.gitignore' && child.isFile())) {
       try { rules.push({ base: relativeDirectory, rules: ignore().add(decodeText(await readFile(path.join(directoryPath, '.gitignore')))) }); }
       catch { return; }

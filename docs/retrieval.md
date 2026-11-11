@@ -23,10 +23,36 @@ request. Finish with:
 
 A snapshot pins the corpus so searches and reads use the same captured files,
 even when the source changes. Open a new snapshot to see edits. Snapshots expire
-after 15 minutes. Defaults allow 8 active snapshots; total and per-snapshot
+after 15 minutes without use (sliding, see below). Defaults allow 8 active snapshots; total and per-snapshot
 byte budgets depend on the mode. `begin` can accept ROOT-relative `paths` to
 capture only selected files or directories. The response reports effective
 limits.
+
+### Shared snapshots (scope)
+
+By default (`KIMONO_SNAPSHOT_SCOPE=prompt`) one snapshot serves a whole prompt:
+
+- `begin` returns your live snapshot (`reused: true`) when the corpus has not
+  changed since it was captured, for the same user, `owner` and `paths`. Any
+  change (your edit, another user's change, a published revision, a new staged
+  overlay edit) gives a new capture, so "open a new snapshot to see edits" still
+  holds. `fresh: true` always captures.
+- An orchestrator passes its `snapshotId` to delegated agents: they then search
+  the same corpus even if files change meanwhile.
+- `end` releases (`retained: true`). A released snapshot closes by itself after
+  `KIMONO_SNAPSHOT_IDLE_MS` (default 120 s) without use; one a holder never ended
+  closes after `KIMONO_SNAPSHOT_HELD_IDLE_MS` (default the TTL); all close on
+  server shutdown. A replaced snapshot stays readable for its holders until then.
+- The lifetime slides with use, up to `KIMONO_SNAPSHOT_MAX_MS` (1 h). When the
+  count or byte budget is reached, released snapshots are closed first (least
+  recently used); a begin fails only if every snapshot is in use.
+- Behind a trusted proxy (`KIMONO_TRUST_GIT_PROFILE_HEADER=true`, e.g. Tatami: one
+  instance per project for many users) the `x-kimono-principal` header names the
+  user; snapshots are never shared across users. `owner` keeps its meaning (merge
+  that user's staged overlay).
+
+`session` keeps one snapshot for the server session; `call` restores one
+snapshot per `begin`/`end` (each `end` closes at once).
 
 ## Search
 

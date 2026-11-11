@@ -160,7 +160,8 @@
     modelRefresh.type = "button";
     const modelOutput = node("div", undefined, modelsCard);
     modelOutput.setAttribute("role", "status"); modelOutput.setAttribute("aria-live", "polite");
-    let modelsAvailable = false, modelsTimer;
+    // modelDraft keeps the policy and custom models being chosen across periodic refreshes, until applied.
+    let modelsAvailable = false, modelsTimer, modelDraft;
     function requestModels(input = { operation: "status" }) {
       if (!modelsAvailable || !options.onModelsRequest) return;
       if (pending) {
@@ -177,7 +178,7 @@
       if (modelsCard.open) requestModels();
     });
     modelRefresh.addEventListener("click", () => requestModels());
-    modelFolder.addEventListener("change", () => { modelOutput.replaceChildren(); requestModels(); });
+    modelFolder.addEventListener("change", () => { modelDraft = undefined; modelOutput.replaceChildren(); requestModels(); });
     function configureModels({ folders: choices = [], available = true } = {}) {
       const previous = modelFolder.value;
       const signature = JSON.stringify(choices);
@@ -197,6 +198,12 @@
     const mib = bytes => Number.isFinite(bytes) ? `${Math.round(bytes / 1048576)} MiB` : "—";
     function showModels(value) {
       clearTimeout(modelsTimer);
+      // Never redraw under an open picker: the refresh would close it and lose the choice in progress.
+      const editing = document.activeElement?.tagName === "SELECT" && modelOutput.contains(document.activeElement);
+      if (value && editing) {
+        if (modelsCard.open) modelsTimer = setTimeout(() => requestModels(), 3000);
+        return;
+      }
       modelOutput.replaceChildren();
       if (!value) return;
       const list = node("dl", undefined, modelOutput);
@@ -229,7 +236,7 @@
         }
         if (item.state === "error" && item.error) node("p", String(item.error), block, "kv-error");
       }
-      if (value.phase === "download-required" && (value.missingModels ?? []).some(id => ["code", "multilingual-fast"].includes(id))) node("p", ml(
+      if (value.phase === "download-required" && (value.missingModels ?? []).some(id => id !== "e5")) node("p", ml(
         "Download each missing model separately, then apply the desired policy again to start rebuilding.",
         "Téléchargez chaque modèle manquant séparément, puis appliquez à nouveau la politique souhaitée pour lancer la reconstruction."), modelOutput, "kv-muted");
       if ((value.missingModels ?? []).includes("e5")) node("p", ml(
@@ -238,26 +245,50 @@
       for (const profile of value.profiles ?? []) node("p", `${profile.id}: ${profile.model} · ${profile.files} files`, modelOutput);
       const select = labelled(modelOutput, `${prefix}-policy`, ml("Desired policy", "Politique souhaitée"), document.createElement("select"));
       for (const [id, en, fr] of [
-        ["auto-balanced", "Auto balanced (recommended)", "Auto équilibré (recommandé)"],
-        ["auto-speed", "Auto speed", "Auto vitesse"],
+        ["auto-speed", "Auto speed (default)", "Auto vitesse (par défaut)"],
+        ["auto-balanced", "Auto balanced", "Auto équilibré"],
+        ["custom", "Custom · choose the code and documents models", "Personnalisée · choisir le modèle code et le modèle docs"],
         ["code", "Code · very fast", "Code · très rapide"],
         ["multilingual-fast", "Documents · multilingual fast (~531 MB download; table 489 MiB)", "Documents · multilingue rapide (~531 Mo à télécharger ; table 489 Mio)"],
         ["e5", "Documents · multilingual E5 (slower, existing model)", "Documents · multilingue E5 (plus lent, modèle existant)"],
       ]) option(id, ml(en, fr), select);
-      select.value = value.requestedPolicy;
+      select.value = modelDraft?.policy ?? value.requestedPolicy;
+      // Custom policy: one picker per content type, filled from the server catalogue (suited models first).
+      const customBox = node("div", undefined, modelOutput);
+      const picker = (kind, label) => {
+        const element = labelled(customBox, `${prefix}-custom-${kind}`, label, document.createElement("select"));
+        // Servers before 0.9.9 send no `suited`: infer it from the historical ids instead of flagging every model.
+        const suitedTo = model => model.suited ?? (model.id === "code" ? "code" : "documents");
+        const suited = model => suitedTo(model) === "both" || suitedTo(model) === kind;
+        for (const model of [...(value.models ?? []).filter(suited), ...(value.models ?? []).filter(model => !suited(model))]) {
+          option(model.id, `${model.label ?? model.id}${model.installed ? "" : ` · ${ml("download", "à télécharger")} ${mib(model.downloadBytes)}`}${suited(model) ? "" : ` · ${ml("not tuned for", "non prévu pour")} ${kind}`}`, element);
+        }
+        element.value = modelDraft?.custom?.[kind] ?? value.custom?.[kind] ?? (kind === "code" ? "code" : "multilingual-fast");
+        return element;
+      };
+      const codeModel = picker("code", ml("Code model", "Modèle pour le code"));
+      const documentsModel = picker("documents", ml("Documents model", "Modèle pour les docs"));
+      const toggleCustom = () => { customBox.hidden = select.value !== "custom"; };
+      const keepDraft = () => {
+        modelDraft = { policy: select.value, custom: { code: codeModel.value, documents: documentsModel.value } };
+        toggleCustom();
+      };
+      for (const element of [select, codeModel, documentsModel]) element.addEventListener("change", keepDraft);
+      toggleCustom();
       const apply = node("button", ml("Switch policy / rebuild…", "Changer de politique / reconstruire…"), modelOutput);
       apply.type = "button";
       apply.disabled = value.phase === "building";
       apply.dataset.kvLocked = String(apply.disabled);
-      apply.addEventListener("click", () => requestModels({ operation: "configure", policy: select.value }));
+      apply.addEventListener("click", () => { modelDraft = undefined; requestModels({ operation: "configure", policy: select.value,
+        ...(select.value === "custom" ? { custom: { code: codeModel.value, documents: documentsModel.value } } : {}) }); });
       node("p", ml("A switch records the desired policy and schedules a safe rebuild. The previous generation remains active until success. Missing downloads require separate consent; no automatic fallback.",
         "Le changement enregistre la politique souhaitée et programme une reconstruction sûre. L'ancienne génération reste active jusqu'à réussite. Chaque téléchargement manquant exige un accord distinct ; aucun repli automatique."), modelOutput, "kv-muted");
       for (const model of value.models ?? []) {
         const detail = node("details", undefined, modelOutput);
-        node("summary", `${model.id} · ${model.installed ? ml("installed", "installé") : ml("not installed", "non installé")} · ${mib(model.downloadBytes)}`, detail);
+        node("summary", `${model.label ?? model.id} · ${model.installed ? ml("installed", "installé") : ml("not installed", "non installé")} · ${mib(model.downloadBytes)}`, detail);
         node("p", `${ml("Source", "Source")}: ${model.repository}\nRevision: ${model.revision}\nLicense: ${model.license}`, detail, "kv-path");
         node("p", `${ml("Estimated model memory (not measured RSS)", "Mémoire modèle estimée (pas le RSS mesuré)")}: ${mib(model.estimatedMemoryBytes)} · ${model.backend} · ${model.dimensions} dimensions · ${model.chunkChars} chars/chunk`, detail);
-        if (!model.installed && ["code", "multilingual-fast"].includes(model.id)) {
+        if (!model.installed && model.id !== "e5") {
           const busy = downloading(model.id);
           const download = node("button", busy ? ml("Downloading…", "Téléchargement en cours…") : ml("Download only…", "Télécharger uniquement…"), detail);
           download.type = "button";

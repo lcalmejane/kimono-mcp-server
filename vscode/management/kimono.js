@@ -26,7 +26,7 @@ const text = {
     advanced: "Advanced", configFile: "Corpus config file", configHint: "(absolute path to a host-controlled JSON; empty = defaults)",
     gitProfile: "Git read-profile file", gitHint: "(absolute path, 0600, outside the ROOT; AI-KIDO remote sync only)",
     root: "ROOT for {name}", rootHint: "(relative to the folder or absolute; empty = the folder itself)",
-    repositories: "Nested Git repositories of {name}", repositoriesHint: "(paths relative to the ROOT, comma-separated; indexed even when the parent .gitignore ignores them)", allSettings: "All Kimono settings",
+    repositories: "Nested Git repositories of {name}", repositoriesHint: "(paths relative to the ROOT, comma-separated; indexed even when the parent .gitignore ignores them)", allSettings: "All Kimono settings", autoconfig: "Autoconfig", indexedRepositories: "Indexed repositories: {list}", discovered: "discovered", noIndexedRepositories: "No nested Git repository: only the ROOT is indexed.", autoconfigHint: "Declares the nested Git repositories found under each ROOT and points the workspace .mcp.json at the version-free Kimono launcher.", autoconfigDone: "Autoconfig done: {repositories} repositories declared; {files} updated.",
     mcp: "MCP server", mcpIntro: "Kimono is declared to VS Code's MCP list for every trusted local folder. Start, stop, restart and read logs from the native list; VS Code confirmations and permissions stay active.",
     servers: "Start · stop · restart · logs…", mcpSettings: "Native MCP settings", standalone: "standalone",
   },
@@ -43,7 +43,7 @@ const text = {
     advanced: "Avancé", configFile: "Fichier de configuration du corpus", configHint: "(chemin absolu d'un JSON contrôlé par l'hôte ; vide = valeurs par défaut)",
     gitProfile: "Fichier de profil Git en lecture", gitHint: "(chemin absolu, 0600, hors du ROOT ; synchronisation distante AI-KIDO uniquement)",
     root: "ROOT de {name}", rootHint: "(relatif au dossier ou absolu ; vide = le dossier lui-même)",
-    repositories: "Dépôts Git imbriqués de {name}", repositoriesHint: "(chemins relatifs au ROOT, séparés par des virgules ; indexés même si le .gitignore parent les ignore)", allSettings: "Tous les paramètres Kimono",
+    repositories: "Dépôts Git imbriqués de {name}", repositoriesHint: "(chemins relatifs au ROOT, séparés par des virgules ; indexés même si le .gitignore parent les ignore)", allSettings: "Tous les paramètres Kimono", autoconfig: "Autoconfig", indexedRepositories: "Dépôts indexés : {list}", discovered: "découvert", noIndexedRepositories: "Aucun dépôt Git imbriqué : seul le ROOT est indexé.", autoconfigHint: "Déclare les dépôts Git imbriqués trouvés sous chaque ROOT et pointe le .mcp.json du workspace vers le lanceur Kimono sans numéro de version.", autoconfigDone: "Autoconfig terminée : {repositories} dépôts déclarés ; {files} à jour.",
     mcp: "Serveur MCP", mcpIntro: "Kimono est déclaré dans la liste MCP de VS Code pour chaque dossier local approuvé. Démarrez, arrêtez, redémarrez et lisez les journaux depuis la liste native ; les confirmations et permissions de VS Code restent actives.",
     servers: "Démarrer · arrêter · redémarrer · journaux…", mcpSettings: "Paramètres MCP natifs", standalone: "autonome",
   },
@@ -89,6 +89,10 @@ const settings = view.section("settings", text.settings, { intro: text.settingsI
 const grid = node("div", undefined, settings, "kv-grid");
 choice(grid, "mode", text.server, text.serverOptions, "mode");
 choice(grid, "corpusMode", text.corpus, text.corpusOptions, "corpusMode");
+const autoRow = node("div", undefined, settings, "kv-actions");
+actionButton(autoRow, text.autoconfig, "autoconfig");
+node("span", text.autoconfigHint, autoRow, "kv-muted");
+const indexedList = node("div", undefined, settings);
 textInput(settings, "url", text.url, text.urlHint, "url");
 const tokenRow = node("div", undefined, settings, "kv-actions");
 actionButton(tokenRow, text.setToken, "setToken", true);
@@ -140,6 +144,7 @@ function render(value) {
   }
   tokenState.textContent = value.hasToken ? text.tokenSaved : text.noToken;
   roots.replaceChildren();
+  indexedList.replaceChildren();
   value.folders.forEach((folder, index) => {
     const input = textInput(roots, `root-${index}`, text.root.replace("{name}", folder.name), text.rootHint);
     input.value = folder.rootSetting ?? "";
@@ -148,6 +153,11 @@ function render(value) {
     const declared = Array.isArray(folder.repositories) ? folder.repositories : [];
     const repositories = textInput(roots, `repositories-${index}`, text.repositories.replace("{name}", folder.name), text.repositoriesHint);
     if (document.activeElement !== repositories) repositories.value = declared.map(item => item.path).join(", ");
+    // Effective list sent to the server: declared paths plus the ones discovered under the ROOT.
+    const indexed = Array.isArray(folder.indexed) ? folder.indexed : [];
+    node("p", indexed.length
+      ? text.indexedRepositories.replace("{list}", indexed.map(item => item.source === "discovered" ? `${item.path} (${text.discovered})` : item.path).join(", "))
+      : text.noIndexedRepositories, indexedList, "kv-muted").prepend(value.folders.length > 1 ? `${folder.name} — ` : "");
     repositories.addEventListener("change", () => {
       const paths = [...new Set(repositories.value.split(",").map(item => item.trim().replace(/\/+$/, "")).filter(Boolean))];
       const value = paths.map(path => declared.find(item => item.path === path) ?? { path });

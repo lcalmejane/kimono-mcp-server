@@ -14,7 +14,9 @@
       stages: { checking_index: "checking freshness", reading_documents: "reading files", model_loading: "loading model",
         model_loaded: "model loaded", document_embedding: "embedding chunks", device_benchmark: "benchmarking CPU / accelerators",
         runtime_configured: "runtime configured", waiting_for_other_indexer: "another Kimono process holds the index" },
-      files: "Files", tokens: "Tokens (est.)", chunks: "Chunks", rate: "Rate", chunksPerSecond: "chunks/s", eta: "ETA",
+      files: "Files", rootRepository: "ROOT (outside nested repositories)", outsideIndex: "outside index", metadataOnlyOf: "{count} as metadata only", extraFiles: "indexed but ignored by Git",
+      reasons: { "tracked-but-gitignored": "tracked but .gitignore'd", sensitive: "sensitive (secrets, never indexed)", temporary: "temporary", "unsupported-format": "unsupported format",
+        "too-large": "too large", unreadable: "unreadable", "config-exclude": "excluded by config", "config-include": "not in config include", other: "other", "excluded-directory": "in {dir}/ (excluded)" }, tokens: "Tokens (est.)", chunks: "Chunks", rate: "Rate", chunksPerSecond: "chunks/s", eta: "ETA",
       finishing: "finishing", indexedAt: "Last indexed", detail: "Detail", locale: "en-US",
       partial: "Partially indexed", skipped: "Skipped chunks",
       provider: "Execution provider", benchmarks: "Startup benchmark", batch: "Last batch", failed: "failed",
@@ -25,7 +27,7 @@
       workerUnit: "workers", threadUnit: "threads", batchUnit: "batch",
       hotIndexes: "Warm indexes", hotIndexMemory: "Warm index estimate",
       embedding: "Embedding mode", mixed: "Mixed · documents + code", download: "Download",
-      policies: { "auto-balanced": "Automatic · balanced", "auto-speed": "Automatic · speed", code: "Code",
+      policies: { "auto-balanced": "Automatic · balanced", "auto-speed": "Automatic · speed", custom: "Custom", code: "Code",
         "multilingual-fast": "Documents · multilingual fast", e5: "Documents · multilingual E5" },
       profileNames: { multilingual: "Documents profile", code: "Code profile" },
       profileStates: { pending: "Waiting", running: "Embedding", done: "Done", error: "Error" },
@@ -38,7 +40,9 @@
       stages: { checking_index: "vérification de la fraîcheur", reading_documents: "lecture des fichiers", model_loading: "chargement du modèle",
         model_loaded: "modèle chargé", document_embedding: "vectorisation des passages", device_benchmark: "comparaison CPU / accélérateurs",
         runtime_configured: "moteur configuré", waiting_for_other_indexer: "un autre processus Kimono tient l'index" },
-      files: "Fichiers", tokens: "Tokens (est.)", chunks: "Passages", rate: "Débit", chunksPerSecond: "passages/s", eta: "Temps restant",
+      files: "Fichiers", rootRepository: "ROOT (hors dépôts imbriqués)", outsideIndex: "hors index", metadataOnlyOf: "dont {count} en métadonnées seules", extraFiles: "indexés mais ignorés par Git",
+      reasons: { "tracked-but-gitignored": "suivis mais dans .gitignore", sensitive: "sensibles (secrets, jamais indexés)", temporary: "temporaires", "unsupported-format": "format non pris en charge",
+        "too-large": "trop volumineux", unreadable: "illisibles", "config-exclude": "exclus par la configuration", "config-include": "hors include de la configuration", other: "autres", "excluded-directory": "dans {dir}/ (exclu)" }, tokens: "Tokens (est.)", chunks: "Passages", rate: "Débit", chunksPerSecond: "passages/s", eta: "Temps restant",
       finishing: "finalisation", indexedAt: "Dernière indexation", detail: "Détail", locale: "fr-FR",
       partial: "Indexation partielle", skipped: "Passages non vectorisés",
       provider: "Fournisseur d'exécution", benchmarks: "Mesure au démarrage", batch: "Dernier lot", failed: "échec",
@@ -49,7 +53,7 @@
       workerUnit: "sessions", threadUnit: "threads", batchUnit: "taille de lot",
       hotIndexes: "Index gardés en mémoire", hotIndexMemory: "Mémoire des index (estim.)",
       embedding: "Mode d'embedding", mixed: "Mixte · documents + code", download: "Téléchargement",
-      policies: { "auto-balanced": "Automatique · équilibré", "auto-speed": "Automatique · rapide", code: "Code",
+      policies: { "auto-balanced": "Automatique · équilibré", "auto-speed": "Automatique · rapide", custom: "Personnalisée", code: "Code",
         "multilingual-fast": "Documents · multilingue rapide", e5: "Documents · multilingue E5" },
       profileNames: { multilingual: "Profil documents", code: "Profil code" },
       profileStates: { pending: "En attente", running: "Vectorisation", done: "Terminé", error: "Erreur" },
@@ -123,12 +127,30 @@
     return parts.join(" · ");
   }
 
+  function reasonLabel(text, reason) {
+    const [key, detail] = String(reason).split(":");
+    return (text.reasons?.[key] ?? key).replace("{dir}", detail ?? "");
+  }
   function lines(status, language) {
     const text = pick(language);
     const value = status ?? {};
     const result = [];
     const pair = (label, item) => { if (count(item)) result.push({ label, value: `${compact(item.completed, language)} / ${compact(item.total, language)}` }); };
     pair(text.files, value.files);
+    // Servers from 0.9.8 report indexed files per repository; ROOT alone needs no breakdown.
+    const repositories = Array.isArray(value.repositories) ? value.repositories : [];
+    // Git accounting: indexed / Git files, then what stays outside the index and why (sums are exact).
+    if (repositories.length >= 1 && repositories.some(item => Number.isFinite(item?.gitFiles)) || repositories.length > 1) for (const item of repositories) {
+      if (!Number.isFinite(item?.files)) continue;
+      const label = `${text.files} · ${item.path ? item.path : text.rootRepository}`;
+      if (!Number.isFinite(item.gitFiles)) { result.push({ label, value: compact(item.files, language) }); continue; }
+      const outside = Object.entries(item.outside ?? {}).filter(([, count]) => count > 0)
+        .map(([reason, count]) => `${count} ${reasonLabel(text, reason)}`);
+      result.push({ label, value: `${compact(item.indexedGitFiles, language)} / ${compact(item.gitFiles, language)} Git`
+        + (item.metadataOnly > 0 ? ` (${text.metadataOnlyOf.replace("{count}", compact(item.metadataOnly, language))})` : "")
+        + (outside.length ? ` · ${text.outsideIndex} : ${outside.join(", ")}` : "")
+        + (item.extra > 0 ? ` · ${item.extra} ${text.extraFiles}` : "") });
+    }
     pair(text.tokens, value.estimatedTokens);
     // Servers older than 0.6.2 only report `progress` (chunks being embedded).
     const embedded = value.embedded ?? (value.stage === "document_embedding" ? value.progress : undefined);

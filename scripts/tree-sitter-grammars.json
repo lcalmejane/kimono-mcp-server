@@ -1,0 +1,872 @@
+{
+  "_comment": "Third-party Tree-sitter grammars bundled in kimono-semantic (generated into semantic/src/grammars.rs by scripts/generate-grammars.mjs). Official grammars are matched first in main.rs. An extension belongs to one grammar only.",
+  "tree-sitter-swift": {
+    "LANGUAGE": [
+      "swift"
+    ]
+  },
+  "tree-sitter-yaml": {
+    "LANGUAGE": [
+      "yml",
+      "yaml"
+    ]
+  },
+  "tree-sitter-lua": {
+    "LANGUAGE": [
+      "lua"
+    ]
+  },
+  "tree-sitter-powershell": {
+    "LANGUAGE": [
+      "ps1",
+      "psm1",
+      "psd1"
+    ]
+  },
+  "tree-sitter-elixir": {
+    "LANGUAGE": [
+      "ex",
+      "exs"
+    ]
+  },
+  "tree-sitter-kotlin-ng": {
+    "LANGUAGE": [
+      "kt",
+      "kts"
+    ]
+  },
+  "tree-sitter-nix": {
+    "LANGUAGE": [
+      "nix"
+    ]
+  },
+  "tree-sitter-hcl": {
+    "LANGUAGE": [
+      "hcl",
+      "tf",
+      "tfvars",
+      "nomad"
+    ]
+  },
+  "tree-sitter-solidity": {
+    "LANGUAGE": [
+      "sol"
+    ]
+  },
+  "tree-sitter-toml-ng": {
+    "LANGUAGE": [
+      "toml"
+    ]
+  },
+  "tree-sitter-md": {
+    "LANGUAGE": [
+      "md",
+      "markdown"
+    ]
+  },
+  "tree-sitter-zig": {
+    "LANGUAGE": [
+      "zig"
+    ]
+  },
+  "tree-sitter-sequel": {
+    "LANGUAGE": [
+      "sql"
+    ]
+  },
+  "tree-sitter-r": {
+    "LANGUAGE": [
+      "r"
+    ]
+  },
+  "tree-sitter-dart": {
+    "LANGUAGE": [
+      "dart"
+    ]
+  },
+  "tree-sitter-objc": {
+    "LANGUAGE": [
+      "m",
+      "mm"
+    ]
+  },
+  "tree-sitter-proto": {
+    "LANGUAGE": [
+      "proto"
+    ]
+  },
+  "tree-sitter-xml": {
+    "LANGUAGE_XML": [
+      "xml",
+      "xsd",
+      "xsl",
+      "xslt",
+      "wsdl",
+      "plist",
+      "csproj",
+      "fsproj",
+      "vbproj",
+      "props",
+      "targets",
+      "nuspec",
+      "xaml",
+      "axaml",
+      "resx",
+      "storyboard"
+    ],
+    "LANGUAGE_DTD": [
+      "dtd"
+    ]
+  },
+  "tree-sitter-cmake": {
+    "LANGUAGE": [
+      "cmake"
+    ]
+  },
+  "tree-sitter-diff": {
+    "LANGUAGE": [
+      "diff",
+      "patch"
+    ]
+  },
+  "tree-sitter-make": {
+    "LANGUAGE": [
+      "mk",
+      "make"
+    ]
+  },
+  "tree-sitter-erlang": {
+    "LANGUAGE": [
+      "erl",
+      "hrl"
+    ]
+  },
+  "tree-sitter-graphql": {
+    "LANGUAGE": [
+      "graphql",
+      "gql"
+    ]
+  },
+  "tree-sitter-fortran": {
+    "LANGUAGE": [
+      "f",
+      "f90",
+      "f95",
+      "f03",
+      "f08",
+      "for"
+    ]
+  },
+  "tree-sitter-pascal": {
+    "LANGUAGE": [
+      "pas",
+      "dpr",
+      "lpr"
+    ]
+  },
+  "tree-sitter-fsharp": {
+    "LANGUAGE_FSHARP": [
+      "fs",
+      "fsx"
+    ],
+    "LANGUAGE_SIGNATURE": [
+      "fsi"
+    ]
+  },
+  "tree-sitter-tlaplus": {
+    "LANGUAGE": [
+      "tla"
+    ]
+  },
+  "tree-sitter-svelte-ng": {
+    "LANGUAGE": [
+      "svelte"
+    ]
+  },
+  "tree-sitter-astro-next": {
+    "LANGUAGE": [
+      "astro"
+    ]
+  },
+  "tree-sitter-containerfile": {
+    "LANGUAGE": [
+      "dockerfile",
+      "containerfile"
+    ]
+  },
+  "tree-sitter-groovy": {
+    "LANGUAGE": [
+      "groovy",
+      "gvy",
+      "gradle"
+    ]
+  },
+  "tree-sitter-elm": {
+    "LANGUAGE": [
+      "elm"
+    ]
+  },
+  "tree-sitter-ini": {
+    "LANGUAGE": [
+      "ini",
+      "cfg"
+    ]
+  },
+  "tree-sitter-clojure-orchard": {
+    "LANGUAGE": [
+      "clj",
+      "cljs",
+      "cljc",
+      "edn"
+    ]
+  },
+  "tree-sitter-starlark": {
+    "LANGUAGE": [
+      "bzl",
+      "star",
+      "bazel"
+    ]
+  },
+  "tree-sitter-gleam": {
+    "LANGUAGE": [
+      "gleam"
+    ]
+  },
+  "tree-sitter-vue-next": {
+    "LANGUAGE": [
+      "vue"
+    ]
+  },
+  "tree-sitter-odin": {
+    "LANGUAGE": [
+      "odin"
+    ]
+  },
+  "tree-sitter-elisp": {
+    "LANGUAGE": [
+      "el"
+    ]
+  },
+  "tree-sitter-vb-dotnet": {
+    "LANGUAGE": [
+      "vb"
+    ]
+  },
+  "tree-sitter-asm": {
+    "LANGUAGE": [
+      "asm",
+      "s"
+    ]
+  },
+  "tree-sitter-bicep": {
+    "LANGUAGE": [
+      "bicep"
+    ]
+  },
+  "tree-sitter-scheme": {
+    "LANGUAGE": [
+      "scm",
+      "ss"
+    ]
+  },
+  "tree-sitter-ql": {
+    "LANGUAGE": [
+      "ql",
+      "qll"
+    ]
+  },
+  "tree-sitter-gdscript": {
+    "LANGUAGE": [
+      "gd"
+    ]
+  },
+  "tree-sitter-cfml": {
+    "LANGUAGE_CFML": [
+      "cfm",
+      "cfml"
+    ],
+    "LANGUAGE_CFSCRIPT": [
+      "cfc"
+    ],
+    "LANGUAGE_CFQUERY": []
+  },
+  "tree-sitter-glsl": {
+    "LANGUAGE_GLSL": [
+      "glsl",
+      "vert",
+      "frag"
+    ]
+  },
+  "tree-sitter-nickel": {
+    "LANGUAGE": [
+      "ncl"
+    ]
+  },
+  "tree-sitter-dart-orchard": {
+    "LANGUAGE": []
+  },
+  "tree-sitter-commonlisp": {
+    "LANGUAGE_COMMONLISP": [
+      "lisp",
+      "cl"
+    ]
+  },
+  "tree-sitter-qmljs": {
+    "LANGUAGE": [
+      "qml"
+    ]
+  },
+  "tree-sitter-racket": {
+    "LANGUAGE": [
+      "rkt"
+    ]
+  },
+  "tree-sitter-heex": {
+    "LANGUAGE": [
+      "heex"
+    ]
+  },
+  "tree-sitter-matlab": {
+    "LANGUAGE": []
+  },
+  "tree-sitter-razor": {
+    "LANGUAGE": [
+      "cshtml",
+      "razor"
+    ]
+  },
+  "tree-sitter-cuda": {
+    "LANGUAGE": [
+      "cu",
+      "cuh"
+    ]
+  },
+  "tree-sitter-systemverilog": {
+    "LANGUAGE": []
+  },
+  "tree-sitter-d": {
+    "LANGUAGE": [
+      "d"
+    ]
+  },
+  "tree-sitter-vhdl": {
+    "LANGUAGE": [
+      "vhd",
+      "vhdl"
+    ]
+  },
+  "tree-sitter-zsh": {
+    "LANGUAGE": []
+  },
+  "tree-sitter-ada": {
+    "LANGUAGE": [
+      "adb",
+      "ads"
+    ]
+  },
+  "tree-sitter-ink-lbz": {
+    "LANGUAGE": [
+      "ink"
+    ]
+  },
+  "tree-sitter-comment": {
+    "LANGUAGE": []
+  },
+  "tree-sitter-rust-orchard": {
+    "LANGUAGE": []
+  },
+  "tree-sitter-devicetree": {
+    "LANGUAGE": [
+      "dts",
+      "dtsi"
+    ]
+  },
+  "tree-sitter-luau": {
+    "LANGUAGE": [
+      "luau"
+    ]
+  },
+  "tree-sitter-puppet": {
+    "LANGUAGE": [
+      "pp"
+    ]
+  },
+  "tree-sitter-hlsl": {
+    "LANGUAGE_HLSL": [
+      "hlsl"
+    ]
+  },
+  "tree-sitter-sdml": {
+    "LANGUAGE": [
+      "sdml"
+    ]
+  },
+  "tree-sitter-batch": {
+    "LANGUAGE": [
+      "bat",
+      "cmd"
+    ]
+  },
+  "tree-sitter-gomod-orchard": {
+    "LANGUAGE": [
+      "mod"
+    ]
+  },
+  "tree-sitter-properties": {
+    "LANGUAGE": [
+      "properties"
+    ]
+  },
+  "tree-sitter-llvm": {
+    "LANGUAGE": [
+      "ll"
+    ]
+  },
+  "tree-sitter-jinja2": {
+    "LANGUAGE": [
+      "jinja",
+      "jinja2",
+      "j2"
+    ]
+  },
+  "tree-sitter-rst": {
+    "LANGUAGE": [
+      "rst"
+    ]
+  },
+  "tree-sitter-javadoc": {
+    "LANGUAGE": []
+  },
+  "tree-sitter-prisma-io": {
+    "LANGUAGE": [
+      "prisma"
+    ]
+  },
+  "tree-sitter-arduino": {
+    "LANGUAGE": [
+      "ino"
+    ]
+  },
+  "tree-sitter-gitcommit": {
+    "LANGUAGE": []
+  },
+  "tree-sitter-nginx": {
+    "LANGUAGE": []
+  },
+  "tree-sitter-java-orchard": {
+    "LANGUAGE": []
+  },
+  "tree-sitter-newick": {
+    "LANGUAGE": [
+      "nwk",
+      "newick"
+    ]
+  },
+  "tree-sitter-gwbasic": {
+    "LANGUAGE": [
+      "bas"
+    ]
+  },
+  "tree-sitter-msbasic2": {
+    "LANGUAGE": []
+  },
+  "tree-sitter-qbasic": {
+    "LANGUAGE": []
+  },
+  "tree-sitter-templ": {
+    "LANGUAGE": [
+      "templ"
+    ]
+  },
+  "tree-sitter-tsquery": {
+    "LANGUAGE": []
+  },
+  "tree-sitter-clingo": {
+    "LANGUAGE": [
+      "lp"
+    ]
+  },
+  "tree-sitter-applesoft": {
+    "LANGUAGE": []
+  },
+  "tree-sitter-gosum-orchard": {
+    "LANGUAGE": [
+      "sum"
+    ]
+  },
+  "tree-sitter-kconfig": {
+    "LANGUAGE": []
+  },
+  "tree-sitter-slang": {
+    "LANGUAGE_SLANG": [
+      "slang"
+    ]
+  },
+  "tree-sitter-reinhardt-head": {
+    "LANGUAGE": []
+  },
+  "tree-sitter-reinhardt-form": {
+    "LANGUAGE": []
+  },
+  "tree-sitter-reinhardt-page": {
+    "LANGUAGE": []
+  },
+  "tree-sitter-bpf-c": {
+    "LANGUAGE": []
+  },
+  "tree-sitter-wgsl-bevy": {
+    "LANGUAGE": [
+      "wgsl"
+    ]
+  },
+  "tree-sitter-python-orchard": {
+    "LANGUAGE": []
+  },
+  "tree-sitter-harn": {
+    "LANGUAGE": [
+      "harn"
+    ]
+  },
+  "tree-sitter-postgres": {
+    "LANGUAGE": [
+      "pgsql"
+    ],
+    "LANGUAGE_PLPGSQL": []
+  },
+  "tree-sitter-cypher": {
+    "LANGUAGE": [
+      "cypher"
+    ]
+  },
+  "tree-sitter-dm": {
+    "LANGUAGE": [
+      "dm",
+      "dme"
+    ]
+  },
+  "tree-sitter-jsonnet": {
+    "LANGUAGE": [
+      "jsonnet",
+      "libsonnet"
+    ]
+  },
+  "tree-sitter-sparql": {
+    "LANGUAGE": [
+      "sparql",
+      "rq"
+    ]
+  },
+  "tree-sitter-requirements": {
+    "LANGUAGE": []
+  },
+  "tree-sitter-souffle": {
+    "LANGUAGE": [
+      "dl"
+    ]
+  },
+  "tree-sitter-yarnlock": {
+    "LANGUAGE": []
+  },
+  "tree-sitter-merlin6502": {
+    "LANGUAGE": []
+  },
+  "tree-sitter-printf": {
+    "LANGUAGE": []
+  },
+  "tree-sitter-mdn": {
+    "LANGUAGE": []
+  },
+  "tree-sitter-zathurarc": {
+    "LANGUAGE": []
+  },
+  "tree-sitter-prolog": {
+    "LANGUAGE": [
+      "pro",
+      "prolog"
+    ]
+  },
+  "tree-sitter-godot-resource": {
+    "LANGUAGE": [
+      "tscn",
+      "tres"
+    ]
+  },
+  "tree-sitter-openscad-ng": {
+    "LANGUAGE": [
+      "scad"
+    ]
+  },
+  "tree-sitter-integerbasic": {
+    "LANGUAGE": []
+  },
+  "tree-sitter-crystal": {
+    "LANGUAGE": [
+      "cr"
+    ]
+  },
+  "tree-sitter-cfengine": {
+    "LANGUAGE": [
+      "cf"
+    ]
+  },
+  "tree-sitter-tmux": {
+    "LANGUAGE": []
+  },
+  "tree-sitter-flatbuffers": {
+    "LANGUAGE": [
+      "fbs"
+    ]
+  },
+  "tree-sitter-t32": {
+    "LANGUAGE": [
+      "cmm"
+    ]
+  },
+  "tree-sitter-gdshader": {
+    "LANGUAGE": [
+      "gdshader"
+    ]
+  },
+  "tree-sitter-mermaid": {
+    "LANGUAGE": [
+      "mmd",
+      "mermaid"
+    ]
+  },
+  "tree-sitter-muttrc": {
+    "LANGUAGE": []
+  },
+  "tree-sitter-kdl": {
+    "LANGUAGE": [
+      "kdl"
+    ]
+  },
+  "tree-sitter-sysml": {
+    "LANGUAGE": [
+      "sysml"
+    ]
+  },
+  "tree-sitter-objectscript": {
+    "LANGUAGE_OBJECTSCRIPT_UDL": [
+      "cls"
+    ]
+  },
+  "tree-sitter-ocamllex": {
+    "LANGUAGE": [
+      "mll"
+    ]
+  },
+  "tree-sitter-irules": {
+    "LANGUAGE": [
+      "irul"
+    ]
+  },
+  "tree-sitter-rigz": {
+    "LANGUAGE": [
+      "rigz"
+    ]
+  },
+  "tree-sitter-nim": {
+    "LANGUAGE": [
+      "nim",
+      "nims"
+    ]
+  },
+  "tree-sitter-fluentbit": {
+    "LANGUAGE": []
+  },
+  "tree-sitter-jinja-dialects": {
+    "LANGUAGE": []
+  },
+  "tree-sitter-ql-dbscheme": {
+    "LANGUAGE": [
+      "dbscheme"
+    ]
+  },
+  "tree-sitter-bsl": {
+    "LANGUAGE": [
+      "bsl",
+      "os"
+    ]
+  },
+  "tree-sitter-mlir": {
+    "LANGUAGE": [
+      "mlir"
+    ]
+  },
+  "tree-sitter-mage": {
+    "LANGUAGE": []
+  },
+  "tree-sitter-lammps": {
+    "LANGUAGE": []
+  },
+  "tree-sitter-rush": {
+    "LANGUAGE": []
+  },
+  "tree-sitter-rules": {
+    "LANGUAGE": []
+  },
+  "tree-sitter-pact": {
+    "LANGUAGE": [
+      "pact"
+    ]
+  },
+  "tree-sitter-riscv": {
+    "LANGUAGE": []
+  },
+  "tree-sitter-slint": {
+    "LANGUAGE": [
+      "slint"
+    ]
+  },
+  "tree-sitter-arkts": {
+    "LANGUAGE": [
+      "ets"
+    ]
+  },
+  "tree-sitter-lolcode": {
+    "LANGUAGE": [
+      "lol"
+    ]
+  },
+  "tree-sitter-grug": {
+    "LANGUAGE": [
+      "grug"
+    ]
+  },
+  "tree-sitter-rsml": {
+    "LANGUAGE": [
+      "rsml"
+    ]
+  },
+  "tree-sitter-adl": {
+    "LANGUAGE": [
+      "adl"
+    ]
+  },
+  "tree-sitter-owl-ms": {
+    "LANGUAGE": [
+      "omn"
+    ]
+  },
+  "tree-sitter-quirrel": {
+    "LANGUAGE": [
+      "nut"
+    ]
+  },
+  "tree-sitter-blk": {
+    "LANGUAGE": [
+      "blk"
+    ]
+  },
+  "tree-sitter-golang": {
+    "LANGUAGE": []
+  },
+  "tree-sitter-daslang": {
+    "LANGUAGE": [
+      "das"
+    ]
+  },
+  "tree-sitter-hygen-template": {
+    "LANGUAGE": []
+  },
+  "tree-sitter-dshl": {
+    "LANGUAGE": [
+      "dshl"
+    ]
+  },
+  "tree-sitter-dafny": {
+    "LANGUAGE": [
+      "dfy"
+    ]
+  },
+  "tree-sitter-mozcpp-code-split": {
+    "LANGUAGE": []
+  },
+  "tree-sitter-ccomment-code-split": {
+    "LANGUAGE": []
+  },
+  "tree-sitter-preproc-code-split": {
+    "LANGUAGE": []
+  },
+  "tree-sitter-mozjs-code-split": {
+    "LANGUAGE": []
+  },
+  "tree-sitter-vlang": {
+    "LANGUAGE": []
+  },
+  "tree-sitter-actions": {
+    "LANGUAGE": []
+  },
+  "tree-sitter-d2": {
+    "LANGUAGE": [
+      "d2"
+    ]
+  },
+  "tree-sitter-structured-text": {
+    "LANGUAGE": [
+      "st"
+    ]
+  },
+  "tree-sitter-epics-db": {
+    "LANGUAGE": []
+  },
+  "tree-sitter-netlinx": {
+    "LANGUAGE": [
+      "axs",
+      "axi"
+    ]
+  },
+  "tree-sitter-json5-orchard": {
+    "LANGUAGE": [
+      "json5"
+    ]
+  },
+  "tree-sitter-gh-actions-expressions": {
+    "LANGUAGE": []
+  },
+  "tree-sitter-varlink": {
+    "LANGUAGE": [
+      "varlink"
+    ]
+  },
+  "tree-sitter-xcompose": {
+    "LANGUAGE": []
+  },
+  "_excluded": {
+    "tree-sitter-jq": {
+      "license": "GPL-3.0-or-later",
+      "reason": "Copyleft licence incompatible with static linking into the MIT kimono-semantic binary; re-enable only with a licence decision.",
+      "languages": {
+        "LANGUAGE": [
+          "jq"
+        ]
+      }
+    },
+    "tree-sitter-toon": {
+      "license": "GPL-3.0-or-later",
+      "reason": "Copyleft licence incompatible with static linking into the MIT kimono-semantic binary; re-enable only with a licence decision.",
+      "languages": {
+        "LANGUAGE": [
+          "toon"
+        ]
+      }
+    },
+    "tree-sitter-caddy": {
+      "license": "GPL-3.0",
+      "reason": "Copyleft licence incompatible with static linking into the MIT kimono-semantic binary; re-enable only with a licence decision.",
+      "languages": {
+        "LANGUAGE": []
+      }
+    },
+    "tree-sitter-fsm": {
+      "license": "LGPL-3.0-or-later",
+      "reason": "Copyleft licence incompatible with static linking into the MIT kimono-semantic binary; re-enable only with a licence decision.",
+      "languages": {
+        "LANGUAGE": [
+          "fsm"
+        ]
+      }
+    }
+  }
+}

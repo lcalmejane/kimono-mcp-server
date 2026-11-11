@@ -1,3 +1,4 @@
+mod grammars;
 use embsearch_core::{Database, Embedder, Metric, ModelSpec};
 mod device;
 mod model;
@@ -372,7 +373,19 @@ fn chunk_documents(documents: Vec<Document>, policy: PassagePolicy) -> BTreeMap<
     let mut result = BTreeMap::new();
     for document in documents {
         let code = is_code_source(&document.path);
-        let syntax_lines = code
+        // JSON is not code (documents profile) but is still split on its top-level keys.
+        let json = matches!(
+            Path::new(&document.path)
+                .extension()
+                .and_then(|value| value.to_str()),
+            Some("json" | "jsonc")
+        );
+        // Any file whose extension has a bundled grammar is split on its definitions (documents included).
+        let parsed = Path::new(&document.path)
+            .extension()
+            .and_then(|value| value.to_str())
+            .is_some_and(|value| grammars::language_for(&value.to_ascii_lowercase()).is_some());
+        let syntax_lines = (code || json || parsed)
             .then(|| syntax_definition_lines(&document.path, &document.content))
             .flatten();
         let mut text = String::new();
@@ -491,18 +504,38 @@ fn syntax_definition_lines(path: &str, content: &str) -> Option<BTreeSet<usize>>
         return None;
     }
     let extension = Path::new(path).extension()?.to_str()?.to_ascii_lowercase();
+    let mut third_party = false;
     let language: tree_sitter::Language = match extension.as_str() {
+        "agda" => tree_sitter_agda::LANGUAGE.into(),
         "c" | "h" => tree_sitter_c::LANGUAGE.into(),
-        "cc" | "cpp" | "hpp" => tree_sitter_cpp::LANGUAGE.into(),
+        "css" => tree_sitter_css::LANGUAGE.into(),
+        "erb" | "ejs" => tree_sitter_embedded_template::LANGUAGE.into(),
+        "hs" | "lhs" => tree_sitter_haskell::LANGUAGE.into(),
+        "html" | "htm" => tree_sitter_html::LANGUAGE.into(),
+        "jl" => tree_sitter_julia::LANGUAGE.into(),
+        "json" | "jsonc" => tree_sitter_json::LANGUAGE.into(),
+        "ml" => tree_sitter_ocaml::LANGUAGE_OCAML.into(),
+        "mli" => tree_sitter_ocaml::LANGUAGE_OCAML_INTERFACE.into(),
+        "v" | "vh" | "sv" | "svh" => tree_sitter_verilog::LANGUAGE.into(),
+        "cc" | "cpp" | "cxx" | "c++" | "hpp" | "hh" | "hxx" | "inl" | "ipp" => {
+            tree_sitter_cpp::LANGUAGE.into()
+        }
+        "cs" | "csx" => tree_sitter_c_sharp::LANGUAGE.into(),
         "go" => tree_sitter_go::LANGUAGE.into(),
         "java" => tree_sitter_java::LANGUAGE.into(),
-        "js" | "jsx" | "mjs" => tree_sitter_javascript::LANGUAGE.into(),
-        "php" => tree_sitter_php::LANGUAGE_PHP.into(),
-        "py" => tree_sitter_python::LANGUAGE.into(),
+        "js" | "jsx" | "mjs" | "cjs" => tree_sitter_javascript::LANGUAGE.into(),
+        "php" | "phtml" => tree_sitter_php::LANGUAGE_PHP.into(),
+        "py" | "pyi" | "pyw" => tree_sitter_python::LANGUAGE.into(),
+        "rb" | "rake" | "gemspec" => tree_sitter_ruby::LANGUAGE.into(),
         "rs" => tree_sitter_rust::LANGUAGE.into(),
-        "ts" => tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
+        "scala" | "sc" | "sbt" => tree_sitter_scala::LANGUAGE.into(),
+        "sh" | "bash" | "zsh" | "ksh" => tree_sitter_bash::LANGUAGE.into(),
+        "ts" | "mts" | "cts" => tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
         "tsx" => tree_sitter_typescript::LANGUAGE_TSX.into(),
-        _ => return None,
+        other => {
+            third_party = true;
+            grammars::language_for(other)?
+        }
     };
     let mut parser = tree_sitter::Parser::new();
     parser.set_language(&language).ok()?;
@@ -515,36 +548,188 @@ fn syntax_definition_lines(path: &str, content: &str) -> Option<BTreeSet<usize>>
     let mut cursor = root.walk();
     let mut visited = vec![root];
     while let Some(node) = visited.pop() {
-        if is_syntax_definition(node.kind()) {
+        if node.is_named()
+            && (is_syntax_definition(node)
+                || third_party && grammars::is_generic_definition(node.kind()))
+        {
+            lines.insert(node.start_position().row + 1);
+        }
+        // JSDoc blocks in JavaScript/TypeScript: @typedef, @callback and @interface declare types.
+        if node.kind() == "comment"
+            && jsdoc_declares_type(node.utf8_text(content.as_bytes()).unwrap_or(""))
+        {
             lines.insert(node.start_position().row + 1);
         }
         for child in node.children(&mut cursor) {
             visited.push(child);
         }
     }
-    Some(lines)
+    (!lines.is_empty()).then_some(lines)
 }
 
-fn is_syntax_definition(kind: &str) -> bool {
-    matches!(
-        kind,
-        "class_declaration"
-            | "class_definition"
-            | "class_method"
-            | "enum_item"
-            | "function_declaration"
-            | "function_definition"
-            | "function_item"
-            | "impl_item"
-            | "interface_declaration"
-            | "method_declaration"
-            | "method_definition"
-            | "mod_item"
-            | "struct_item"
-            | "trait_declaration"
-            | "trait_item"
-            | "type_alias_declaration"
-    )
+/// Parses a `/** … */` comment with the JSDoc grammar and reports a type-declaring tag.
+fn jsdoc_declares_type(comment: &str) -> bool {
+    if !comment.starts_with("/**") {
+        return false;
+    }
+    let mut parser = tree_sitter::Parser::new();
+    if parser
+        .set_language(&tree_sitter_jsdoc::LANGUAGE.into())
+        .is_err()
+    {
+        return false;
+    }
+    let Some(tree) = parser.parse(comment, None) else {
+        return false;
+    };
+    let mut cursor = tree.root_node().walk();
+    let mut pending = vec![tree.root_node()];
+    while let Some(node) = pending.pop() {
+        if node.kind() == "tag_name"
+            && matches!(
+                node.utf8_text(comment.as_bytes()).unwrap_or(""),
+                "@typedef" | "@callback" | "@interface"
+            )
+        {
+            return true;
+        }
+        pending.extend(node.children(&mut cursor));
+    }
+    false
+}
+
+/// Every grammar bundled in the engine, by name (used to verify that each one loads).
+#[cfg(test)]
+fn bundled_languages() -> Vec<(&'static str, tree_sitter::Language)> {
+    vec![
+        ("agda", tree_sitter_agda::LANGUAGE.into()),
+        ("bash", tree_sitter_bash::LANGUAGE.into()),
+        ("c", tree_sitter_c::LANGUAGE.into()),
+        ("c-sharp", tree_sitter_c_sharp::LANGUAGE.into()),
+        ("cpp", tree_sitter_cpp::LANGUAGE.into()),
+        ("css", tree_sitter_css::LANGUAGE.into()),
+        (
+            "embedded-template",
+            tree_sitter_embedded_template::LANGUAGE.into(),
+        ),
+        ("go", tree_sitter_go::LANGUAGE.into()),
+        ("haskell", tree_sitter_haskell::LANGUAGE.into()),
+        ("html", tree_sitter_html::LANGUAGE.into()),
+        ("java", tree_sitter_java::LANGUAGE.into()),
+        ("javascript", tree_sitter_javascript::LANGUAGE.into()),
+        ("jsdoc", tree_sitter_jsdoc::LANGUAGE.into()),
+        ("json", tree_sitter_json::LANGUAGE.into()),
+        ("julia", tree_sitter_julia::LANGUAGE.into()),
+        ("ocaml", tree_sitter_ocaml::LANGUAGE_OCAML.into()),
+        (
+            "ocaml-interface",
+            tree_sitter_ocaml::LANGUAGE_OCAML_INTERFACE.into(),
+        ),
+        ("ocaml-type", tree_sitter_ocaml::LANGUAGE_OCAML_TYPE.into()),
+        ("php", tree_sitter_php::LANGUAGE_PHP.into()),
+        ("php-only", tree_sitter_php::LANGUAGE_PHP_ONLY.into()),
+        ("python", tree_sitter_python::LANGUAGE.into()),
+        ("regex", tree_sitter_regex::LANGUAGE.into()),
+        ("ruby", tree_sitter_ruby::LANGUAGE.into()),
+        ("rust", tree_sitter_rust::LANGUAGE.into()),
+        ("scala", tree_sitter_scala::LANGUAGE.into()),
+        ("tsx", tree_sitter_typescript::LANGUAGE_TSX.into()),
+        (
+            "typescript",
+            tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
+        ),
+        ("verilog", tree_sitter_verilog::LANGUAGE.into()),
+    ]
+}
+
+/// Named definition nodes across the bundled grammars (only named nodes are tested, never keywords).
+fn is_syntax_definition(node: tree_sitter::Node) -> bool {
+    match node.kind() {
+        // C, C++, C#, Go, Java, JavaScript/TypeScript, PHP, Python, Rust, Scala, Bash.
+        "abstract_class_declaration"
+        | "annotation_type_declaration"
+        | "class_declaration"
+        | "class_definition"
+        | "class_method"
+        | "constructor_declaration"
+        | "enum_declaration"
+        | "enum_item"
+        | "function_declaration"
+        | "function_definition"
+        | "function_item"
+        | "generator_function_declaration"
+        | "impl_item"
+        | "interface_declaration"
+        | "internal_module"
+        | "macro_definition"
+        | "method_declaration"
+        | "method_definition"
+        | "mod_item"
+        | "module"
+        | "namespace_declaration"
+        | "namespace_definition"
+        | "object_definition"
+        | "record_declaration"
+        | "struct_declaration"
+        | "struct_item"
+        | "template_declaration"
+        | "trait_declaration"
+        | "trait_definition"
+        | "trait_item"
+        | "type_alias_declaration"
+        | "type_declaration"
+        | "type_item"
+        | "union_item"
+        // Agda, Haskell (`bind` is a definition without arguments).
+        | "bind"
+        | "data"
+        | "data_type"
+        | "function"
+        | "instance"
+        | "newtype"
+        | "record"
+        | "type_family"
+        | "type_synonym"
+        // Julia.
+        | "abstract_definition"
+        | "module_definition"
+        | "struct_definition"
+        // OCaml.
+        | "exception_definition"
+        | "external"
+        | "module_type_definition"
+        | "type_definition"
+        | "value_definition"
+        | "value_specification"
+        // Verilog / SystemVerilog.
+        | "module_declaration"
+        | "package_declaration"
+        | "program_declaration"
+        | "task_declaration"
+        // CSS rules; HTML script and style blocks.
+        | "keyframes_statement"
+        | "media_statement"
+        | "rule_set"
+        | "script_element"
+        | "style_element" => true,
+        // Ruby.
+        "class" | "method" | "singleton_method" => true,
+        // C/C++ class or struct with a body (not a mere `struct point p;` reference).
+        // JSON: top-level keys of the root object.
+        "pair" => node
+            .parent()
+            .and_then(|object| object.parent())
+            .is_some_and(|parent| parent.kind() == "document"),
+        "class_specifier" | "struct_specifier" => node.child_by_field_name("body").is_some(),
+        // JavaScript/TypeScript `const handler = () => …` or `= function () …`.
+        "variable_declarator" => node.child_by_field_name("value").is_some_and(|value| {
+            matches!(
+                value.kind(),
+                "arrow_function" | "function_expression" | "function" | "generator_function"
+            )
+        }),
+        _ => false,
+    }
 }
 
 fn is_code_source(path: &str) -> bool {
@@ -555,9 +740,45 @@ fn is_code_source(path: &str) -> bool {
     matches!(
         extension.as_deref(),
         Some(
-            "c" | "cc"
+            "agda"
+                | "bash"
+                | "css"
+                | "ejs"
+                | "erb"
+                | "hs"
+                | "htm"
+                | "html"
+                | "jl"
+                | "lhs"
+                | "ml"
+                | "mli"
+                | "sv"
+                | "svh"
+                | "v"
+                | "vh"
+                | "c"
+                | "c++"
+                | "cc"
+                | "cjs"
                 | "cpp"
                 | "cs"
+                | "csx"
+                | "cts"
+                | "cxx"
+                | "gemspec"
+                | "hh"
+                | "hxx"
+                | "inl"
+                | "ipp"
+                | "ksh"
+                | "mts"
+                | "phtml"
+                | "pyi"
+                | "pyw"
+                | "rake"
+                | "sbt"
+                | "sc"
+                | "zsh"
                 | "go"
                 | "h"
                 | "hpp"
@@ -1461,6 +1682,62 @@ mod tests {
         }]);
         assert_eq!(result.len(), 1);
         assert_eq!(result.values().next().unwrap().text, "first\n\nthird\n");
+    }
+
+    #[test]
+    fn every_bundled_grammar_loads_and_parses() {
+        for (name, language) in bundled_languages().into_iter().chain(grammars::all()) {
+            let mut parser = tree_sitter::Parser::new();
+            parser
+                .set_language(&language)
+                .unwrap_or_else(|error| panic!("{name}: {error}"));
+            assert!(parser.parse("x", None).is_some(), "{name}: no tree");
+        }
+    }
+
+    #[test]
+    fn tree_sitter_recognises_definitions_in_every_bundled_grammar() {
+        let cases: &[(&str, &str, &[usize])] = &[
+            ("a.c", "struct point { int x; };\nstruct point p;\nint main(void) { return 0; }\n", &[1, 3]),
+            ("a.hpp", "namespace n {\nclass A { void f(); };\n}\ntemplate <typename T> T id(T v) { return v; }\n", &[1, 2, 4]),
+            ("a.cs", "namespace N {\nrecord R(int X);\nclass C {\n  C() {}\n  void M() {}\n}\n}\n", &[1, 2, 3, 4, 5]),
+            ("a.go", "package p\ntype T struct{}\nfunc (t T) M() {}\nfunc F() {}\n", &[2, 3, 4]),
+            ("A.java", "enum E { A }\nrecord R(int x) {}\nclass C {\n  C() {}\n}\n", &[1, 2, 3, 4]),
+            ("a.cjs", "const handler = () => 1;\nfunction* gen() {}\nconst value = 2;\n", &[1, 2]),
+            ("a.mts", "export enum E { A }\nnamespace N {}\nabstract class B {}\n", &[1, 2, 3]),
+            ("a.tsx", "export const View = function () { return null; };\n", &[1]),
+            ("a.php", "<?php\nenum Suit {}\nclass C { function m() {} }\n", &[2, 3]),
+            ("a.pyi", "class C:\n    def m(self): ...\n", &[1, 2]),
+            ("a.rb", "module M\n  class C\n    def m; end\n    def self.s; end\n  end\nend\n", &[1, 2, 3, 4]),
+            ("a.rs", "macro_rules! m { () => {} }\ntype T = u8;\nunion U { a: u8 }\n", &[1, 2, 3]),
+            ("a.scala", "object O {\n  def f(): Int = 1\n}\ntrait T\nclass C\n", &[1, 2, 4, 5]),
+            ("a.sh", "deploy() {\n  echo ok\n}\n", &[1]),
+            ("a.cxx", "int f() { return 0; }\n", &[1]),
+            ("a.phtml", "<?php function f() {}\n", &[1]),
+            ("A.agda", "data Bool : Set where\n  true : Bool\nid : Bool → Bool\nid x = x\n", &[1, 2, 3, 4]),
+            ("a.css", "a { color: red; }\n@media print {\n  b { color: blue; }\n}\n", &[1, 2, 3]),
+            ("A.hs", "module A where\ndata T = T\nf :: Int\nf = 1\n", &[1, 2, 4]),
+            ("a.jl", "module M\nstruct P end\nfunction f() end\nend\n", &[1, 2, 3]),
+            ("a.ml", "let f x = x\ntype t = int\nmodule M = struct end\n", &[1, 2, 3]),
+            ("a.mli", "val f : int -> int\n", &[1]),
+            ("a.sv", "module m;\nendmodule\n", &[1]),
+            ("a.html", "<p>x</p>\n<script>let a = 1;</script>\n", &[2]),
+            ("a.json", "{\n  \"name\": \"k\",\n  \"deps\": { \"a\": 1 }\n}\n", &[2, 3]),
+            ("a.js", "/**\n * @typedef {object} User\n */\nconst x = 1;\n", &[1]),
+            // Third-party grammars, generic definition kinds.
+            ("a.swift", "func f() {}\nclass C {}\nlet x = 1\n", &[1, 2]),
+            ("a.kt", "fun f() {}\nclass C\nval x = 1\n", &[1, 2]),
+            ("a.lua", "local x = 1\nfunction f() end\n", &[2]),
+        ];
+        for &(path, content, expected) in cases {
+            let lines = syntax_definition_lines(path, content)
+                .unwrap_or_else(|| panic!("{path}: no syntax tree"));
+            assert_eq!(
+                lines.into_iter().collect::<Vec<_>>(),
+                expected.to_vec(),
+                "{path}"
+            );
+        }
     }
 
     #[test]

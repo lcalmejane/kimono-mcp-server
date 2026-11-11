@@ -132,3 +132,17 @@ it('defaults to auto-speed unless the host pins a policy, and keeps an explicit 
   vi.stubEnv('KIMONO_EMBEDDING_POLICY', 'auto-balanced');
   expect(configuredEmbeddingPolicy()).toBe('auto-balanced');
 });
+
+it('a new embedding policy stops the running index operation instead of waiting for it', async () => {
+  const knowledge = await fixture();
+  process.env.KIMONO_MODEL_DIR = 'unused-test-model';
+  const engine = hangingEngine();
+  knowledge.semanticIndex.warmup();
+  await until(() => engine.embedding === 1);
+  expect(knowledge.semanticIndex.status().phase).toBe('running');
+  // Models are not installed in this fixture: the policy is saved and the hung build is gone.
+  await knowledge.semanticIndex.configureModels('auto-speed', true);
+  expect(knowledge.semanticIndex.status().phase).not.toBe('running');
+  const settings = JSON.parse(await readFile(path.join(knowledge.searchIndex.directory, 'embedding-settings.json'), 'utf8'));
+  expect(settings.requestedPolicy).toBe('auto-speed');
+});

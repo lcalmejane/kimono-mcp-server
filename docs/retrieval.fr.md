@@ -23,10 +23,39 @@ Transmettre le `snapshotId` retourné à chaque requête `aikido_search` et
 
 Un snapshot fige le corpus afin que les recherches et lectures utilisent les
 mêmes fichiers, même si les sources changent. En ouvrir un nouveau pour voir les
-modifications. Les snapshots expirent après 15 minutes. Par défaut, 8 snapshots
+modifications. Les snapshots expirent après 15 minutes sans usage (durée glissante, voir ci-dessous). Par défaut, 8 snapshots
 peuvent être actifs ; les budgets d'octets globaux et par snapshot dépendent du
 mode. `begin` accepte des `paths` relatifs au ROOT pour ne capturer que certains
 fichiers ou répertoires. La réponse indique les limites effectives.
+
+### Snapshots partagés (portée)
+
+Par défaut (`KIMONO_SNAPSHOT_SCOPE=prompt`), un snapshot sert tout un prompt :
+
+- `begin` renvoie votre snapshot vivant (`reused: true`) si le corpus n'a pas
+  changé depuis sa capture, pour le même utilisateur, `owner` et `paths`. Tout
+  changement (votre modification, celle d'un autre utilisateur, une révision
+  publiée, une nouvelle modification préparée dans l'overlay) donne une nouvelle
+  capture : « en ouvrir un nouveau pour voir les modifications » reste vrai.
+  `fresh: true` capture toujours.
+- Un orchestrateur transmet son `snapshotId` aux agents délégués : ils cherchent
+  alors dans le même corpus, même si des fichiers changent entre-temps.
+- `end` libère (`retained: true`). Un snapshot libéré se ferme seul après
+  `KIMONO_SNAPSHOT_IDLE_MS` (120 s par défaut) sans usage ; un snapshot jamais
+  terminé par son détenteur se ferme après `KIMONO_SNAPSHOT_HELD_IDLE_MS` (par
+  défaut la durée de vie) ; tous se ferment à l'arrêt du serveur. Un snapshot
+  remplacé reste lisible par ses détenteurs jusque-là.
+- La durée de vie glisse avec l'usage, jusqu'à `KIMONO_SNAPSHOT_MAX_MS` (1 h). À
+  la limite de nombre ou d'octets, les snapshots libérés sont fermés d'abord (le
+  moins récemment utilisé) ; un `begin` n'échoue que si tous sont en usage.
+- Derrière un proxy de confiance (`KIMONO_TRUST_GIT_PROFILE_HEADER=true`, par
+  exemple Tatami : une instance par projet pour de nombreux utilisateurs),
+  l'en-tête `x-kimono-principal` désigne l'utilisateur ; un snapshot n'est jamais
+  partagé entre utilisateurs. `owner` garde son sens (fusion de l'overlay préparé
+  de cet utilisateur).
+
+`session` garde un snapshot pour la session du serveur ; `call` rétablit un
+snapshot par `begin`/`end` (chaque `end` ferme immédiatement).
 
 ## Rechercher
 

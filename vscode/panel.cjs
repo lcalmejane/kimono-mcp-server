@@ -106,7 +106,8 @@ function registerManagement(vscode, context, host) {
       version, language, trusted: vscode.workspace.isTrusted,
       settings: Object.fromEntries(["mode", "corpusMode", "url", "configFile", "gitProfileFile"].map(key => [key, config().get(key)])),
       hasToken: Boolean(await context.secrets.get(tokenKey)),
-      folders: folderStates(),
+      folders: await Promise.all(folderStates().map(async (folder, index) => ({ ...folder,
+        indexed: host.indexedRepositories ? await host.indexedRepositories(embeddedFolders()[index]) : [] }))),
       actions: Object.fromEntries(Object.entries(nativeActions).map(([key, [command]]) => [key, available.has(command)])),
     };
   }
@@ -251,6 +252,11 @@ function registerManagement(vscode, context, host) {
           else if (message.action === "search") await post({ type: "search", value: await search(message.folder, message.input) });
           else if (message.action === "setToken") { await vscode.commands.executeCommand("kimono.setToken"); await post({ type: "done" }); }
           else if (message.action === "clearToken") { await vscode.commands.executeCommand("kimono.clearToken"); await post({ type: "done" }); }
+          else if (message.action === "autoconfig") {
+            const result = await vscode.commands.executeCommand("kimono.autoconfig", { quiet: true });
+            await post({ type: "done", message: l(`Autoconfig done: ${result.repositories} repositories declared; ${result.files.join(", ") || "no .mcp.json"} updated.`,
+              `Autoconfig terminée : ${result.repositories} dépôts déclarés ; ${result.files.join(", ") || "aucun .mcp.json"} à jour.`) });
+          }
           else if (message.action === "settings") { await vscode.commands.executeCommand("kimono.configure"); await post({ type: "done" }); }
           else {
             const native = Object.hasOwn(nativeActions, message.action) && nativeActions[message.action];

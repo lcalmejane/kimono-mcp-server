@@ -15,6 +15,8 @@ use tokenizers::{Tokenizer, TruncationParams};
 use crate::Result;
 
 const JINA_CODE_MODEL_PREFIX: &str = "jina-embeddings-v2-base-code@";
+/// Bundled legacy model, kept on the generic embedder so existing E5 indexes stay byte-identical.
+const BUNDLED_E5_PREFIX: &str = "multilingual-e5-small";
 const MODEL2VEC_BACKEND: &str = "model2vec";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -110,7 +112,12 @@ pub fn load_embedder(model: &Path) -> Result<Box<dyn Embedder>> {
     let backend = backend_for(model)?;
     match backend {
         Backend::Model2Vec => Ok(Box::new(Model2VecEmbedder::from_dir(model, spec)?)),
-        Backend::Onnx if spec.name.starts_with(JINA_CODE_MODEL_PREFIX) => {
+        // Catalogue ONNX models (Jina, BGE-M3, E5 large, Nomic, mxbai, MiniLM) declare different inputs:
+        // XLM-R graphs have no token_type_ids. The adapter feeds only the inputs each graph declares.
+        Backend::Onnx
+            if spec.name.starts_with(JINA_CODE_MODEL_PREFIX)
+                || !spec.name.starts_with(BUNDLED_E5_PREFIX) =>
+        {
             Ok(Box::new(JinaCodeEmbedder::from_dir(model, spec)?))
         }
         Backend::Onnx => Ok(Box::new(OnnxEmbedder::from_dir(model)?)),
@@ -553,7 +560,7 @@ impl JinaCodeEmbedder {
                 "position_ids" => Value::from_array(positions.clone()).map_err(embedding_error)?,
                 name => {
                     return Err(embedding_error(format!(
-                        "Unsupported ONNX input '{name}' for the Jina code model adapter"
+                        "Unsupported ONNX input '{name}' for the ONNX model adapter"
                     )))
                 }
             };

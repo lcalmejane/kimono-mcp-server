@@ -35,6 +35,10 @@ ENV KIMONO_CACHE_DIR=/home/node/.cache/kimono \
 WORKDIR /app
 
 FROM tooling AS semantic-build
+# ~200 Tree-sitter grammars are large C files (1-2 GB RAM each at -O): bound parallel compilation
+# so an 8 GB Docker VM does not run out of memory. Raise on bigger builders.
+ARG CARGO_BUILD_JOBS=4
+ENV CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS}
 ENV ORT_SKIP_DOWNLOAD=1
 WORKDIR /semantic
 COPY semantic/Cargo.toml semantic/Cargo.lock ./

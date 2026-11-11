@@ -88,7 +88,7 @@ describe('embedding policies and persisted selection', () => {
     await expect(runtimeFor(knowledge).call('aikido_models', { operation: 'install', model: 'code' })).rejects.toThrow('confirmation');
     await expect(runtimeFor(knowledge).call('aikido_models', { operation: 'install', model: '../model', confirmed: true })).rejects.toThrow('Unknown');
     const status = JSON.parse(await runtimeFor(knowledge).call('aikido_models', { operation: 'status' }));
-    expect(status.models.map((model: { id: string }) => model.id)).toEqual(['code', 'multilingual-fast', 'e5']);
+    expect(status.models.map((model: { id: string }) => model.id)).toEqual([...models.MODEL_IDS]);
   });
 
   it('reflects shared rebuild progress and errors in the model management status', async () => {
@@ -243,4 +243,34 @@ it('activates only complete partitioned generations and pins both profiles into 
     Object.defineProperty(retainedSnapshot.searchIndex, 'directory', { value: path.join(path.dirname(knowledge.root), 'retained-snapshot-cache') });
     expect(await retainedSnapshot.semanticIndex.seedFrom(knowledge.semanticIndex, before.corpusFingerprint!)).toBe(true);
     expect((await retainedSnapshot.semanticIndex.run('search', { query: 'source', paths: ['readme.md'] })).results[0]?.path).toBe('readme.md');
+});
+
+describe('custom embedding policy', () => {
+  it('uses the chosen code and documents models, validated against the catalogue', async () => {
+    const knowledge = await fixture();
+    const selection = models.resolveEmbedding(knowledge, 'custom', { code: 'jina-code', documents: 'bge-m3' });
+    expect(selection.profiles.map(profile => [profile.id, profile.model, profile.scope]))
+      .toEqual([['code', 'jina-code', 'code'], ['multilingual', 'bge-m3', 'documents']]);
+    expect(() => models.customEmbedding({ code: 'jina-code', documents: '../evil' })).toThrow('Unknown');
+    expect(() => models.customEmbedding({ code: 'jina-code', documents: 'bge-m3', extra: 1 })).toThrow('only code and documents');
+    vi.stubEnv('KIMONO_EMBEDDING_CODE_MODEL', 'minilm');
+    expect(models.configuredCustomEmbedding()).toEqual({ code: 'minilm', documents: 'multilingual-fast' });
+  });
+
+  it('defaults to auto-speed and describes ONNX models with their pooling and prefixes', () => {
+    vi.stubEnv('KIMONO_EMBEDDING_POLICY', '');
+    expect(models.configuredEmbeddingPolicy()).toBe('auto-speed');
+    expect(models.modelDescriptor(models.catalogueModel('nomic-v1.5'))).toMatchObject({
+      backend: 'onnx', pooling: 'mean', query_prefix: 'search_query: ', document_prefix: 'search_document: ' });
+    expect(models.catalogueModel('bge-m3').files.find(item => item.name === 'model.onnx')?.source).toBe('onnx/model_quantized.onnx');
+  });
+
+  it('saves the custom choice and rejects it for other policies', async () => {
+    const knowledge = await fixture();
+    await expect(runtimeFor(knowledge).call('aikido_models', { operation: 'configure', policy: 'auto-speed', confirmed: true,
+      custom: { code: 'code', documents: 'minilm' } })).rejects.toThrow('only to the custom policy');
+    const status = JSON.parse(await runtimeFor(knowledge).call('aikido_models', { operation: 'configure', policy: 'custom', confirmed: true,
+      custom: { code: 'jina-code', documents: 'minilm' } }));
+    expect(status).toMatchObject({ requestedPolicy: 'custom', custom: { code: 'jina-code', documents: 'minilm' }, phase: 'download-required' });
+  });
 });

@@ -5,16 +5,33 @@ import { homedir, totalmem } from 'node:os';
 import path from 'node:path';
 import type { AikidoKnowledgeBase } from './knowledge.js';
 
-export const EMBEDDING_POLICIES = ['auto-balanced', 'auto-speed', 'code', 'multilingual-fast', 'e5'] as const;
+export const EMBEDDING_POLICIES = ['auto-balanced', 'auto-speed', 'code', 'multilingual-fast', 'e5', 'custom'] as const;
 export type EmbeddingPolicy = typeof EMBEDDING_POLICIES[number];
-export type ModelId = 'code' | 'multilingual-fast' | 'e5';
-type DownloadFile = { name: string; bytes: number; sha256: string };
+export const MODEL_IDS = ['code', 'multilingual-fast', 'e5', 'jina-code', 'bge-m3', 'nomic-v1.5', 'mxbai-large', 'e5-large', 'minilm'] as const;
+export type ModelId = typeof MODEL_IDS[number];
+/** `source` is the path in the Hugging Face repository when it differs from the installed name. */
+type DownloadFile = { name: string; bytes: number; sha256: string; source?: string };
 export interface CatalogueModel {
   id: ModelId; repository: string; revision: string; license: string;
   backend: 'model2vec' | 'onnx'; dimensions: number; chunkChars: number;
   downloadBytes: number; estimatedMemoryBytes: number; files: DownloadFile[];
+  /** Human label, languages, and the content the model is suited to (custom policy pickers). */
+  label: string; languages: 'multilingual' | 'english'; suited: 'code' | 'documents' | 'both';
+  pooling: 'mean' | 'cls'; maxTokens: number; queryPrefix: string | null; documentPrefix: string | null;
 }
-const file = (name: string, bytes: number, sha256: string): DownloadFile => ({ name, bytes, sha256 });
+const file = (name: string, bytes: number, sha256: string, source?: string): DownloadFile =>
+  ({ name, bytes, sha256, ...(source ? { source } : {}) });
+/** ONNX model from a Hugging Face repository: quantized single-file graph (no external data) plus tokenizer. */
+function onnxModel(id: ModelId, repository: string, revision: string, details: Omit<CatalogueModel,
+  'id' | 'repository' | 'revision' | 'backend' | 'downloadBytes' | 'estimatedMemoryBytes' | 'files'>,
+  onnx: [number, string], tokenizer: [number, string]): CatalogueModel {
+  const files = [file('model.onnx', onnx[0], onnx[1], 'onnx/model_quantized.onnx'), file('tokenizer.json', tokenizer[0], tokenizer[1])];
+  return { id, repository, revision, backend: 'onnx', ...details, files,
+    downloadBytes: onnx[0] + tokenizer[0],
+    // Quantized weights are dequantized per layer; activations grow with maxTokens and the dimension.
+    estimatedMemoryBytes: onnx[0] * 2 + tokenizer[0] * 4 + details.maxTokens * details.dimensions * 4 * 64 };
+}
+const BERT_TOKENIZER: [number, string] = [711396, 'd241a60d5e8f04cc1b2b3e9ef7a4921b27bf526d9f6050ab90f9267a1f9e5c66'];
 const codeFiles = [
   file('model.safetensors', 32490072, '75cf7a6c2171b230ad19b1e7d8e0b1aee86da5a02af8e7cacedd9921d227623c'),
   file('tokenizer.json', 1024340, '107bbdcbad4bff1d299b7a4c3a2fb17c52890688b7dd0e4c9deab79d3c4f3d45'),
@@ -30,19 +47,69 @@ const multilingualFiles = [
 export const EMBEDDING_CATALOGUE: readonly CatalogueModel[] = [
   { id: 'code', repository: 'minishlab/potion-code-16M-v2', revision: 'e9d2a44ca6a05ac6685f3b23709ea57eb7352d5b',
     license: 'MIT', backend: 'model2vec', dimensions: 256, chunkChars: 750,
+    label: 'Potion code 16M (static, fastest)', languages: 'english', suited: 'code',
+    pooling: 'mean', maxTokens: 32768, queryPrefix: null, documentPrefix: null,
     downloadBytes: codeFiles.reduce((sum, item) => sum + item.bytes, 0),
     estimatedMemoryBytes: 32490072 + 1024340 * 4 + 32 * 1024 * 1024, files: codeFiles },
   { id: 'multilingual-fast', repository: 'minishlab/potion-multilingual-128M', revision: '73908c3438cf03b6a01bcb9611d62b23d0726f08',
     license: 'MIT', backend: 'model2vec', dimensions: 256, chunkChars: 750,
+    label: 'Potion multilingual 128M (static, fast)', languages: 'multilingual', suited: 'documents',
+    pooling: 'mean', maxTokens: 32768, queryPrefix: null, documentPrefix: null,
     downloadBytes: multilingualFiles.reduce((sum, item) => sum + item.bytes, 0),
     estimatedMemoryBytes: 512361560 + 18616131 * 4 + 32 * 1024 * 1024, files: multilingualFiles },
   { id: 'e5', repository: 'Xenova/multilingual-e5-small', revision: '761b726dd34fb83930e26aab4e9ac3899aa1fa78',
     license: 'MIT', backend: 'onnx', dimensions: 384, chunkChars: 500,
+    label: 'Multilingual E5 small (bundled)', languages: 'multilingual', suited: 'documents',
+    pooling: 'mean', maxTokens: 512, queryPrefix: 'query: ', documentPrefix: 'passage: ',
     downloadBytes: 0, estimatedMemoryBytes: 256 * 1024 * 1024, files: [] },
+  // Transformer models recommended for local RAG (Atomic, Tiger Data, Prem AI 2026 guides), int8 ONNX.
+  onnxModel('jina-code', 'jinaai/jina-embeddings-v2-base-code', '516f4baf13dec4ddddda8631e019b5737c8bc250', {
+    label: 'Jina v2 base code (161M, 30 programming languages)', license: 'Apache-2.0', languages: 'english', suited: 'code',
+    dimensions: 768, chunkChars: 1500, pooling: 'mean', maxTokens: 1024, queryPrefix: null, documentPrefix: null,
+  }, [161895621, 'ed45870251c9f0cf656e78aab0d37a23489066df8a222bb1c8caf8a45f2cb16d'],
+  [2561316, 'b01c78a902aa4facb2f47f95449f48e2f7bbfea5d2472ee2f6ce92323c6f86e5']),
+  onnxModel('bge-m3', 'Xenova/bge-m3', '4de13258303883538bd53b696b452bf8099f0858', {
+    label: 'BGE-M3 (568M, 100+ languages, best quality)', license: 'MIT', languages: 'multilingual', suited: 'both',
+    dimensions: 1024, chunkChars: 1500, pooling: 'cls', maxTokens: 1024, queryPrefix: null, documentPrefix: null,
+  }, [569694530, '0826f8c1ab9edf1801db86c61919d4d108e8bfc0b809ec823ad366882ff0b77d'],
+  [17082821, '6710678b12670bc442b99edc952c4d996ae309a7020c1fa0096dd245c2faf790']),
+  onnxModel('nomic-v1.5', 'nomic-ai/nomic-embed-text-v1.5', 'e9b6763023c676ca8431644204f50c2b100d9aab', {
+    label: 'Nomic Embed Text v1.5 (137M, English, CPU default)', license: 'Apache-2.0', languages: 'english', suited: 'documents',
+    dimensions: 768, chunkChars: 1500, pooling: 'mean', maxTokens: 1024,
+    queryPrefix: 'search_query: ', documentPrefix: 'search_document: ',
+  }, [137296292, 'b4342336debaea79de872370664b0aaeb67dea4605513d00ee236ea871a81f27'], BERT_TOKENIZER),
+  onnxModel('mxbai-large', 'mixedbread-ai/mxbai-embed-large-v1', 'b33106f585b9ce46904ad7443a3b52b7a63e231c', {
+    label: 'mxbai-embed-large v1 (335M, English)', license: 'Apache-2.0', languages: 'english', suited: 'documents',
+    dimensions: 1024, chunkChars: 1000, pooling: 'cls', maxTokens: 512,
+    queryPrefix: 'Represent this sentence for searching relevant passages: ', documentPrefix: null,
+  }, [336983163, '11bda26d2ee754b20d46c90d0fae7eb5a71e0f947e74261afd6ad640ebbcfa7f'], BERT_TOKENIZER),
+  onnxModel('e5-large', 'Xenova/multilingual-e5-large', '00fc3aeb3dbb95842de2ac1961d33c6319acf57b', {
+    label: 'Multilingual E5 large (560M, 100 languages)', license: 'MIT', languages: 'multilingual', suited: 'documents',
+    dimensions: 1024, chunkChars: 1000, pooling: 'mean', maxTokens: 512, queryPrefix: 'query: ', documentPrefix: 'passage: ',
+  }, [561768762, '0a8d65db9a36f810ba5da15249f13145fcdc7890e6656f1fd38cd8b7c4db1fca'],
+  [17082660, '62c24cdc13d4c9952d63718d6c9fa4c287974249e16b7ade6d5a85e7bbb75626']),
+  onnxModel('minilm', 'Xenova/all-MiniLM-L6-v2', '751bff37182d3f1213fa05d7196b954e230abad9', {
+    label: 'all-MiniLM-L6-v2 (23M, English, smallest)', license: 'Apache-2.0', languages: 'english', suited: 'documents',
+    dimensions: 384, chunkChars: 500, pooling: 'mean', maxTokens: 256, queryPrefix: null, documentPrefix: null,
+  }, [22972370, 'afdb6f1a0e45b715d0bb9b11772f032c399babd23bfc31fed1c170afc848bdb1'],
+  [711661, 'da0e79933b9ed51798a3ae27893d3c5fa4a201126cef75586296df9b4d2c62a0']),
 ];
+/** Models chosen by the `custom` policy: one for code files, one for documents. */
+export interface CustomEmbedding { code: ModelId; documents: ModelId }
+export function customEmbedding(value: unknown): CustomEmbedding {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Custom policy requires { code, documents } model ids.');
+  const record = value as Record<string, unknown>;
+  if (Object.keys(record).some(key => key !== 'code' && key !== 'documents')) throw new Error('Custom policy accepts only code and documents.');
+  return { code: catalogueModel(record.code).id, documents: catalogueModel(record.documents).id };
+}
+/** Host default for `custom` (VS Code settings): KIMONO_EMBEDDING_CODE_MODEL / KIMONO_EMBEDDING_DOCUMENTS_MODEL. */
+export function configuredCustomEmbedding(): CustomEmbedding {
+  return customEmbedding({ code: process.env.KIMONO_EMBEDDING_CODE_MODEL || 'code',
+    documents: process.env.KIMONO_EMBEDDING_DOCUMENTS_MODEL || 'multilingual-fast' });
+}
 
 export const isCodeSource = (file: string): boolean =>
-  /\.(?:c|cc|cpp|cs|h|hpp|fs|fsx|go|java|kt|kts|js|jsx|mjs|cjs|ts|tsx|vue|svelte|astro|css|scss|sass|less|html|php|py|rb|rake|rs|scala|swift|m|mm|sql|graphql|gql|proto|ex|exs|erl|hrl|clj|cljs|dart|lua|r|jl|pl|pm|sh|ps1|bat|cmd|bash|zsh|fish|dockerfile|gradle|tf|tfvars|hcl|cmake)$/i.test(file)
+  /\.(?:agda|hs|lhs|ml|mli|v|vh|sv|svh|erb|ejs|htm|c|cc|cpp|cxx|c\+\+|hh|hxx|inl|ipp|cs|csx|h|hpp|mts|cts|pyi|pyw|phtml|sc|sbt|gemspec|ksh|fs|fsx|go|java|kt|kts|js|jsx|mjs|cjs|ts|tsx|vue|svelte|astro|css|scss|sass|less|html|php|py|rb|rake|rs|scala|swift|m|mm|sql|graphql|gql|proto|ex|exs|erl|hrl|clj|cljs|dart|lua|r|jl|pl|pm|sh|ps1|bat|cmd|bash|zsh|fish|dockerfile|gradle|tf|tfvars|hcl|cmake)$/i.test(file)
   || /^(?:Dockerfile|Containerfile|Makefile|GNUmakefile|Justfile|Jenkinsfile|Gemfile|Rakefile|Procfile|CMakeLists\.txt)$/i.test(path.posix.basename(file));
 /**
  * Policy used when a ROOT has no saved choice and the host sets no KIMONO_EMBEDDING_POLICY.
@@ -69,7 +136,7 @@ export interface EmbeddingSelection {
   policy: EmbeddingPolicy; reason: string; signature: string; generation?: string; profiles: EmbeddingProfile[];
 }
 export interface EmbeddingSettings {
-  version: 1; requestedPolicy: EmbeddingPolicy; active?: EmbeddingSelection; error?: string;
+  version: 1; requestedPolicy: EmbeddingPolicy; custom?: CustomEmbedding; active?: EmbeddingSelection; error?: string;
 }
 export function modelsDirectory(root: string): string {
   const directory = path.resolve(process.env.KIMONO_MODELS_DIR ?? path.join(homedir(), '.cache', 'kimono-models'));
@@ -86,9 +153,9 @@ export function modelDirectory(root: string, id: ModelId): string {
 }
 export function modelDescriptor(model: CatalogueModel) {
   return {
-    name: `${model.repository.split('/')[1]}@${model.revision}`, backend: 'model2vec',
-    dim: model.dimensions, pooling: 'mean', normalize: true, max_tokens: 32768,
-    chunk_chars: model.chunkChars, query_prefix: null, document_prefix: null,
+    name: `${model.repository.split('/')[1]}@${model.revision}`, backend: model.backend,
+    dim: model.dimensions, pooling: model.pooling, normalize: true, max_tokens: model.maxTokens,
+    chunk_chars: model.chunkChars, query_prefix: model.queryPrefix, document_prefix: model.documentPrefix,
   };
 }
 async function exists(file: string): Promise<boolean> {
@@ -118,7 +185,8 @@ export function corpusComposition(knowledge: AikidoKnowledgeBase) {
   const codeFiles = knowledge.list().filter(entry => isCodeSource(entry.path)).length;
   return { codeFiles, documentFiles: knowledge.list().length - codeFiles, bytes: knowledge.corpusStatus.bytes };
 }
-export function resolveEmbedding(knowledge: AikidoKnowledgeBase, policy: EmbeddingPolicy): EmbeddingSelection {
+export function resolveEmbedding(knowledge: AikidoKnowledgeBase, policy: EmbeddingPolicy,
+  custom: CustomEmbedding = configuredCustomEmbedding()): EmbeddingSelection {
   const corpus = corpusComposition(knowledge);
   const profiles: EmbeddingProfile[] = [];
   const add = (model: ModelId, scope: EmbeddingProfile['scope'], id: EmbeddingProfile['id']) =>
@@ -127,9 +195,12 @@ export function resolveEmbedding(knowledge: AikidoKnowledgeBase, policy: Embeddi
     if (corpus.codeFiles) add('code', corpus.documentFiles ? 'code' : 'all', 'code');
     if (corpus.documentFiles || !corpus.codeFiles) add(policy === 'auto-speed' ? 'multilingual-fast' : 'e5',
       corpus.codeFiles ? 'documents' : 'all', 'multilingual');
+  } else if (policy === 'custom') {
+    if (corpus.codeFiles) add(custom.code, corpus.documentFiles ? 'code' : 'all', 'code');
+    if (corpus.documentFiles || !corpus.codeFiles) add(custom.documents, corpus.codeFiles ? 'documents' : 'all', 'multilingual');
   } else add(policy, 'all', policy === 'code' ? 'code' : 'multilingual');
   const signature = createHash('sha256').update(JSON.stringify(profiles)).digest('hex').slice(0, 24);
-  const reason = policy.startsWith('auto-')
+  const reason = policy.startsWith('auto-') || policy === 'custom'
     ? `${corpus.codeFiles} code files, ${corpus.documentFiles} documents (${corpus.bytes} UTF-8 bytes): ${profiles.map(profile =>
       `${profile.model} (${profile.scope})`).join(' + ')}. Selection follows content type, not an unmeasured size/quality threshold.`
     : `Manual ${policy} profile for every file; no automatic substitution.`;
@@ -145,6 +216,7 @@ export async function readEmbeddingSettings(knowledge: AikidoKnowledgeBase): Pro
   if (!value || typeof value !== 'object' || !('version' in value) || value.version !== 1
     || !('requestedPolicy' in value)) throw new Error('Invalid embedding settings.');
   const requestedPolicy = embeddingPolicy(value.requestedPolicy);
+  const custom = 'custom' in value && value.custom !== undefined ? customEmbedding(value.custom) : undefined;
   let active: EmbeddingSelection | undefined;
   if ('active' in value && value.active !== undefined) {
     const selected = value.active;
@@ -174,7 +246,7 @@ export async function readEmbeddingSettings(knowledge: AikidoKnowledgeBase): Pro
       throw new Error('Invalid active embedding signature.');
     }
   }
-  return { version: 1, requestedPolicy, ...(active ? { active } : {}),
+  return { version: 1, requestedPolicy, ...(custom ? { custom } : {}), ...(active ? { active } : {}),
     ...('error' in value && typeof value.error === 'string' ? { error: value.error } : {}) };
 }
 export async function saveEmbeddingSettings(knowledge: AikidoKnowledgeBase, settings: EmbeddingSettings): Promise<void> {
@@ -242,7 +314,7 @@ export async function installEmbeddingModel(root: string, id: unknown, confirmed
     let completed = 0;
     for (const [index, item] of model.files.entries()) {
       publish({ file: item.name, fileIndex: index + 1, state: 'downloading', bytes: completed });
-      const response = await fetch(`https://huggingface.co/${model.repository}/resolve/${model.revision}/${item.name}`,
+      const response = await fetch(`https://huggingface.co/${model.repository}/resolve/${model.revision}/${item.source ?? item.name}`,
         { signal: AbortSignal.timeout(15 * 60_000) });
       if (!response.ok || !response.body) throw new Error(`Model download failed (${response.status}): ${item.name}`);
       if (!response.url.startsWith('https://')) throw new Error('Model download redirected to an insecure endpoint.');
