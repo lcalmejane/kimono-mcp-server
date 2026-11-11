@@ -6,3 +6,7 @@ coverage
 .data
 data
 semantic/target
+vscode/.package
+vscode/*.vsix
+vscode/*.build.json
+vscode/node_modules

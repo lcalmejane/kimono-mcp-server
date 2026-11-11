@@ -66,6 +66,8 @@ COPY --chown=node:node tests ./tests
 COPY --chown=node:node semantic ./semantic
 COPY --chown=node:node scripts ./scripts
 COPY --chown=node:node benchmarks ./benchmarks
+# tests/native-env.ts loads vscode/native.cjs (shared native-tooling environment)
+COPY --chown=node:node vscode ./vscode
 RUN chown node:node /app
 USER node
 CMD ["npm", "test"]

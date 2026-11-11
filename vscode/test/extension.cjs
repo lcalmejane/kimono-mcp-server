@@ -7,7 +7,10 @@ const path = require("node:path");
 const { register, remoteUrl, providerId, tokenKey } = require("../extension.cjs");
 
 afterEach(async () => {
-  await fs.rm(path.join(process.cwd(), ".local-runtime-vscode-test"), { recursive: true, force: true });
+  // A previous test may still be populating the runtime directory in the background:
+  // retry so a concurrent write does not surface as ENOTEMPTY during cleanup.
+  await fs.rm(path.join(process.cwd(), ".local-runtime-vscode-test"),
+    { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 });
 
 function fixture(options = {}) {
