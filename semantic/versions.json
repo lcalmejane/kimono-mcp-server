@@ -1,45 +1,37 @@
 {
   "fastGrep": "0.5.0",
   "embsearchCore": "0.3.4",
-  "onnxRuntime": "1.31.0",
-  "onnxArchives": {
-    "arm64": "c5b8b3cca31f3d643a3b313b8f42e2d0f16a4fcefd02cda343d97bd5306afaab",
-    "x64": "cc5c72baf5ae5c8238a6841f0897227be2d02826b9cf98eaf02fdefaeeb03a57"
+  "ort": "2.0.0-rc.10",
+  "onnxRuntime": "1.32.0",
+  "onnxRuntimeSource": "https://api.nuget.org/v3-flatcontainer/microsoft.ml.onnxruntime",
+  "onnxPackages": {
+    "1.32.0": "a9150bc2992cbbb6722070da9910e1ffa989a8bfc67bdd5bb8e745ca755641db",
+    "1.23.2": "25fe172f7fcdf34f2b5b02c8b997f6b88abc282956849d4af4335af23d0c4e4a"
   },
   "nativeTargets": {
     "darwin-arm64": {
-      "archive": "onnxruntime-osx-arm64-1.31.0.tgz",
-      "sha256": "1031b36dd3bdaa8d976a6130d9cf2a05e9be320b93ae804f8427b91dc3432afc",
-      "format": "tgz",
+      "runtime": "osx-arm64",
       "library": "libonnxruntime.dylib",
       "libraryPattern": "^libonnxruntime.*\\.dylib$"
     },
     "darwin-x64": {
       "onnxRuntime": "1.23.2",
-      "archive": "onnxruntime-osx-x86_64-1.23.2.tgz",
-      "sha256": "d10359e16347b57d9959f7e80a225a5b4a66ed7d7e007274a15cae86836485a6",
-      "format": "tgz",
+      "runtime": "osx-x64",
       "library": "libonnxruntime.dylib",
       "libraryPattern": "^libonnxruntime.*\\.dylib$"
     },
     "linux-arm64": {
-      "archive": "onnxruntime-linux-aarch64-1.31.0.tgz",
-      "sha256": "c5b8b3cca31f3d643a3b313b8f42e2d0f16a4fcefd02cda343d97bd5306afaab",
-      "format": "tgz",
+      "runtime": "linux-arm64",
       "library": "libonnxruntime.so",
       "libraryPattern": "^libonnxruntime.*\\.so(?:\\..*)?$"
     },
     "linux-x64": {
-      "archive": "onnxruntime-linux-x64-1.31.0.tgz",
-      "sha256": "cc5c72baf5ae5c8238a6841f0897227be2d02826b9cf98eaf02fdefaeeb03a57",
-      "format": "tgz",
+      "runtime": "linux-x64",
       "library": "libonnxruntime.so",
       "libraryPattern": "^libonnxruntime.*\\.so(?:\\..*)?$"
     },
     "win32-x64": {
-      "archive": "onnxruntime-win-x64-1.31.0.zip",
-      "sha256": "3958d8a44984160692c1b4ffd0de3cb48f8c39f9d34bb31e433db06e30b82195",
-      "format": "zip",
+      "runtime": "win-x64",
       "library": "onnxruntime.dll",
       "libraryPattern": "^onnxruntime.*\\.dll$"
     }

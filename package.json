@@ -1,6 +1,6 @@
 {
   "name": "kimono-mcp-server",
-  "version": "0.9.10",
+  "version": "0.9.11",
   "description": "Local RAG for source code and documentation with lexical and semantic retrieval over MCP",
   "license": "MIT",
   "repository": {
@@ -23,7 +23,7 @@
     "start": "node dist/index.js",
     "test": "vitest run",
     "typecheck": "tsc --noEmit -p tsconfig.json && npm run typecheck:bench",
-    "typecheck:bench": "tsc --noEmit --strict --skipLibCheck --module NodeNext --target ES2022 --types node scripts/bench-harness.ts scripts/bench-db.ts",
+    "typecheck:bench": "tsc --ignoreConfig --noEmit --strict --skipLibCheck --module NodeNext --target ES2022 --types node scripts/bench-harness.ts scripts/bench-db.ts",
     "bundle:native": "node scripts/package-native-bundle.mjs",
     "test:vscode": "node --test vscode/test/*.cjs",
     "package:vscode": "node scripts/package-vscode.mjs",
@@ -36,19 +36,19 @@
     "node": ">=24"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.12.1",
-    "fast-xml-parser": "^5.3.0",
-    "yauzl": "^3.2.0",
-    "ignore": "^7.0.5"
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "fast-xml-parser": "^5.12.1",
+    "ignore": "^7.0.16",
+    "yauzl": "^3.2.0"
   },
   "devDependencies": {
-    "@vscode/vsce": "^3.6.0",
-    "esbuild": "^0.28.2",
-    "ajv": "^8.20.0",
     "@types/node": "^24.0.0",
-    "@types/yauzl": "^2.10.3",
+    "@types/yauzl": "^3.4.0",
+    "@vscode/vsce": "^4.1.1",
+    "ajv": "^8.20.0",
+    "esbuild": "^0.28.2",
     "tsx": "^4.19.0",
-    "typescript": "^5.7.0",
-    "vitest": "^5.0.5"
+    "typescript": "^7.0.2",
+    "vitest": "^5.1.0"
   }
 }

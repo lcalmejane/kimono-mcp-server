@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
+import { onnxPackageUrl, extractFromPackage, nativeRuntimeSelector } from './onnxruntime-package.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const versions = JSON.parse(await readFile(path.join(root, 'semantic/versions.json'), 'utf8'));
@@ -136,7 +137,7 @@ async function copyRuntimeFiles(files) {
   }
 }
 
-const archivePath = path.join(work, config.archive);
+const packagePath = path.join(work, `onnxruntime-${onnxRuntimeVersion}.nupkg`);
 const runtimePattern = new RegExp(config.libraryPattern);
 const modelBase = `https://huggingface.co/${versions.model.repository}/resolve/${versions.model.revision}`;
 if (assetsDir) {
@@ -170,17 +171,9 @@ if (assetsDir) {
     await copyFile(source, path.join(modelDir, name));
   }
 } else {
-  const runtimeUrl = `https://github.com/microsoft/onnxruntime/releases/download/v${onnxRuntimeVersion}/${config.archive}`;
-  await download(runtimeUrl, archivePath, config.sha256);
-  if (config.format === 'tgz') execFileSync('tar', ['-xzf', archivePath, '-C', work]);
-  else if (process.platform === 'win32') {
-    execFileSync('powershell.exe', [
-      '-NoProfile',
-      '-NonInteractive',
-      '-Command',
-      'Expand-Archive -LiteralPath $env:ORT_ARCHIVE -DestinationPath $env:ORT_DESTINATION -Force',
-    ], { env: { ...process.env, ORT_ARCHIVE: archivePath, ORT_DESTINATION: work } });
-  } else execFileSync('unzip', ['-q', archivePath, '-d', work]);
+  // Paquet NuGet officiel de Microsoft : bibliothèques natives de la cible et licences, extraites sans outil système.
+  await download(onnxPackageUrl(versions, onnxRuntimeVersion), packagePath, versions.onnxPackages[onnxRuntimeVersion]);
+  await extractFromPackage(packagePath, nativeRuntimeSelector(config.runtime), path.join(work, 'onnxruntime'));
   const runtimeFiles = (await walk(work)).filter((filename) => runtimePattern.test(path.basename(filename)));
   await copyRuntimeFiles(runtimeFiles);
   for (const licenseName of ['LICENSE', 'ThirdPartyNotices.txt']) {

@@ -1,4 +1,4 @@
-FROM node:24-bookworm-slim AS build
+FROM node:24-trixie-slim AS build
 WORKDIR /app
 COPY package*.json ./
 RUN npm ci
@@ -6,18 +6,18 @@ COPY tsconfig.json ./
 COPY src ./src
 RUN npm run build
 
-FROM node:24-bookworm-slim AS production-dependencies
+FROM node:24-trixie-slim AS production-dependencies
 WORKDIR /app
 COPY package*.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 
 # RTK (https://github.com/rtk-ai/rtk, Apache-2.0) compiled from source: published binaries need glibc >= 2.39.
 # The open-source edition (--no-default-features) has no telemetry endpoint.
-FROM rust:1-bookworm AS rtk
+FROM rust:1-trixie AS rtk
 ARG RTK_VERSION=v1.1.0
 RUN cargo install --git https://github.com/rtk-ai/rtk --tag "${RTK_VERSION}" rtk --no-default-features --locked --root /opt/rtk
 
-FROM rust:1-bookworm AS tooling
+FROM rust:1-trixie AS tooling
 ARG FAST_GREP_VERSION=0.5.0
 RUN apt-get update && apt-get install -y --no-install-recommends git gh jq openssh-client ca-certificates libatomic1 poppler-utils \
     && rm -rf /var/lib/apt/lists/* \
@@ -48,7 +48,7 @@ RUN cargo build --release --locked && cargo test --locked
 FROM tooling AS semantic-assets
 WORKDIR /assets
 COPY semantic/model.json semantic/versions.json ./semantic/
-COPY scripts/prepare-semantic.mjs ./scripts/
+COPY scripts/prepare-semantic.mjs scripts/onnxruntime-package.mjs ./scripts/
 RUN node scripts/prepare-semantic.mjs /opt/kimono
 
 FROM tooling AS semantic-tooling

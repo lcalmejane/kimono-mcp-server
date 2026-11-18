@@ -4,7 +4,7 @@ import { mkdir, readFile, copyFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
-import { execFileSync } from 'node:child_process';
+import { onnxPackageUrl, extractFromPackage, nativeRuntimeSelector } from './onnxruntime-package.mjs';
 
 const versions = JSON.parse(await readFile(new URL('../semantic/versions.json', import.meta.url)));
 const destination = path.resolve(process.argv[2] ?? '/opt/kimono');
@@ -24,13 +24,16 @@ async function download(url, target, expected) {
 
 const architecture = { arm64: 'aarch64', x64: 'x64' }[process.arch];
 if (process.platform !== 'linux' || !architecture) throw new Error('Semantic image supports Linux arm64 and x64');
-const archive = `onnxruntime-linux-${architecture}-${versions.onnxRuntime}`;
-const archivePath = path.join(destination, 'onnxruntime.tgz');
-await download(`https://github.com/microsoft/onnxruntime/releases/download/v${versions.onnxRuntime}/${archive}.tgz`,
-  archivePath, versions.onnxArchives[process.arch]);
-execFileSync('tar', ['-xzf', archivePath, '-C', destination]);
-await rm(archivePath);
-execFileSync('mv', [path.join(destination, archive), path.join(destination, 'onnxruntime')]);
+// ONNX Runtime : paquet NuGet officiel de Microsoft ; bibliothèque dans onnxruntime/lib/ (ORT_DYLIB_PATH de l'image).
+const packagePath = path.join(destination, 'onnxruntime.nupkg');
+await download(onnxPackageUrl(versions, versions.onnxRuntime), packagePath, versions.onnxPackages[versions.onnxRuntime]);
+const runtime = path.join(destination, 'onnxruntime');
+const select = nativeRuntimeSelector(`linux-${architecture === 'aarch64' ? 'arm64' : 'x64'}`);
+await extractFromPackage(packagePath, name => {
+  const target = select(name);
+  return target && (/^lib/.test(target) ? path.join('lib', target) : target);
+}, runtime);
+await rm(packagePath);
 const model = path.join(destination, 'model');
 await mkdir(model, { recursive: true });
 const base = `https://huggingface.co/${versions.model.repository}/resolve/${versions.model.revision}`;

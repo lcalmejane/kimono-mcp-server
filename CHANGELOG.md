@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.9.11 - 2026-11-18
+
+- ONNX Runtime 1.32.0 (from 1.31.0; `darwin-x64` stays on 1.23.2, the last release with a macOS Intel library), now taken from Microsoft's official NuGet package `Microsoft.ML.OnnxRuntime`: the GitHub release archives (`github.com/microsoft/onnxruntime`) are no longer reachable, which broke the Docker image and native bundle builds of 0.9.10. One package per version, SHA-256 pinned in `semantic/versions.json` (`onnxPackages`); native libraries and licences extracted by a pure Node reader (`scripts/onnxruntime-package.mjs`, no unzip/tar/PowerShell).
+- Dependency check (`Check latest search dependencies`): ONNX Runtime versions read from NuGet; the `ort` Rust binding is now tracked too (upgrade required only when the latest `embsearch-core` allows it — `ort` 2.0.0-rc.15 is published but `embsearch-core` 0.3.4 still pins 2.0.0-rc.10).
+- Docker image on Debian 13 (`node:24-trixie-slim`, `rust:1-trixie`).
+- Dependencies: `@modelcontextprotocol/sdk` 1.32.2, `fast-xml-parser` 5.12.1, `ignore` 7.0.16, TypeScript 7.0.2, Vitest 5.1.0, `@vscode/vsce` 4.1.1, `@types/yauzl` 3.4.0 (`@types/node` stays on 24, the Node.js LTS used at runtime).
+
 ## 0.9.10 - 2026-11-17
 
 - VS Code: integration API (version 1) returned by the extension: `connection(root?)` gives consumers the Kimono chosen here, remote and shared (URL plus bearer header, bound to its endpoint) or embedded (complete stdio launch: command, arguments, working directory and isolated environment); `undefined` when disabled or in an untrusted workspace. `onDidChange` follows configuration changes. Tatami Agent and the Tatami Core Agent extension consume Kimono through it instead of embedding their own.
