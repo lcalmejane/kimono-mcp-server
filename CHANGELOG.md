@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.9.10 - 2026-11-17
+
+- VS Code: integration API (version 1) returned by the extension: `connection(root?)` gives consumers the Kimono chosen here, remote and shared (URL plus bearer header, bound to its endpoint) or embedded (complete stdio launch: command, arguments, working directory and isolated environment); `undefined` when disabled or in an untrusted workspace. `onDidChange` follows configuration changes. Tatami Agent and the Tatami Core Agent extension consume Kimono through it instead of embedding their own.
+- VS Code: knowledge collaboration moved here from Tatami Agent: **Compare shared knowledge**, **Pull shared knowledge**, **Publish knowledge changes** and **Reindex local knowledge**, against a remote Kimono replica or a Tatami Core project. Kimono pairs with Tatami Core by itself (**Connect to Tatami Core** / **Disconnect from Tatami Core**: extension pairing, project-scoped token, verified account).
+- VS Code: `KIMONO_DEFAULT_MODE` (`embedded`, `remote` or `disabled`) sets a host default mode used only when no `kimono.mode` is chosen (Tatami IDE image: `disabled`).
+
 ## 0.9.9 - 2026-11-11
 
 - Snapshots: one snapshot per prompt by default (`KIMONO_SNAPSHOT_SCOPE=prompt`; VS Code `kimono.snapshotScope`). `begin` reuses the caller's live snapshot for the same user, `owner` and paths only while the corpus (and that owner's overlay) is unchanged (`reused: true`), so a new begin still sees every edit; `fresh: true` always captures. `end` releases (`retained: true`); a released snapshot closes once idle (`KIMONO_SNAPSHOT_IDLE_MS`, 120 s), one never ended after `KIMONO_SNAPSHOT_HELD_IDLE_MS`, all at shutdown; a replaced snapshot stays readable for its holders. Lifetime slides with use up to `KIMONO_SNAPSHOT_MAX_MS` (1 h). At the count or byte limit, released snapshots are evicted first. Behind a trusted proxy the `x-kimono-principal` header names the user (Tatami: one instance per project, per-user snapshots); `owner` keeps its overlay meaning. `session` keeps one per server session; `call` restores one per begin/end. Use cases to preserve: docs/retrieval.md.

@@ -5,6 +5,7 @@ const fs = require("node:fs/promises");
 const { createHash } = require("node:crypto");
 const { nativeEnvironment } = require("./native.cjs");
 const { registerManagement } = require("./panel.cjs");
+const { registerCollaborationCommands } = require("./collaboration.cjs");
 const { discoverRepositories, mergeRepositories, installLauncher, syncMcpJson } = require("./host-config.cjs");
 
 const providerId = "kimono.mcp";
@@ -28,7 +29,15 @@ function register(vscode, context, native = nativeEnvironment) {
   const version = context.extension.packageJSON.version;
   let definitions = new Map();
   let nativeAssets;
-  const config = () => vscode.workspace.getConfiguration("kimono");
+  // Mode par défaut d'un hôte (ex. image IDE de Tatami : KIMONO_DEFAULT_MODE=disabled) ; un réglage explicite l'emporte.
+  const config = () => {
+    const settings = vscode.workspace.getConfiguration("kimono");
+    const fallback = ["embedded", "remote", "disabled"].includes(process.env.KIMONO_DEFAULT_MODE) ? process.env.KIMONO_DEFAULT_MODE : undefined;
+    if (!fallback) return settings;
+    const inspected = settings.inspect?.("mode");
+    const explicit = inspected && [inspected.globalValue, inspected.workspaceValue, inspected.workspaceFolderValue].some(value => value !== undefined);
+    return explicit ? settings : { ...settings, get: (key, value) => key === "mode" ? fallback : settings.get(key, value), inspect: key => settings.inspect?.(key) };
+  };
   const nodeExecutable = () => path.join(context.extensionPath, "runtime", process.platform === "win32" ? "node.exe" : "node");
   const serverEntry = () => path.join(context.extensionPath, "server", "index.mjs");
   const storageFor = identity => path.join(context.globalStorageUri.fsPath, identity);
@@ -218,7 +227,42 @@ function register(vscode, context, native = nativeEnvironment) {
     provideMcpServerDefinitions: guarded(provider.provideMcpServerDefinitions),
     resolveMcpServerDefinition: guarded(provider.resolveMcpServerDefinition),
   };
-  return [
+  /**
+   * API d'intégration (version 1) pour les extensions qui consomment Kimono elles-mêmes (tatami-core-agent pour ses
+   * tâches autonomes, tatami-agent) : la connexion MCP choisie ici, distante et partagée ou locale. Le jeton distant n'est
+   * remis qu'à l'appel ; l'environnement local est complet (rien d'hérité du processus appelant).
+   */
+  const api = {
+    version: 1,
+    onDidChange: changed.event,
+    mode: () => config().get("mode", "embedded"),
+    async connection(root) {
+      if (!vscode.workspace.isTrusted) return undefined;
+      const mode = config().get("mode", "embedded");
+      if (mode === "disabled") return undefined;
+      if (mode === "remote") {
+        const url = remoteUrl(config().get("url", ""));
+        const stored = await context.secrets.get(tokenKey);
+        const secret = stored ? JSON.parse(stored) : undefined;
+        if (secret && secret.url !== url) throw new Error("The Kimono endpoint changed. Set a token for this endpoint or clear the saved token.");
+        return { transport: "http", mode, url, headers: secret ? { Authorization: `Bearer ${secret.token}` } : {} };
+      }
+      const folders = embeddedFolders();
+      const wanted = root ? await fs.realpath(root).catch(() => path.resolve(root)) : undefined;
+      let selected = folders[0];
+      if (wanted) {
+        selected = undefined;
+        for (const folder of folders) {
+          const folderRoot = await fs.realpath(folder.uri.fsPath).catch(() => folder.uri.fsPath);
+          if (folderRoot === wanted || (await fs.realpath(folder.root).catch(() => folder.root)) === wanted) { selected = folder; break; }
+        }
+      }
+      if (!selected) return undefined;
+      const launch = await embeddedLaunch(selected);
+      return { transport: "stdio", mode, root: selected.root, command: launch.command, args: launch.args, cwd: launch.cwd, env: launch.env };
+    },
+  };
+  const disposables = [
     changed, vscode.lm.registerMcpServerDefinitionProvider(providerId, publicProvider),
     vscode.workspace.onDidChangeConfiguration(event => { if (event.affectsConfiguration("kimono")) { refresh(); syncSilently(); } }),
     vscode.workspace.onDidChangeWorkspaceFolders(() => { refresh(); syncSilently(); }),
@@ -244,11 +288,20 @@ function register(vscode, context, native = nativeEnvironment) {
       ? registerManagement(vscode, context, { config, embeddedFolders, embeddedLaunch, indexedRepositories, remoteUrl, tokenKey, version })
       : []),
   ];
+  // Collaboration de connaissance (réplique distante ou projet Tatami Core) : connecteur propre à Kimono.
+  if (vscode.window?.createOutputChannel) {
+    const collaboration = registerCollaborationCommands(vscode, context, { api, config, showError: report });
+    disposables.push(...collaboration.commands, collaboration.output);
+  }
+  disposables.api = api;
+  return disposables;
 }
 
 function activate(context) {
   const vscode = require("vscode");
-  context.subscriptions.push(...register(vscode, context));
+  const disposables = register(vscode, context);
+  context.subscriptions.push(...disposables);
+  return disposables.api;
 }
 
 module.exports = { activate, register, remoteUrl, providerId, tokenKey };

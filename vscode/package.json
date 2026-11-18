@@ -2,7 +2,7 @@
   "name": "kimono-rag-mcp",
   "displayName": "Kimono RAG MCP",
   "description": "Local RAG for code and documentation with lexical and semantic search over MCP.",
-  "version": "0.9.9",
+  "version": "0.9.10",
   "publisher": "ai-kido",
   "license": "MIT",
   "repository": {
@@ -126,6 +126,30 @@
       {
         "command": "kimono.autoconfig",
         "title": "Kimono: Autoconfig (Repositories and .mcp.json)"
+      },
+      {
+        "command": "kimono.compare",
+        "title": "Kimono: Compare shared knowledge"
+      },
+      {
+        "command": "kimono.pull",
+        "title": "Kimono: Pull shared knowledge"
+      },
+      {
+        "command": "kimono.publish",
+        "title": "Kimono: Publish knowledge changes"
+      },
+      {
+        "command": "kimono.reindex",
+        "title": "Kimono: Reindex local knowledge"
+      },
+      {
+        "command": "kimono.connectTatami",
+        "title": "Kimono: Connect to Tatami Core"
+      },
+      {
+        "command": "kimono.disconnectTatami",
+        "title": "Kimono: Disconnect from Tatami Core"
       }
     ],
     "configuration": {
@@ -165,23 +189,67 @@
         },
         "kimono.embeddingCodeModel": {
           "type": "string",
-          "enum": ["code","multilingual-fast","e5","jina-code","bge-m3","nomic-v1.5","mxbai-large","e5-large","minilm"],
-          "enumDescriptions": ["Potion code 16M (static, fastest)","Potion multilingual 128M (static, fast)","Multilingual E5 small (bundled)","Jina v2 base code (161M, 30 programming languages)","BGE-M3 (568M, 100+ languages, best quality)","Nomic Embed Text v1.5 (137M, English)","mxbai-embed-large v1 (335M, English)","Multilingual E5 large (560M, 100 languages)","all-MiniLM-L6-v2 (23M, English, smallest)"],
+          "enum": [
+            "code",
+            "multilingual-fast",
+            "e5",
+            "jina-code",
+            "bge-m3",
+            "nomic-v1.5",
+            "mxbai-large",
+            "e5-large",
+            "minilm"
+          ],
+          "enumDescriptions": [
+            "Potion code 16M (static, fastest)",
+            "Potion multilingual 128M (static, fast)",
+            "Multilingual E5 small (bundled)",
+            "Jina v2 base code (161M, 30 programming languages)",
+            "BGE-M3 (568M, 100+ languages, best quality)",
+            "Nomic Embed Text v1.5 (137M, English)",
+            "mxbai-embed-large v1 (335M, English)",
+            "Multilingual E5 large (560M, 100 languages)",
+            "all-MiniLM-L6-v2 (23M, English, smallest)"
+          ],
           "default": "code",
           "scope": "machine",
           "markdownDescription": "Model for code files when `kimono.embeddingPolicy` is `custom` (initial value; the panel choice saved per ROOT takes precedence). Downloads need consent in the Kimono panel."
         },
         "kimono.embeddingDocumentsModel": {
           "type": "string",
-          "enum": ["code","multilingual-fast","e5","jina-code","bge-m3","nomic-v1.5","mxbai-large","e5-large","minilm"],
-          "enumDescriptions": ["Potion code 16M (static, fastest)","Potion multilingual 128M (static, fast)","Multilingual E5 small (bundled)","Jina v2 base code (161M, 30 programming languages)","BGE-M3 (568M, 100+ languages, best quality)","Nomic Embed Text v1.5 (137M, English)","mxbai-embed-large v1 (335M, English)","Multilingual E5 large (560M, 100 languages)","all-MiniLM-L6-v2 (23M, English, smallest)"],
+          "enum": [
+            "code",
+            "multilingual-fast",
+            "e5",
+            "jina-code",
+            "bge-m3",
+            "nomic-v1.5",
+            "mxbai-large",
+            "e5-large",
+            "minilm"
+          ],
+          "enumDescriptions": [
+            "Potion code 16M (static, fastest)",
+            "Potion multilingual 128M (static, fast)",
+            "Multilingual E5 small (bundled)",
+            "Jina v2 base code (161M, 30 programming languages)",
+            "BGE-M3 (568M, 100+ languages, best quality)",
+            "Nomic Embed Text v1.5 (137M, English)",
+            "mxbai-embed-large v1 (335M, English)",
+            "Multilingual E5 large (560M, 100 languages)",
+            "all-MiniLM-L6-v2 (23M, English, smallest)"
+          ],
           "default": "multilingual-fast",
           "scope": "machine",
           "markdownDescription": "Model for documents when `kimono.embeddingPolicy` is `custom` (initial value; the panel choice saved per ROOT takes precedence). Downloads need consent in the Kimono panel."
         },
         "kimono.snapshotScope": {
           "type": "string",
-          "enum": ["prompt", "session", "call"],
+          "enum": [
+            "prompt",
+            "session",
+            "call"
+          ],
           "enumDescriptions": [
             "Default. One snapshot per prompt: begin reuses your live snapshot while searches keep coming, so swarms and delegated agents share one corpus; it closes by itself once idle.",
             "One snapshot for the whole server session (until its lifetime ends).",
@@ -266,13 +334,29 @@
           "maxItems": 64,
           "items": {
             "type": "object",
-            "required": ["path"],
+            "required": [
+              "path"
+            ],
             "additionalProperties": false,
             "properties": {
-              "path": { "type": "string", "description": "Repository directory relative to the Kimono ROOT (\"\" = ROOT)." },
-              "name": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$" },
-              "gitUrl": { "type": "string", "description": "Credential-free HTTPS/SSH URL (informational)." },
-              "branch": { "type": ["string", "null"] }
+              "path": {
+                "type": "string",
+                "description": "Repository directory relative to the Kimono ROOT (\"\" = ROOT)."
+              },
+              "name": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+              },
+              "gitUrl": {
+                "type": "string",
+                "description": "Credential-free HTTPS/SSH URL (informational)."
+              },
+              "branch": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
             }
           },
           "markdownDescription": "Independent Git repositories inside the ROOT (for example a sub-project ignored by the parent `.gitignore`). Each declared repository is indexed under its own ignore rules and can be selected with the `repository` search filter. Paths are relative to the ROOT, without `..`."

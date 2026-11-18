@@ -244,3 +244,39 @@ test("cancelled discovery does not expose an unresolved embedded launch", async 
   const { state } = fixture();
   assert.deepEqual(await state.provider.provideMcpServerDefinitions({ isCancellationRequested: true }), []);
 });
+
+test("integration API hands consumers the chosen Kimono connection, bound to the endpoint and folder", async () => {
+  const remote = fixture({ mode: "remote", url: "https://knowledge.example/mcp" });
+  const api = remote.disposables.api;
+  assert.equal(api.version, 1);
+  assert.deepEqual(await api.connection(), { transport: "http", mode: "remote", url: "https://knowledge.example/mcp", headers: {} });
+  remote.state.input = "shared-token";
+  await remote.state.commands.get("kimono.setToken")();
+  assert.deepEqual((await api.connection()).headers, { Authorization: "Bearer shared-token" });
+  remote.state.settings.url = "https://another.example/mcp";
+  await assert.rejects(() => api.connection(), /endpoint changed/);
+  remote.state.trusted = false;
+  assert.equal(await api.connection(), undefined);
+
+  const local = fixture();
+  const launch = await local.disposables.api.connection(process.cwd());
+  assert.equal(launch.transport, "stdio");
+  assert.equal(launch.env.MCP_TRANSPORT, "stdio");
+  assert.equal(launch.env.PATH, "/native/bin");
+  assert.equal(await local.disposables.api.connection("/nowhere/else"), undefined);
+  local.state.settings.mode = "disabled";
+  assert.equal(await local.disposables.api.connection(), undefined);
+});
+
+test("a host default mode (KIMONO_DEFAULT_MODE) applies only when the person chose nothing", async () => {
+  process.env.KIMONO_DEFAULT_MODE = "disabled";
+  try {
+    const host = fixture({ mode: undefined });
+    host.vscode.workspace.getConfiguration = () => ({ get: (key, fallback) => key === "mode" ? "embedded" : fallback, inspect: () => ({ defaultValue: "embedded" }) });
+    assert.deepEqual(await host.state.provider.provideMcpServerDefinitions(), []);
+    assert.equal(await host.disposables.api.connection(), undefined);
+    const chosen = fixture();
+    chosen.vscode.workspace.getConfiguration = () => ({ get: (key, fallback) => key === "mode" ? "remote" : key === "url" ? "https://kimono.example/mcp" : fallback, inspect: () => ({ globalValue: "remote" }) });
+    assert.equal((await chosen.disposables.api.connection()).transport, "http");
+  } finally { delete process.env.KIMONO_DEFAULT_MODE; }
+});

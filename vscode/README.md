@@ -106,6 +106,33 @@ alongside the selected execution provider and startup timings. Resource figures
 are planning estimates, not hard utilization or memory limits. See
 [runtime and memory settings](https://github.com/lcalmejane/kimono-mcp-server/blob/main/docs/local-rag.md#embedding-runtime-and-memory).
 
+## Knowledge collaboration
+
+**Kimono: Compare shared knowledge**, **Pull shared knowledge** and **Publish knowledge
+changes** synchronise this local ROOT with a remote Kimono replica (remote mode) or with the
+shared knowledge of a Tatami Core project. For Tatami Core, run **Kimono: Connect to Tatami
+Core**: Kimono opens the Tatami pairing page, you approve it for one project, and Kimono keeps
+its own project-scoped token (SecretStorage). **Reindex local knowledge** refreshes the
+embedded index. None of these commands changes Git.
+
+## Use Kimono from another extension
+
+The extension returns an integration API (version 1) so other extensions consume the Kimono
+chosen here instead of embedding their own (Tatami Agent declares this extension as a
+dependency; the Tatami Core Agent extension uses it when present):
+
+```js
+const kimono = vscode.extensions.getExtension("ai-kido.kimono-rag-mcp");
+const api = kimono.isActive ? kimono.exports : await kimono.activate();
+const connection = await api.connection(folderPath); // undefined: disabled or untrusted
+// { transport: "http", url, headers }               remote and shared
+// { transport: "stdio", command, args, cwd, env }   embedded on that folder
+```
+
+The remote bearer token is handed over only at call time and stays bound to its endpoint.
+A host can set `KIMONO_DEFAULT_MODE` (`embedded`, `remote`, `disabled`) as the default mode
+used when no `kimono.mode` is chosen.
+
 ## Install manually
 
 Download a platform VSIX from
