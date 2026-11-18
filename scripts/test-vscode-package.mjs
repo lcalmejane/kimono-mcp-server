@@ -35,7 +35,8 @@ try {
   await mkdir(path.join(knowledge, 'prompts'), { recursive: true });
   await writeFile(path.join(knowledge, 'prompts/index.md'), '# Knowledge\n\nKimono integration distribution evidence.\n');
   let provider;
-  const settings = { corpusMode: 'aikido', embeddingPolicy: 'e5' };
+  // Distribution checks validate the portable CPU engine, not host GPU startup benchmarks.
+  const settings = { corpusMode: 'aikido', embeddingPolicy: 'e5', semanticDevice: 'cpu' };
   const noop = () => ({ dispose() {} });
   const uri = file => ({ scheme: 'file', fsPath: file });
   const vscode = {
@@ -158,7 +159,10 @@ try {
     command: ragDefinition.command,
     args: [path.join(stage, 'stdio.cjs'), 'serve', '--root', knowledge],
     // The generic launcher defaults to auto-speed, which needs a confirmed model download; pin the bundled model.
-    env: { PATH: process.env.PATH ?? '', KIMONO_CACHE_DIR: path.join(scratch, 'external-cache'), KIMONO_EMBEDDING_POLICY: 'e5' },
+    env: {
+      PATH: process.env.PATH ?? '', KIMONO_CACHE_DIR: path.join(scratch, 'external-cache'),
+      KIMONO_EMBEDDING_POLICY: 'e5', KIMONO_SEMANTIC_DEVICE: 'cpu',
+    },
   });
   const externalClient = new Client({ name: 'generic-mcp-host', version: '1.0.0' });
   await externalClient.connect(transport);

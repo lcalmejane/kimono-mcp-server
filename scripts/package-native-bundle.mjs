@@ -80,9 +80,10 @@ if (options.has('fgr')) {
     'win32-x64': process.platform === 'win32' && process.arch === 'x64',
   }[target];
   if (!nativeHost) throw new Error(`Building ${target} requires a matching native runner; provide prebuilt binaries to package cross-target assets.`);
-  const cargoBin = path.join(work, 'cargo/bin');
+  const cargoRoot = path.resolve(process.env.KIMONO_NATIVE_TOOLS_DIR ?? path.join(work, 'cargo'));
+  const cargoBin = path.join(cargoRoot, 'bin');
   execFileSync('cargo', [
-    'install', 'fast-grep', '--version', versions.fastGrep, '--locked', '--root', path.join(work, 'cargo'),
+    'install', 'fast-grep', '--version', versions.fastGrep, '--locked', '--root', cargoRoot,
   ], { cwd: root, stdio: 'inherit' });
   execFileSync('cargo', [
     'build', '--release', '--locked', '--manifest-path', 'semantic/Cargo.toml',
@@ -227,6 +228,7 @@ if (nativeHost) {
     env: {
       ...process.env,
       ORT_DYLIB_PATH: path.join(runtimeDir, config.library),
+      KIMONO_SEMANTIC_DEVICE: 'cpu',
       PATH: searchPath,
     },
   });

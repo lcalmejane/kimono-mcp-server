@@ -26,8 +26,10 @@ une nouvelle release GitHub et une publication Marketplace.
 ## CI et releases
 
 Le workflow [CI](../.github/workflows/ci.yml) teste le serveur et l'extension
-à chaque push et pull request. Une exécution manuelle depuis **Actions → CI →
-Run workflow** ou la création d'un tag `v*` produit également les paquets :
+à chaque push de branche et pull request. Il construit et teste le VSIX et le
+bundle Linux x64, puis réutilise ce bundle dans l'image Docker de test du serveur,
+sans recompiler les moteurs natifs. Une exécution manuelle depuis **Actions → CI →
+Run workflow** ou la création d'un tag `v*` produit aussi les quatre autres cibles :
 
 1. Construction des cinq cibles natives sur les runners adaptés.
 2. Assemblage des composants natifs et du modèle épinglés, du serveur MCP, de
@@ -38,6 +40,26 @@ Run workflow** ou la création d'un tag `v*` produit également les paquets :
 4. Publication des artefacts `kimono-vscode-<target>` (VSIX et provenance) et
    des bundles natifs. Leur rétention est de trente jours.
 
+Pour un tag, la CI attend la validation d'un push `main` portant sur le **même
+SHA de commit**. Si elle a réussi et conserve ses artefacts Linux non expirés,
+les tests serveur/extension et le paquet Linux x64 sont réutilisés.
+Une validation échouée ou annulée bloque la release. Sans validation `main`,
+ou si ses artefacts ont expiré, le tag effectue toute la validation lui-même.
+La validation d'un commit de fusion de PR ne remplace jamais celle de `main`.
+
+L'[action de packaging commune](../.github/actions/package/action.yml) met en
+cache les téléchargements npm, le véritable workspace Cargo `semantic` et les
+outils natifs installés. Les bundles vérifiés sont réutilisables par cible,
+version de Rust et empreintes des sources, dépendances et scripts natifs.
+L'assemblage du VSIX et ses tests d'intégration restent exécutés même avec un
+bundle en cache. Les couches Docker disposent d'un cache GitHub Actions
+persistant. Les anciennes CI de branche sont annulées, jamais les publications
+par tag.
+La suite serveur limite à deux les fichiers de tests simultanés : les moteurs
+natifs utilisent eux aussi plusieurs threads CPU. Les smoke tests de distribution
+sélectionnent le backend CPU portable, sans modifier la sélection automatique
+du périphérique proposée par défaut dans le produit.
+
 Une exécution manuelle ne crée pas de release. Pour publier une release :
 
 1. Mettre à jour les versions du serveur et de l'extension dans
@@ -45,15 +67,22 @@ Une exécution manuelle ne crée pas de release. Pour publier une release :
    puis mettre à jour le lockfile et le changelog.
 2. Committer et pousser les changements.
 3. Pousser le tag correspondant, par exemple `v1.2.3` pour la version `1.2.3`.
-4. Après réussite des tests serveur, extension, construction native et
+4. Le [workflow conteneur](../.github/workflows/publish-container.yml) réutilise
+   les mêmes bundles Linux sur des runners x64 et ARM64 natifs, sans QEMU ni
+   recompilation des moteurs. Il vérifie leurs empreintes et teste l'état HTTP
+   authentifié et un véritable embedding ONNX dans chaque image avant envoi.
+   Les tags multiarchitecture de version et `latest` sont publiés après réussite
+   des deux architectures, en parallèle du packaging macOS/Windows.
+5. Après réussite des tests serveur, extension, publication des conteneurs, construction native et
    empaquetage, la CI crée une release brouillon, ajoute les VSIX, fichiers
    `.build.json`, archives natives et `SHA256SUMS.txt`, puis publie la release.
-5. Après publication de la release, la CI appelle directement le workflow
+6. Après publication de la release, la CI appelle directement le workflow
    Marketplace réutilisable avec ce même tag et le secret de dépôt `VSCE_PAT`.
 
 Les releases publiées sont immuables. Une correction nécessite une nouvelle
 version et un nouveau tag. La création de release utilise `GITHUB_TOKEN`
-avec `contents: write` ; les autres jobs ont des permissions en lecture seule.
+avec `contents: write` ; les conteneurs nécessitent aussi `packages: write`,
+tandis que les jobs de validation et construction restent en lecture seule.
 La publication Marketplace nécessite le secret décrit ci-dessous.
 Open VSX n'est pas publié automatiquement.
 
@@ -84,6 +113,9 @@ release GitHub publiée n'est pas une préversion, que `SHA256SUMS.txt` est vali
 et que les cinq cibles VSIX sont présentes. Il envoie les cinq paquets avant
 de vérifier leur visibilité : le délai d'indexation d'une plateforme ne bloque
 plus les suivantes. Les relances ignorent les versions déjà acceptées.
+Chaque envoi dispose de trois tentatives : une coupure réseau après acceptation
+est reprise sans reconstruction ni nouvel envoi des cibles déjà acceptées.
+L'épuisement des tentatives fait échouer le workflow explicitement.
 Les publications sont sérialisées ; une nouvelle exécution n'annule jamais une
 publication en cours. La visibilité est vérifiée jusqu'à soixante fois, avec
 vingt secondes d'attente et reprise des requêtes en échec.

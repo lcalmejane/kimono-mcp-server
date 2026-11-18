@@ -23,7 +23,10 @@ release and a Marketplace publication.
 ## CI and release
 
 The [CI workflow](../.github/workflows/ci.yml) tests the server and extension on
-push/PR. On **Actions → CI → Run workflow** or a `v*` tag it additionally:
+branch pushes and PRs. It builds and exercises the Linux x64 VSIX/native bundle,
+then uses that bundle in the Docker server test image instead of recompiling
+the native engines there. On **Actions → CI → Run workflow** or a `v*` tag it
+also builds the other four targets:
 
 1. Builds the five native targets on matching GitHub runners.
 2. Packages pinned native/model assets, the bundled MCP server and the runner's
@@ -39,22 +42,46 @@ push/PR. On **Actions → CI → Run workflow** or a `v*` tag it additionally:
 4. Uploads `kimono-vscode-<target>` artifacts (VSIX + build provenance) and the
    existing native bundle artifacts, retained thirty days.
 
+For a tag, CI waits for an existing `main` push validation of the **identical
+commit SHA**. A successful run with unexpired Linux artifacts is reused: server
+and extension tests, and the Linux x64 package, are not rebuilt. Failed or
+cancelled validation blocks the release. If no main validation exists, or its
+artifacts have expired, the tag performs the complete validation itself.
+PR merge validations are never substituted for main validation.
+
+The shared [packaging action](../.github/actions/package/action.yml) caches npm
+downloads, the actual `semantic` Cargo workspace and installed native tools.
+Verified native bundles are cached by target, Rust version and native
+source/dependency/packaging hashes; VSIX packaging and archive integration tests
+still run on a native-cache hit. Docker layers use persistent GitHub Actions
+caches. Superseded branch runs are cancelled; tagged publications are not.
+The server suite limits concurrent test files to two because each native engine
+also uses CPU threads. Distribution smoke tests select the portable CPU backend,
+without changing the product's default automatic device selection.
+
 Manual runs **do not publish releases**. For a release:
 
 1. Update **both** server and extension versions in [`package.json`](../package.json)
    and [`vscode/package.json`](../vscode/package.json); update the lockfile and changelog.
 2. Commit and push the changes to this repository.
 3. Push the matching tag, for example `v1.2.3` for version `1.2.3`.
-4. Only after server tests, extension tests and all native/package smoke jobs pass,
+4. The reusable [container workflow](../.github/workflows/publish-container.yml)
+   consumes the same Linux bundles on native x64 and ARM64 runners, with no QEMU
+   or native-engine rebuild. It verifies bundle hashes and tests authenticated
+   HTTP readiness and a real ONNX embedding in each actual image before pushing
+   it. The multi-architecture version and `latest` tags are published only after
+   both architecture tests pass, in parallel with macOS/Windows packaging.
+5. Only after server tests, extension tests, container publication and all native/package smoke jobs pass,
    CI creates a draft release, attaches all `.vsix`, `.build.json`, native archives
    and `SHA256SUMS.txt`, then publishes it. Published immutable releases are not
    overwritten; fix failures before publishing, or use a new version/tag.
-5. After release publication succeeds, CI calls the reusable Marketplace workflow
+6. After release publication succeeds, CI calls the reusable Marketplace workflow
    with that exact tag and the repository's `VSCE_PAT` secret.
 
 The GitHub release job needs no Marketplace account or PAT and has
-`contents: write` via `GITHUB_TOKEN`; the other CI jobs have read-only
-permissions. Marketplace publishing requires the credential described below.
+`contents: write` via `GITHUB_TOKEN`; container publishing additionally requires
+`packages: write`, while validation/build jobs have read-only permissions.
+Marketplace publishing requires the credential described below.
 Open VSX is not published automatically.
 
 ## Marketplace publication and recovery
@@ -82,7 +109,10 @@ published non-prerelease GitHub release, downloads and verifies its
 `SHA256SUMS.txt`, and confirms all five VSIX targets before invoking `vsce`.
 It uploads all five targets before checking Marketplace visibility, so indexing
 delays on one platform do not block the others. `--skip-duplicate` makes retries
-continue past targets already accepted. Publication runs are serialized and a
+continue past targets already accepted. Each upload gets up to three attempts,
+so a connection reset after acceptance is retried without rebuilding or
+republishing accepted targets. Exhausted retries fail explicitly.
+Publication runs are serialized and a
 new run never cancels an active publication. Visibility checks retry up to sixty
 times with twenty-second waits, including failed lookups. If visibility is still
 unconfirmed, the workflow fails explicitly; uploaded packages remain published

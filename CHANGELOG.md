@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.9.13 - 2026-11-18
+
+- CI: reuse successful same-commit main validation and Linux package artifacts for version tags; cache verified native bundles, Rust workspaces/tools and Docker layers, and share tested Linux engines with container builds.
+- CI: build and smoke-test multi-architecture containers on native runners before publishing; serialize Marketplace retries after transient upload failures.
+- Build hygiene: move test-only Tree-sitter grammars to dev-dependencies without reducing grammar coverage; update vulnerable Hono runtime dependencies and approve only reviewed npm lifecycle scripts.
+
 ## 0.9.12 - 2026-11-18
 
 - VS Code: the extension failed to activate on every platform since 0.9.10 because `collaboration.cjs` was missing from the VSIX (no Kimono view data provider, MCP launcher left pointing at the previous version). The file is now packaged; a unit test checks that every local module the extension loads is listed in the manifest, and the VSIX integration test loads the extension from the archive.

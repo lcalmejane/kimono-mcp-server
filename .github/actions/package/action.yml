@@ -1,0 +1,60 @@
+name: Build and test a platform package
+description: Cache native engines, package the VSIX and test the actual archive.
+inputs:
+  target:
+    description: Native host target
+    required: true
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      with:
+        node-version: 24
+        cache: npm
+    - uses: actions-rust-lang/setup-rust-toolchain@a188e68d0fd2bd36ad51dccb2b07ba6e75105f30 # v2.0.1
+      id: rust
+      with:
+        cache-workspaces: semantic
+        cache-directories: ${{ runner.tool_cache }}/kimono-native-tools
+        cache-key: ${{ inputs.target }}-${{ hashFiles('semantic/versions.json') }}
+    - run: npm ci
+      shell: bash
+    - name: Validate locked dependency pins
+      run: node scripts/check-search-versions.mjs --offline
+      shell: bash
+    - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      id: native
+      with:
+        path: native-bundles/${{ inputs.target }}
+        key: native-${{ inputs.target }}-${{ steps.rust.outputs.cachekey }}-${{ hashFiles('semantic/Cargo.*', 'semantic/src/**', 'scripts/package-native-bundle.mjs', 'scripts/onnxruntime-package.mjs', 'semantic/model.json', 'semantic/versions.json', 'THIRD_PARTY_NOTICES.md', '.github/actions/package/action.yml') }}
+    - name: Build and test native engines
+      if: steps.native.outputs.cache-hit != 'true'
+      env:
+        BUILD_TARGET: ${{ inputs.target }}
+        KIMONO_NATIVE_TOOLS_DIR: ${{ runner.tool_cache }}/kimono-native-tools
+        CARGO_BUILD_JOBS: '4'
+      run: npm run bundle:native -- --target "$BUILD_TARGET" --output "native-bundles/$BUILD_TARGET"
+      shell: bash
+    - name: Build standalone VS Code extension
+      env:
+        BUILD_TARGET: ${{ inputs.target }}
+      run: npm run package:vscode
+      shell: bash
+    - name: Exercise packaged server through the VS Code provider
+      run: npm run test:vscode:integration
+      shell: bash
+    - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        name: kimono-vscode-${{ inputs.target }}
+        path: |
+          vscode/*.vsix
+          vscode/*.build.json
+        compression-level: 0
+        if-no-files-found: error
+        retention-days: 30
+    - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        name: kimono-native-${{ inputs.target }}
+        path: native-bundles/${{ inputs.target }}
+        if-no-files-found: error
+        retention-days: 30

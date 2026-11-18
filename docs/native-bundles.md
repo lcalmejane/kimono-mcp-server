@@ -28,6 +28,13 @@ npm run bundle:native -- \
   --output native-bundles/linux-arm64
 ```
 
+CI preserves the Cargo `semantic` workspace cache and caches verified bundles
+by native inputs. `KIMONO_NATIVE_TOOLS_DIR` selects a persistent Cargo install
+root for `fgr`; by default the packager uses its temporary preparation directory.
+The Linux bundles also supply the Docker test/release images. Each release image
+is smoke-tested on its native architecture before publication; engines compiled
+inside the newer Debian image are not copied back into the Ubuntu-built VSIX.
+
 The code-specialized model is optional and is never downloaded by the packager.
 To include a locally prepared, supported model bundle, pass `--code-model`:
 

@@ -1,37 +1,101 @@
 name: Publish container
 
 on:
-  push:
-    tags:
-      - "v*"
+  workflow_call:
+    inputs:
+      release_tag:
+        type: string
+        required: true
+      linux_run_id:
+        description: Successful validation run containing the Linux x64 bundle
+        type: string
+        required: true
 
 permissions:
   contents: read
+  actions: read
   packages: write
 
+concurrency:
+  group: kimono-container
+  cancel-in-progress: false
+
 jobs:
-  publish:
-    runs-on: ubuntu-latest
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: linux-x64
+            runner: ubuntu-24.04
+            platform: linux/amd64
+          - target: linux-arm64
+            runner: ubuntu-24.04-arm
+            platform: linux/arm64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: docker/setup-qemu-action@v3
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: kimono-native-${{ matrix.target }}
+          path: native-bundles/${{ matrix.target }}
+          run-id: ${{ matrix.target == 'linux-x64' && inputs.linux_run_id || github.run_id }}
+          github-token: ${{ github.token }}
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: docker/metadata-action@v5
-        id: metadata
-        with:
-          images: ghcr.io/${{ github.repository }}
-          tags: |
-            type=ref,event=tag
-            type=raw,value=latest
-      - uses: docker/build-push-action@v6
+      - name: Set candidate image name
+        env:
+          IMAGE: ghcr.io/${{ github.repository }}
+          TARGET: ${{ matrix.target }}
+        run: echo "CANDIDATE=${IMAGE,,}:ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-$TARGET" >> "$GITHUB_ENV"
+      - name: Build with the tested native bundle
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ${{ steps.metadata.outputs.tags }}
-          labels: ${{ steps.metadata.outputs.labels }}
+          target: runtime-prebuilt
+          build-args: BUNDLE_TARGET=${{ matrix.target }}
+          platforms: ${{ matrix.platform }}
+          load: true
+          tags: ${{ env.CANDIDATE }}
+          cache-from: type=gha,scope=kimono-${{ matrix.target }}
+          cache-to: type=gha,scope=kimono-${{ matrix.target }},mode=max
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ inputs.release_tag }}
+      - name: Test native engine and HTTP server in the actual image
+        run: node scripts/test-container.mjs "$CANDIDATE"
+      - name: Push tested candidate
+        run: docker push "$CANDIDATE"
+
+  publish:
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish multi-architecture version and latest
+        env:
+          IMAGE: ghcr.io/${{ github.repository }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          image="${IMAGE,,}"
+          prefix="$image:ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          docker buildx imagetools create \
+            --tag "$image:$RELEASE_TAG" --tag "$image:latest" \
+            "$prefix-linux-x64" "$prefix-linux-arm64"
+          docker buildx imagetools inspect "$image:$RELEASE_TAG"
