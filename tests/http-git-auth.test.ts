@@ -10,6 +10,7 @@ import { currentGitProfileContext } from '../src/git-profile.js';
 import { runtimeFor } from '../src/runtime-tools.js';
 import { startHttpServer } from '../src/server.js';
 
+// Real HTTP startup initializes native indexes; use the integration-test budget.
 it.each([false, true])('isolates authenticated HTTP credential contexts (trusted proxy: %s)', async trusted => {
   const parent = await mkdtemp(path.join(tmpdir(), 'kimono-http-profile-'));
   const root = path.join(parent, 'knowledge');
@@ -85,4 +86,4 @@ it.each([false, true])('isolates authenticated HTTP credential contexts (trusted
     await rm(knowledge.searchIndex.directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
     await rm(parent, { recursive: true, force: true });
   }
-});
+}, 30_000);
