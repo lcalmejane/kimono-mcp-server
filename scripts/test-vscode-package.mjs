@@ -24,7 +24,7 @@ try {
   await mkdir(extracted);
   // Test the installed archive, including ZIP permissions, not the build staging tree.
   if (process.platform === 'win32') {
-    execFileSync('tar', ['-xf', archive, '-C', extracted]);
+    execFileSync('tar', ['-xf', path.basename(archive), '-C', extracted], { cwd: path.dirname(archive) });
   } else {
     execFileSync('unzip', ['-q', archive, '-d', extracted]);
   }
