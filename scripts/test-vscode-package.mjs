@@ -6,7 +6,6 @@ import { fileURLToPath } from 'node:url';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { createRequire } from 'node:module';
-import { register } from '../vscode/extension.cjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const scratch = await mkdtemp(path.join(root, '.local-runtime-vscode-'));
@@ -30,6 +29,8 @@ try {
     execFileSync('unzip', ['-q', archive, '-d', extracted]);
   }
   const stage = path.join(extracted, 'extension');
+  // Load the packaged entry point: a module missing from the archive must fail here.
+  const { register } = createRequire(import.meta.url)(path.join(stage, 'extension.cjs'));
   const knowledge = path.join(scratch, 'knowledge');
   await mkdir(path.join(knowledge, 'prompts'), { recursive: true });
   await writeFile(path.join(knowledge, 'prompts/index.md'), '# Knowledge\n\nKimono integration distribution evidence.\n');

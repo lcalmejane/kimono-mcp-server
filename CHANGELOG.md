@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.9.12 - 2026-11-18
+
+- VS Code: the extension failed to activate on every platform since 0.9.10 because `collaboration.cjs` was missing from the VSIX (no Kimono view data provider, MCP launcher left pointing at the previous version). The file is now packaged; a unit test checks that every local module the extension loads is listed in the manifest, and the VSIX integration test loads the extension from the archive.
+
 ## 0.9.11 - 2026-11-18
 
 - ONNX Runtime 1.32.0 (from 1.31.0; `darwin-x64` stays on 1.23.2, the last release with a macOS Intel library), now taken from Microsoft's official NuGet package `Microsoft.ML.OnnxRuntime`: the GitHub release archives (`github.com/microsoft/onnxruntime`) are no longer reachable, which broke the Docker image and native bundle builds of 0.9.10. One package per version, SHA-256 pinned in `semantic/versions.json` (`onnxPackages`); native libraries and licences extracted by a pure Node reader (`scripts/onnxruntime-package.mjs`, no unzip/tar/PowerShell).
