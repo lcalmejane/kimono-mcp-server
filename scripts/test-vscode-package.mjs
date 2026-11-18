@@ -1,11 +1,13 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
-import { execFileSync } from 'node:child_process';
+import { createWriteStream } from 'node:fs';
+import { chmod, mkdir, mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
 import path from 'node:path';
+import { pipeline } from 'node:stream/promises';
 import { fileURLToPath } from 'node:url';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { createRequire } from 'node:module';
+import { open } from 'yauzl';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const scratch = await mkdtemp(path.join(root, '.local-runtime-vscode-'));
@@ -16,6 +18,48 @@ const createTransport = options => {
   channel.stderr.on('data', chunk => { diagnostics += chunk.toString(); });
   return channel;
 };
+async function extractVsix(archive, destination) {
+  const root = path.resolve(destination);
+  const zip = await new Promise((resolve, reject) => {
+    open(archive, { lazyEntries: true, strictFileNames: true, validateEntrySizes: true },
+      (error, value) => error ? reject(error) : resolve(value));
+  });
+  await new Promise((resolve, reject) => {
+    let settled = false;
+    const fail = error => {
+      if (settled) return;
+      settled = true;
+      zip.close();
+      reject(error);
+    };
+    zip.on('error', fail);
+    zip.on('end', () => {
+      if (settled) return;
+      settled = true;
+      resolve();
+    });
+    zip.on('entry', entry => {
+      void (async () => {
+        if (entry.isEncrypted()) throw new Error('Encrypted VSIX entries are not supported');
+        const target = path.resolve(root, entry.fileName);
+        if (!target.startsWith(`${root}${path.sep}`)) throw new Error(`Invalid VSIX entry path: ${entry.fileName}`);
+        if (entry.fileName.endsWith('/')) {
+          await mkdir(target, { recursive: true });
+        } else {
+          await mkdir(path.dirname(target), { recursive: true });
+          const stream = await new Promise((resolve, reject) => {
+            zip.openReadStream(entry, (error, value) => error ? reject(error) : resolve(value));
+          });
+          await pipeline(stream, createWriteStream(target, { flags: 'wx' }));
+          const mode = (entry.externalFileAttributes >>> 16) & 0o777;
+          if (mode && process.platform !== 'win32') await chmod(target, mode);
+        }
+        zip.readEntry();
+      })().catch(fail);
+    });
+    zip.readEntry();
+  });
+}
 try {
   const pkg = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'));
   const target = `${process.platform}-${process.arch}`;
@@ -23,11 +67,7 @@ try {
   const extracted = path.join(scratch, 'unpacked');
   await mkdir(extracted);
   // Test the installed archive, including ZIP permissions, not the build staging tree.
-  if (process.platform === 'win32') {
-    execFileSync('tar', ['-xf', path.basename(archive), '-C', extracted], { cwd: path.dirname(archive) });
-  } else {
-    execFileSync('unzip', ['-q', archive, '-d', extracted]);
-  }
+  await extractVsix(archive, extracted);
   const stage = path.join(extracted, 'extension');
   // Load the packaged entry point: a module missing from the archive must fail here.
   const { register } = createRequire(import.meta.url)(path.join(stage, 'extension.cjs'));
