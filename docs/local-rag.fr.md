@@ -510,7 +510,7 @@ automatiquement dans le projet. Redémarrer le serveur après une modification.
   "exclude": ["**/*.generated.*", "**/fixtures/**"],
   "maxFileBytes": 4194304,
   "maxFiles": 100000,
-  "maxCorpusBytes": 536870912
+  "maxCorpusBytes": 1073741824
 }
 ```
 
@@ -520,7 +520,7 @@ règles d'exclusion, `.gitignore` et filtres de sécurité intégrés restent
 applicables. Une configuration invalide renvoie une erreur au lieu d'être
 ignorée.
 
-Limites RAG par défaut : 4 Mio par fichier, 100 000 fichiers et 512 Mio par
+Limites RAG par défaut : 4 Mio par fichier, 100 000 fichiers et 1 Gio par
 corpus. Un snapshot peut contenir 256 Mio ; jusqu'à 8 snapshots partagent un
 budget de 512 Mio et expirent après 15 minutes. Ce sont des limites de
 protection, pas des garanties de performance. Les grands index sémantiques

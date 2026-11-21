@@ -85,7 +85,7 @@ export function corpusConfig(value: unknown = {}): Readonly<CorpusConfig> {
     mode, extensions: mode === 'rag' ? RAG_EXTENSIONS : AIKIDO_EXTENSIONS,
     filenames: mode === 'rag' ? RAG_FILENAMES : [],
     include: [], exclude: [], maxFileBytes: mode === 'rag' ? 4 * MIB : 2 * MIB,
-    maxFiles: 100_000, maxCorpusBytes: 512 * MIB,
+    maxFiles: 100_000, maxCorpusBytes: 1024 * MIB,
     snapshotMaxBytes: mode === 'rag' ? 256 * MIB : 64 * MIB,
     snapshotsTotalBytes: mode === 'rag' ? 512 * MIB : 256 * MIB,
     maxSnapshots: 8, snapshotTtlMs: 15 * 60 * 1000,

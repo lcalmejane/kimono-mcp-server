@@ -54,6 +54,8 @@ it('defaults to RAG and requires an entry point only for explicitly selected AI-
   const { snapshotId } = JSON.parse(await runtimeFor(knowledge).call('aikido_snapshot', { operation: 'begin' }));
   expect(JSON.parse(await retrieval.list({ scope: 'code' })).total).toBe(3);
   await runtimeFor(knowledge).call('aikido_snapshot', { operation: 'end', snapshotId });
+  expect(corpusConfig().maxCorpusBytes).toBe(1024 * 1024 * 1024);
+  expect(corpusConfig({ mode: 'aikido' }).maxCorpusBytes).toBe(1024 * 1024 * 1024);
   expect(corpusConfig().snapshotMaxBytes).toBe(256 * 1024 * 1024);
   expect(corpusConfig({ mode: 'aikido' }).snapshotMaxBytes).toBe(64 * 1024 * 1024);
 });

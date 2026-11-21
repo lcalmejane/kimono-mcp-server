@@ -298,7 +298,7 @@ peut restreindre les types de fichiers ou chemins et ajuster les limites :
 
 Le chemin de configuration est choisi par l'hôte serveur ; les fichiers du
 projet ne sont pas chargés automatiquement comme configuration. Par défaut,
-le corpus est limité à 100 000 fichiers et 512 Mio, avec une taille maximale de
+le corpus est limité à 100 000 fichiers et 1 Gio, avec une taille maximale de
 4 Mio par fichier en mode RAG. Voir le [guide de configuration RAG](docs/local-rag.fr.md)
 pour les paramètres et limites.
 

@@ -475,7 +475,7 @@ Restart the server after changing the config.
   "exclude": ["**/*.generated.*", "**/fixtures/**"],
   "maxFileBytes": 4194304,
   "maxFiles": 100000,
-  "maxCorpusBytes": 536870912
+  "maxCorpusBytes": 1073741824
 }
 ```
 
@@ -484,7 +484,7 @@ All fields are optional. `extensions` replaces the default extension list;
 rules and built-in safety filters always apply. Invalid settings fail with an
 error instead of silently falling back.
 
-Default RAG limits are 4 MiB per file, 100,000 files and 512 MiB per corpus.
+Default RAG limits are 4 MiB per file, 100,000 files and 1 GiB per corpus.
 A snapshot can hold 256 MiB; up to 8 snapshots share a 512 MiB budget and
 expire after 15 minutes. These are safety limits, not performance guarantees.
 Large semantic indexes require disk, memory and time for initial embedding.

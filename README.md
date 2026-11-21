@@ -285,7 +285,7 @@ file types or paths and adjust corpus limits:
 
 Configuration paths are chosen by the server host; project files are not
 loaded as configuration automatically. The defaults limit a corpus to 100,000
-files and 512 MiB, with a 4 MiB maximum file size in RAG mode. See the
+files and 1 GiB, with a 4 MiB maximum file size in RAG mode. See the
 [RAG setup guide](docs/local-rag.md) for all settings and limits.
 
 ### Projects with several Git repositories
