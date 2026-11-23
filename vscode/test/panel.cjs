@@ -354,7 +354,7 @@ test("model management is lazy and native consent is separate for download and r
     const send = input => state.receive({ action: "models", input, folder: folder.uri.toString() });
     const requests = async () => (await fs.readFile(requestFile, "utf8")).trim().split("\n").map(line => JSON.parse(line));
     await send({ operation: "status" });
-    assert.deepEqual((await requests())[0], { name: "aikido_models", arguments: { operation: "status" } });
+    assert.deepEqual((await requests())[0], { name: "aikido_models", arguments: { operation: "status", detail: true } });
     await send({ operation: "install", model: "code" });
     assert.equal((await requests()).filter(call => call.arguments.operation === "install").length, 0);
     state.confirmation = "Confirm";
@@ -398,6 +398,6 @@ test("remote model panel honors endpoint-bound SecretStorage without local launc
     assert.ok(calls.every(call => call.url === "https://configured.example/mcp"));
     assert.ok(calls.every(call => call.options.headers.authorization === "Bearer bound-token"));
     assert.deepEqual(JSON.parse(calls.at(-1).options.body).params,
-      { name: "aikido_models", arguments: { operation: "status" } });
+      { name: "aikido_models", arguments: { operation: "status", detail: true } });
   } finally { global.fetch = originalFetch; await dispose(); }
 });
