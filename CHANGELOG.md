@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.9.14 - 2026-11-23
+
+- MCP: compact responses by default, full detail on option. `aikido_git infos` summarizes document fingerprints by `basisFingerprint` and `documentCount` and bounds dirty lists to 20 entries with their total (`detail: true` returns everything). `aikido_root status` omits the corpus configuration and skipped files, and `aikido_models status` lists only the required models, unless `detail: true` is set; the VS Code and Tatami panels ask for the full catalogue.
+- MCP: `aikido_file` reads and ranges, and the general `aikido` read, return only the `snapshotId`; `version` and `provenance` come with `aikido_snapshot begin`, and the document header with `operation=metadata`.
+- MCP: `KIMONO_GENERAL_TOOL=false` hides the general `aikido` tool from the tool list (about 3 KB of schema) for clients that use the specialized tools; calls to it stay accepted.
+
 ## 0.9.13 - 2026-11-18
 
 - CI: reuse successful same-commit main validation and Linux package artifacts for version tags; cache verified native bundles, Rust workspaces/tools and Docker layers, and share tested Linux engines with container builds.

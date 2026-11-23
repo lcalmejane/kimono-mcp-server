@@ -313,6 +313,15 @@ ignores them, Kimono skips them, as Git does. Declare them in
 - Hosts can also pass the list as JSON in `KIMONO_REPOSITORIES` (added to the config file's list). In VS Code, set `kimono.repositories` per folder, or enter the paths in the management panel.
 - The single `gitUrl` of the policy still describes ROOT. Remote `sync` still clones ROOT only.
 
+### Compact responses
+
+Status tools return a summary by default; `detail: true` returns everything:
+
+- `aikido_git infos` gives `basisFingerprint` and `documentCount` instead of each file fingerprint, and at most 20 dirty files or paths with their total.
+- `aikido_root status` omits the corpus configuration and skipped files; `aikido_models status` lists only the required models.
+- `aikido_file` reads and ranges return the `snapshotId` only: `version` and `provenance` come with `aikido_snapshot begin`, the document header with `operation=metadata`.
+- `KIMONO_GENERAL_TOOL=false` hides the general `aikido` tool (about 3 KB of schema) from clients that use the specialized tools. Calls to it still work.
+
 ## Optional AI-KIDO mode
 
 Kimono can also retrieve an existing AI-KIDO knowledge base when you select

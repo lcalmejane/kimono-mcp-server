@@ -37,3 +37,15 @@ describe('compact Kimono responses (KM1–KM4)', () => {
     expect(compactModels(status, true)).toBe(status);
   });
 });
+
+describe('general tool listing (KM6)', () => {
+  it('hides the general aikido tool on option and keeps it by default', async () => {
+    const { listedTools } = await import('../src/server.js');
+    expect(listedTools().map(tool => tool.name)).toContain('aikido');
+    const hidden = listedTools({ generalTool: false });
+    expect(hidden.map(tool => tool.name)).not.toContain('aikido');
+    const saved = JSON.stringify(listedTools()).length - JSON.stringify(hidden).length;
+    expect(saved).toBeGreaterThan(1000);
+    console.log(`KM6: hiding the general tool saves ${saved} bytes of schema`);
+  });
+});

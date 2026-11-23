@@ -280,7 +280,9 @@ class RuntimeTools {
         const result = await runtimeFor(snapshot.knowledge, snapshotMetadata(snapshot)).execute(name, input, {}, availability);
         const compact = name === 'aikido_search' && (input.queries !== undefined || input.detail === 'compact'
           || input.detail === undefined && input.contextLines === undefined);
-        return compact ? result : decorateSnapshotResult(result, snapshot);
+        // KM5: reads and ranges are tied to the snapshotId; version and provenance come with begin and metadata.
+        const compactFile = name === 'aikido_file' && input.operation !== 'metadata' && input.operation !== 'outline';
+        return compact || compactFile ? result : decorateSnapshotResult(result, snapshot);
       });
     }
     if (name === 'aikido_index' && (input.operation === 'status' || input.operation === 'cancel' || input.operation === 'reset')) {
@@ -683,11 +685,11 @@ function text(input: Record<string, unknown>, key: string, required = false): st
   return value;
 }
 
-export function decorateSnapshotResult(result: string, snapshot: KnowledgeSnapshot): string {
+export function decorateSnapshotResult(result: string, snapshot: KnowledgeSnapshot, compact = false): string {
   let value: unknown;
   try { value = JSON.parse(result); }
   catch { value = { content: result }; }
-  const metadata = snapshotMetadata(snapshot);
+  const metadata = compact ? { snapshotId: snapshot.snapshotId } : snapshotMetadata(snapshot);
   return JSON.stringify(value && typeof value === 'object' && !Array.isArray(value)
     ? { ...value, ...metadata }
     : { ...metadata, result: value });

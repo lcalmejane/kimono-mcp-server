@@ -31,6 +31,8 @@ import {
 } from './git-profile.js';
 
 export interface AikidoServerOptions {
+  /** KM6: list the general `aikido` tool (default true, or `KIMONO_GENERAL_TOOL=false`); calls stay accepted. */
+  generalTool?: boolean;
   resolveGitProfile?: GitCredentialResolver;
   trustedGitProfileHeader?: boolean;
   allowLocalGitProfile?: boolean;
@@ -68,6 +70,15 @@ const MCP_TOOL: Tool = {
   },
 };
 
+/**
+ * Tools announced to clients. The general `aikido` tool duplicates aikido_search and aikido_file (KM6); a client that
+ * has the specialized tools hides it to save its schema, while activate/execute and older clients keep working.
+ */
+export function listedTools(options: AikidoServerOptions = {}): Tool[] {
+  const general = options.generalTool ?? process.env.KIMONO_GENERAL_TOOL !== 'false';
+  return general ? [MCP_TOOL, ...RUNTIME_TOOLS] : [...RUNTIME_TOOLS];
+}
+
 export function createAikidoMcpServer(
   knowledge: AikidoKnowledgeBase,
   lifecycle = new Lifecycle(),
@@ -79,7 +90,7 @@ export function createAikidoMcpServer(
       instructions: SEARCH_INSTRUCTIONS },
   );
 
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: [MCP_TOOL, ...RUNTIME_TOOLS] }));
+  server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: listedTools(options) }));
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     try {
       return await lifecycle.run(async () => {
@@ -176,7 +187,8 @@ async function callAikidoTool(
     return snapshotsFor(knowledge).withSnapshot(snapshotId, async snapshot => {
       const result = await callAikidoTool(snapshot.knowledge, raw, snapshot);
       const text = result.content[0]?.type === 'text' ? result.content[0].text : '';
-      return toolResult(decorateSnapshotResult(text, snapshot));
+      // KM5: a read is tied to its snapshotId, as with aikido_file.
+      return toolResult(decorateSnapshotResult(text, snapshot, operation === 'read'));
     });
   }
   if (operation === 'list') {

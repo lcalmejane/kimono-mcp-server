@@ -250,7 +250,9 @@ export class Retrieval {
     if (start > Math.max(1, document.lines.length)) throw new Error('startLine exceeds document length');
     end = Math.min(end, document.lines.length);
     const selected = document.lines.slice(start - 1, end);
-    const result = { document: document.metadata, startLine: start, endLine: end, content: '',
+    // KM5: the header is returned by operation=metadata; a read keeps only the snapshotId.
+    const { header: _header, ...readMetadata } = document.metadata;
+    const result = { document: readMetadata, startLine: start, endLine: end, content: '',
       truncated: false, hasMore: end < document.lines.length, nextLine: end < document.lines.length ? end + 1 : null };
     while (true) {
       result.content = full && selected.length === document.lines.length ? document.content : selected.join('\n');
@@ -258,12 +260,12 @@ export class Retrieval {
       result.truncated = result.endLine < end;
       result.hasMore = result.endLine < document.lines.length;
       result.nextLine = result.hasMore ? Math.max(start, result.endLine + 1) : null;
-      if (Buffer.byteLength(this.json(result)) <= maxBytes) break;
+      if (Buffer.byteLength(this.json(result, undefined, true)) <= maxBytes) break;
       if (!selected.length) throw new Error('Document metadata exceeds maxBytes; increase the response budget');
       selected.pop();
       if (!selected.length) throw new Error('A document line exceeds maxBytes; increase the response budget');
     }
-    return this.json(result, maxBytes);
+    return this.json(result, maxBytes, true);
   }
 
   async search(input: Record<string, unknown>, matches: Array<SearchMatch & { score?: number }>, extra: Record<string, unknown>): Promise<string> {
@@ -384,20 +386,20 @@ export class Retrieval {
     for (let index = 0; index < passages.length; index++) {
       const passage = passages[index];
       returned.push(passage);
-      if (Buffer.byteLength(this.json(output(returned, pending.slice(index + 1)))) <= maxBytes) continue;
+      if (Buffer.byteLength(this.json(output(returned, pending.slice(index + 1)), undefined, true)) <= maxBytes) continue;
       const lines = passage.content.split('\n');
       while (lines.length > 1) {
         lines.pop();
         passage.content = lines.join('\n');
         passage.endLine = passage.startLine + lines.length - 1;
         const rest = [{ path: passage.path, startLine: passage.endLine + 1, endLine: pending[index].endLine }, ...pending.slice(index + 1)];
-        if (Buffer.byteLength(this.json(output(returned, rest))) <= maxBytes) return this.json(output(returned, rest), maxBytes);
+        if (Buffer.byteLength(this.json(output(returned, rest), undefined, true)) <= maxBytes) return this.json(output(returned, rest), maxBytes, true);
       }
       returned.pop();
       if (!returned.length) throw new Error('A requested line exceeds maxBytes; increase the response budget');
-      return this.json(output(returned, pending.slice(index)), maxBytes);
+      return this.json(output(returned, pending.slice(index)), maxBytes, true);
     }
-    return this.json(output(returned, []), maxBytes);
+    return this.json(output(returned, []), maxBytes, true);
   }
 
   private async excerpts(input: Record<string, unknown>, matches: Array<SearchMatch & { score?: number }>, extra: Record<string, unknown>): Promise<string> {
@@ -425,13 +427,13 @@ export class Retrieval {
       documents[file_id] = doc.metadata;
       results.push({ ...hit, file_id, startLine: start, endLine: start + documentLines(excerpt).length - 1,
         excerpt, excerptTruncated: excerpt.length < text.length });
-      if (Buffer.byteLength(this.json({ ...extra, count: results.length, truncated: true, documents, results })) > maxBytes) {
+      if (Buffer.byteLength(this.json({ ...extra, count: results.length, truncated: true, documents, results }, undefined, true)) > maxBytes) {
         results.pop();
         if (!results.some(result => result.file_id === file_id)) delete documents[file_id];
         omitted = true; break;
       }
     }
     if (!results.length && matches.length) throw new Error('Search metadata exceeds maxBytes; increase the response budget');
-    return this.json({ ...extra, count: results.length, truncated: omitted, documents, results }, maxBytes);
+    return this.json({ ...extra, count: results.length, truncated: omitted, documents, results }, maxBytes, true);
   }
 }

@@ -106,7 +106,9 @@ describe('explicit research snapshots', () => {
       operation: 'read', path: 'prompts/index.md', full: true, snapshotId: begun.snapshotId,
     }));
     expect(captured.snapshotId).toBe(begun.snapshotId);
-    expect(captured.version).toBe(begun.version);
+    // KM5: version and provenance come with begin, not with each read.
+    expect(captured.version).toBeUndefined();
+    expect(captured.document.header).toBeUndefined();
     expect(captured.content).toContain('Captured version');
     expect(captured.content).not.toContain('Updated version');
 

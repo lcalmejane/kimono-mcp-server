@@ -327,6 +327,16 @@ configuration du corpus ou dans la politique projet
 - L'hôte peut aussi passer la liste en JSON dans `KIMONO_REPOSITORIES` (ajoutée à celle du fichier). Dans VS Code, réglez `kimono.repositories` par dossier, ou saisissez les chemins dans le panneau de gestion.
 - Le `gitUrl` unique de la politique décrit toujours ROOT. Le `sync` distant clone encore ROOT seul.
 
+
+### Réponses compactes
+
+Les outils d’état rendent un résumé par défaut ; `detail: true` rend tout :
+
+- `aikido_git infos` donne `basisFingerprint` et `documentCount` au lieu de l’empreinte de chaque fichier, et au plus 20 fichiers ou chemins modifiés avec leur total.
+- `aikido_root status` omet la configuration du corpus et les fichiers ignorés ; `aikido_models status` ne liste que les modèles requis.
+- Les lectures et plages d’`aikido_file` ne rendent que le `snapshotId` : `version` et `provenance` viennent avec `aikido_snapshot begin`, l’en-tête du document avec `operation=metadata`.
+- `KIMONO_GENERAL_TOOL=false` masque l’outil général `aikido` (environ 3 Ko de schéma) pour les clients qui utilisent les outils spécialisés. Ses appels restent acceptés.
+
 ## Mode AI-KIDO en option
 
 Kimono peut aussi rechercher dans une base de connaissances AI-KIDO existante
