@@ -34,9 +34,9 @@ export const SEARCH_PROPERTIES = {
   contextLines: { type: 'integer', minimum: 0, maximum: 20, description: 'Excerpts only; alone selects excerpts (legacy).' },
   query: { type: 'string', minLength: 1, description: 'One query, or use queries.' },
   queries: { type: 'array', minItems: 1, maxItems: 20, items: { type: 'string', minLength: 1 },
-    description: 'Ordered batch; shared options/budget (min 4096 bytes), per-query errors. Resume at nextQuery.' },
+    description: 'Ordered batch; shared options/budget (>=4096 bytes); per-query errors; resume at nextQuery.' },
   vector: { type: 'array', minItems: 1, maxItems: 16384, items: { type: 'number' } },
-  embeddingModel: { type: 'string', description: 'Vector only: exact aikido_embed model; matching preprocessing required.' },
+  embeddingModel: { type: 'string', description: 'Vector only: exact aikido_embed model and preprocessing.' },
   mode: { type: 'string', enum: ['literal', 'regex', 'text', 'semantic', 'hybrid'], default: 'literal' },
   regex: { type: 'boolean' },
   enrich: { type: 'boolean', default: true, description: 'Declared vocabulary aliases only; no translation/LLM.' },
@@ -47,7 +47,7 @@ export const SEARCH_PROPERTIES = {
 export const RUNTIME_TOOLS: Tool[] = [
   {
     name: 'aikido_models',
-    description: 'Models: status, confirmed install/configure (custom: {code,documents}). ROOT unchanged.',
+    description: 'Models: status (detail=all); confirmed install/configure (custom {code,documents}). ROOT unchanged.',
     inputSchema: {
       type: 'object', additionalProperties: false, required: ['operation'],
       properties: {
@@ -56,6 +56,7 @@ export const RUNTIME_TOOLS: Tool[] = [
         policy: { type: 'string', enum: [...EMBEDDING_POLICIES] },
         custom: { type: 'object' },
         confirmed: { type: 'boolean' },
+        detail: { type: 'boolean' },
       },
     },
     annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
@@ -78,7 +79,7 @@ export const RUNTIME_TOOLS: Tool[] = [
   },
   {
     name: 'aikido_embed',
-    description: 'info: identity/preprocessing/hashes. embed: local query/document vector. No ROOT/index writes.',
+    description: 'info: identity/preprocessing/hashes; embed: local query/document vector. Read-only.',
     inputSchema: {
       type: 'object', additionalProperties: false,
       oneOf: [
@@ -95,18 +96,19 @@ export const RUNTIME_TOOLS: Tool[] = [
   },
   {
     name: 'aikido_root',
-    description: 'Inspect server name/version, ROOT, corpus policy and readiness; Git optional.',
+    description: 'Server, ROOT, corpus policy, readiness (detail=all); Git optional.',
     inputSchema: {
       type: 'object', additionalProperties: false, required: ['operation'],
       properties: {
         operation: { type: 'string', enum: ['status'] },
+        detail: { type: 'boolean' },
       },
     },
     annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
   },
   {
     name: 'aikido_search',
-    description: 'Search snapshot: query or queries[] batch. compact returns paths/ranges, no text. text=terms, literal=phrase, regex=pattern, semantic=meaning, hybrid=both. Read hits in one aikido_file ranges batch.',
+    description: 'Search snapshot: query or queries[] batch; compact=paths/ranges, no text. text=terms, literal=phrase, regex=pattern, semantic=meaning, hybrid=both. Read hits in one aikido_file ranges batch.',
     inputSchema: {
       type: 'object', additionalProperties: false,
       oneOf: [
@@ -130,7 +132,7 @@ export const RUNTIME_TOOLS: Tool[] = [
       properties: {
         operation: { type: 'string', enum: ['update', 'rebuild', 'status', 'cancel', 'reset'] },
         mode: { type: 'string', enum: ['literal', 'semantic', 'all'], default: 'literal' },
-        background: { type: 'boolean', default: false, description: 'Full semantic only; poll status. Rebuild keeps old generation until success.' },
+        background: { type: 'boolean', default: false, description: 'Full semantic only; poll status. Rebuild keeps the old index until success.' },
         paths: { anyOf: [{ type: 'string', minLength: 1 }, { type: 'array', minItems: 1, maxItems: 256, items: { type: 'string', minLength: 1 } }],
           description: 'update: relative subtrees/deletions, no globs.' },
       },
@@ -138,7 +140,7 @@ export const RUNTIME_TOOLS: Tool[] = [
   },
   {
     name: 'aikido_git',
-    description: 'AI-KIDO: infos, retarget source URL, sync remote knowledge (preserve conflicts). No Git mutation; host credentials.',
+    description: 'infos (detail=all), retarget URL, sync remote knowledge (keeps conflicts). No Git mutation; host credentials.',
     inputSchema: {
       type: 'object', additionalProperties: false, required: ['operation'],
       allOf: [{
@@ -150,17 +152,18 @@ export const RUNTIME_TOOLS: Tool[] = [
       }],
       properties: {
         operation: { type: 'string', enum: ['infos', 'sync', 'retarget'] },
+        detail: { type: 'boolean' },
         mode: { type: 'string', enum: ['literal', 'semantic', 'all'], default: 'all' },
         gitUrl: { type: 'string', description: 'retarget: HTTPS/SSH, no credentials.' },
-        branch: { type: ['string', 'null'], description: 'Existing branch; omit for remote HEAD.' },
-        connectionId: { type: 'string', maxLength: 128, pattern: '^[A-Za-z0-9_-]*$', description: 'sync: host credential ID, never secrets; empty=anonymous.' },
+        branch: { type: ['string', 'null'], description: 'Existing branch; omit=remote HEAD.' },
+        connectionId: { type: 'string', maxLength: 128, pattern: '^[A-Za-z0-9_-]*$', description: 'sync: host credential ID, no secret; empty=anonymous.' },
       },
     },
     annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
   },
   {
     name: 'aikido_collaboration',
-    description: 'AI-KIDO revisions, not Git. guidance first. mode: same-root (nothing staged; sync reindexes) vs replica (sync = stage+publish).',
+    description: 'AI-KIDO revisions, not Git; guidance first. same-root: no staging, sync reindexes; replica: sync=stage+publish.',
     inputSchema: {
       type: 'object', additionalProperties: false, required: ['operation'],
       properties: {
@@ -168,7 +171,7 @@ export const RUNTIME_TOOLS: Tool[] = [
         clientRoot: { type: 'string', description: 'Absolute client workspace; ROOT => same-root.' },
         owner: { type: 'string', description: 'Overlay id (default "default").' },
         localManifest: { type: 'object', maxProperties: 2000, additionalProperties: { type: 'string', pattern: '^[a-f0-9]{64}$' },
-          description: 'Path -> SHA-256; omit for ROOT.' },
+          description: 'Path->SHA-256; omit for ROOT.' },
         baseVersion: { type: 'string', pattern: '^[a-f0-9]{64}$' },
         expectedSharedVersion: { type: 'string', pattern: '^[a-f0-9]{64}$' },
         sharedVersion: { type: 'string', pattern: '^[a-f0-9]{64}$' },
@@ -204,7 +207,7 @@ export const RUNTIME_TOOLS: Tool[] = [
   },
   {
     name: 'aikido_file',
-    description: 'Read snapshot; prefer ranges[] across files (1-based inclusive, merged). Follow remaining if truncated. Other operations: metadata, outline, read lines/section; full last.',
+    description: 'Read snapshot; prefer ranges[] across files (1-based inclusive, merged); follow remaining if truncated. Also metadata, outline, lines/section; full last.',
     inputSchema: {
       type: 'object', additionalProperties: false, required: ['operation', 'snapshotId'],
       oneOf: [
@@ -302,10 +305,10 @@ class RuntimeTools {
     semanticAvailability?: { error: string; index: unknown }): Promise<string> {
     if (name === 'aikido_models') {
       const operation = input.operation;
-      const allowed = operation === 'status' ? ['operation'] : operation === 'install'
+      const allowed = operation === 'status' ? ['operation', 'detail'] : operation === 'install'
         ? ['operation', 'model', 'confirmed'] : operation === 'configure' ? ['operation', 'policy', 'confirmed', 'custom'] : [];
       if (!allowed.length || Object.keys(input).some(key => !allowed.includes(key))) throw new Error('Invalid model operation or parameters.');
-      if (operation === 'status') return JSON.stringify(await this.knowledge.semanticIndex.models());
+      if (operation === 'status') return JSON.stringify(compactModels(await this.knowledge.semanticIndex.models(), input.detail === true));
       if (operation === 'install') return JSON.stringify(await this.knowledge.semanticIndex.installModel(input.model, input.confirmed));
       return JSON.stringify(await this.knowledge.semanticIndex.configureModels(input.policy, input.confirmed, input.custom));
     }
@@ -344,10 +347,13 @@ class RuntimeTools {
       if (operation === 'status') {
         const policy = await readProjectPolicy(this.knowledge.root);
         const retarget = await readRetargetMetadata(this.knowledge.searchIndex.directory);
+        const { config: _config, skippedFiles: _skippedFiles, ...summary } = this.knowledge.corpusStatus;
+        const detail = input.detail === true;
         return JSON.stringify({
           server: SERVER_INFO,
           root: this.knowledge.root, initialized: this.knowledge.isInitialized,
-          corpus: this.knowledge.corpusStatus,
+          corpus: detail ? this.knowledge.corpusStatus : summary,
+          ...(detail ? {} : { detail: false }),
           policy,
           retarget,
           note: 'Knowledge-only MCP: project files and Git remotes are never modified.',
@@ -463,7 +469,7 @@ class RuntimeTools {
     }
     if (name === 'aikido_git') {
       if (input.operation === 'infos') {
-        return JSON.stringify(await this.infos());
+        return JSON.stringify(compactInfos(await this.infos(), input.detail === true));
       }
       if (input.operation === 'sync') {
         const mode = input.mode ?? 'all';
@@ -621,6 +627,52 @@ class RuntimeTools {
       policy: projectPolicy ?? { execution: 'external-only', gitPushAllowed: false,
         gitPolicy: 'Agents perform Git mutations outside MCP; Kimono only reads the explicitly retargeted remote and synchronizes knowledge.' } };
   }
+}
+
+/** Bound of the file lists returned by `aikido_git infos` without `detail` (KM1, KM2). */
+export const INFOS_LIST_LIMIT = 20;
+
+function boundedList<T>(items: T[] | undefined, limit = INFOS_LIST_LIMIT) {
+  const list = items ?? [];
+  return { items: list.slice(0, limit), total: list.length, truncated: list.length > limit };
+}
+
+/**
+ * Compact form of `aikido_git infos`: document fingerprints are summarized by `basisFingerprint` and their count,
+ * dirty lists are bounded with their total. `detail` returns the full response.
+ */
+export function compactInfos<T extends Record<string, unknown>>(infos: T, detail = false): T {
+  if (detail) return infos;
+  const repository = (value: Record<string, unknown> | undefined) => {
+    if (!value || !Array.isArray(value.dirtyFiles)) return value;
+    const files = boundedList(value.dirtyFiles);
+    return { ...value, dirtyFiles: files.items, dirtyFileCount: files.total, ...(files.truncated ? { dirtyFilesTruncated: true } : {}) };
+  };
+  const indexes = infos.indexes as Record<string, { basis?: Record<string, unknown> | null }> | undefined;
+  const compactIndexes = indexes && Object.fromEntries(Object.entries(indexes).map(([engine, entry]) => {
+    const basis = entry?.basis;
+    if (!basis) return [engine, entry];
+    const { documentFingerprints, dirtyPaths, ...rest } = basis as Record<string, unknown> & {
+      documentFingerprints?: Record<string, string>; dirtyPaths?: string[] };
+    const paths = boundedList(dirtyPaths);
+    return [engine, { ...entry, basis: { ...rest,
+      ...(documentFingerprints ? { documentCount: Object.keys(documentFingerprints).length } : {}),
+      ...(dirtyPaths ? { dirtyPaths: paths.items, dirtyPathCount: paths.total, ...(paths.truncated ? { dirtyPathsTruncated: true } : {}) } : {}) } }];
+  }));
+  return { ...infos,
+    repository: repository(infos.repository as Record<string, unknown> | undefined),
+    ...(Array.isArray(infos.repositories) ? { repositories: (infos.repositories as Record<string, unknown>[]).map(repository) } : {}),
+    ...(compactIndexes ? { indexes: compactIndexes } : {}),
+    detail: false };
+}
+
+/** `aikido_models status` without `detail` (KM4): required models only, the full catalogue on option. */
+export function compactModels(status: Record<string, unknown>, detail = false): Record<string, unknown> {
+  if (detail || !Array.isArray(status.models)) return status;
+  const required = new Set(Array.isArray(status.requiredModels) ? status.requiredModels as string[] : []);
+  const models = (status.models as { id: string; installed?: unknown }[])
+    .filter(model => required.has(model.id)).map(({ id, installed }) => ({ id, installed }));
+  return { ...status, models, catalogueSize: (status.models as unknown[]).length, detail: false };
 }
 
 function text(input: Record<string, unknown>, key: string, required = false): string | undefined {

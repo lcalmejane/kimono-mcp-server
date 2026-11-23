@@ -175,13 +175,13 @@ function registerManagement(vscode, context, host) {
       remote = true;
     } else throw new Error("Enable Kimono to manage models.");
     try {
-      let value = await started.call("aikido_models", { operation: "status" });
+      let value = await started.call("aikido_models", { operation: "status", detail: true });
       if (action.operation !== "status") {
         const accept = l("Confirm", "Confirmer");
         if (await vscode.window.showWarningMessage(modelActions.confirmation(action, value, language),
           { modal: true }, accept) === accept) {
           await started.call("aikido_models", { ...action, confirmed: true });
-          value = await started.call("aikido_models", { operation: "status" });
+          value = await started.call("aikido_models", { operation: "status", detail: true });
         }
       }
       return value;

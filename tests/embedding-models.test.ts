@@ -87,7 +87,7 @@ describe('embedding policies and persisted selection', () => {
     await expect(runtimeFor(knowledge).call('aikido_models', { operation: 'status', confirmed: true })).rejects.toThrow('Invalid');
     await expect(runtimeFor(knowledge).call('aikido_models', { operation: 'install', model: 'code' })).rejects.toThrow('confirmation');
     await expect(runtimeFor(knowledge).call('aikido_models', { operation: 'install', model: '../model', confirmed: true })).rejects.toThrow('Unknown');
-    const status = JSON.parse(await runtimeFor(knowledge).call('aikido_models', { operation: 'status' }));
+    const status = JSON.parse(await runtimeFor(knowledge).call('aikido_models', { operation: 'status', detail: true }));
     expect(status.models.map((model: { id: string }) => model.id)).toEqual([...models.MODEL_IDS]);
   });
 

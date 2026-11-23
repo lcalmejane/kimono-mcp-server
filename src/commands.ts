@@ -52,7 +52,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
       return value === 'true';
     };
     const result = await runtimeFor(knowledge).call('aikido_git', command === 'infos'
-      ? { operation: 'infos', github: boolean('github') }
+      ? { operation: 'infos', github: boolean('github'), detail: boolean('detail') }
       : { operation: 'sync', expectedHead: requiredOption(options, 'expected-head'),
         expectedBranch: requiredOption(options, 'expected-branch') === 'null' ? null : options.get('expected-branch'),
         mode: options.get('mode') ?? 'all', fetch: boolean('fetch'), confirm: boolean('confirm') });
