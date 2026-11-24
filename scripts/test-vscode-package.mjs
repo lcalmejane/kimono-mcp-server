@@ -120,7 +120,7 @@ try {
   assert.equal(embeddingData.dimensions, 384);
   assert.equal(embeddingData.vector.length, 384);
   assert.ok(embeddingData.vector.every(Number.isFinite));
-  const catalogue = await client.callTool({ name: 'aikido_models', arguments: { operation: 'status' } });
+  const catalogue = await client.callTool({ name: 'aikido_models', arguments: { operation: 'status', detail: true } });
   assert.ok(!catalogue.isError, JSON.stringify(catalogue));
   const models = JSON.parse(catalogue.content.find(item => item.type === 'text').text);
   assert.equal(models.requestedPolicy, 'e5');

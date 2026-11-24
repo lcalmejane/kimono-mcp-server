@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.9.15 - 2026-11-24
+
+- Tests: the packaged VSIX test asks `aikido_models status` with `detail: true`, as the panels do since 0.9.14 (0.9.14 was tagged but never released).
+
 ## 0.9.14 - 2026-11-23
 
 - MCP: compact responses by default, full detail on option. `aikido_git infos` summarizes document fingerprints by `basisFingerprint` and `documentCount` and bounds dirty lists to 20 entries with their total (`detail: true` returns everything). `aikido_root status` omits the corpus configuration and skipped files, and `aikido_models status` lists only the required models, unless `detail: true` is set; the VS Code and Tatami panels ask for the full catalogue.
